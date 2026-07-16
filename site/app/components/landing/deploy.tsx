@@ -1,3 +1,5 @@
+import { CopyButton } from "~/components/copy-button";
+
 /** Generated from the approved static landing page for parity. */
 export function DeploySection() {
   return (
@@ -20,6 +22,19 @@ export function DeploySection() {
             </a>
           </div>
         </header>
+
+        <div className="code-block">
+          <div className="code-block-header">
+            <span>Run the daemon (container)</span>
+            <CopyButton
+              text="docker run -p 8080:8080 --env-file .env ghcr.io/carrara-labs/delta-harness"
+              label="Copy docker command"
+            />
+          </div>
+          <pre>
+            <code>docker run -p 8080:8080 --env-file .env ghcr.io/carrara-labs/delta-harness</code>
+          </pre>
+        </div>
 
         <figure className="deploy-topology" aria-labelledby="deploy-title topology-caption">
           <figcaption className="topology-head" id="topology-caption">
