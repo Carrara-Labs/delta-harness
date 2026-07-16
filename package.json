@@ -1,7 +1,7 @@
 {
   "name": "@carrara-labs/delta-harness",
-  "version": "0.1.0",
-  "description": "A lean, product-neutral operator harness — the in-VM agent loop that runs one working agent per process or VM.",
+  "version": "0.1.1",
+  "description": "The open source harness for knowledge work \u2014 build long-running agents with MCP tools, managed context, subagents, and self-improvement, in one lean Bun binary.",
   "type": "module",
   "license": "Apache-2.0",
   "author": "Nicolas Touron",

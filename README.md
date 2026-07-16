@@ -1,110 +1,93 @@
 # Delta Harness
 
-A lean, **product-neutral operator harness** — the in-VM agent loop that runs one working
-agent per process or VM.
+The open source harness for knowledge work — build long-running agents with MCP tools, managed
+context, subagents, and self-improvement, in one lean TypeScript-on-Bun binary.
 
-A TypeScript-on-Bun single-binary daemon: a small prompt spine and a durable tool-call loop
-that combine built-in workspace capabilities with external systems over MCP.
+[![npm](https://img.shields.io/npm/v/@carrara-labs/delta-harness?color=%230b7)](https://www.npmjs.com/package/@carrara-labs/delta-harness)
+[![license](https://img.shields.io/npm/l/@carrara-labs/delta-harness?color=%23555)](./LICENSE)
+[![built with Bun](https://img.shields.io/badge/built%20with-Bun-fbf0df)](https://bun.sh)
 
-- **Memory** → scoped local memory, with optional shared knowledge over MCP
-- **Skills** → versioned procedures over MCP with progressive disclosure
-- **Code** → delegated to `codex` / `claude-code` CLIs
-- **Review & learning** → policy, vocabulary, reflection, and a configurable write rail
+**[deltaharness.dev](https://deltaharness.dev)** · **[Docs](https://deltaharness.dev/docs/)** · **[GitHub](https://github.com/Carrara-Labs/delta-harness)**
 
-Zero runtime deps · SQLite WAL state · **~30MB RSS, <50ms cold start** (measured).
-
-> **Status:** `0.1.0` — early release. The API surface and bundle format may still shift
-> before `1.0`. Feedback and issues welcome.
+A single-binary daemon: a **<2k-token prompt spine** and a durable tool-call loop that combine
+built-in workspace capabilities with external systems over MCP. Zero runtime deps · SQLite WAL
+state · **~30MB RSS, <50ms cold start** (measured).
 
 ## Install
 
 ```sh
-# as a CLI (requires Bun ≥ 1.3)
-bunx @carrara-labs/delta-harness --help
-
-# or grab a prebuilt binary from Releases
+# install the binary (macOS / Linux)
 curl -fsSL https://deltaharness.dev/install.sh | sh
 
-# or run the container
+# or run it via Bun
+bunx @carrara-labs/delta-harness --help
+
+# or run the daemon as a container
 docker run -p 8080:8080 --env-file .env ghcr.io/carrara-labs/delta-harness
 ```
 
-## Quickstart (from source)
+Requires **Bun ≥ 1.3** to run from source or via `bunx`; the prebuilt binary and container are self-contained.
+
+## Quickstart
 
 ```sh
-bun install
-bun test                                  # 480+ tests (unit + child-process crash/resume)
-bun run build                             # dist/delta — the product-free engine
-./dist/delta init ./my-agent              # scaffold a bundle
-./dist/delta dev  ./my-agent              # boot it in the Cockpit at /dev
+delta init ./my-agent    # scaffold a bundle — five plain files
+delta dev  ./my-agent    # boot it in the local Cockpit at /dev
 ```
 
-The engine is **product-agnostic** — it names no product. A product is a *bundle*
-(a directory of plain files).
+`init` never overwrites your files; `dev` runs the real daemon on loopback and opens the Cockpit,
+so you can watch the loop, tools, memory, and cost live.
 
-**A bundle is these files, split by who may edit them:**
+## What's in the runtime
+
+| | |
+|---|---|
+| **Durable run + queue** | Serial per session, concurrent across; checkpoint-per-turn, survives crash/redeploy, resumes in-flight runs from the SQLite journal. |
+| **Provider** | Zero-dep OpenAI-compatible streaming, model failover, usage + cost capture, error-as-value, Anthropic prompt-cache breakpoints. |
+| **Loop + hands** | Usage guards (steps / tokens / cost); builtins (`web_search`, `web_fetch`, workspace files, `code`→codex CLI, `spawn_subagent`); run profiles with per-profile tool sets. |
+| **MCP client** | Streamable HTTP + stdio, boot-time discovery, progressive tool disclosure via `search_tools`. |
+| **Context** | Usage-aware compaction (Goal / Progress / Next / Artifacts); bounded context on long runs. |
+| **Memory + learning** | Scoped local memory, optional shared knowledge over MCP, and a review→reflect loop that turns feedback into scoped memory. |
+| **Observability** | Durable main-loop events over SQLite, SSE, and an NDJSON exporter. |
+
+## The bundle — `agent = engine + bundle + state`
+
+The engine names no product. A **bundle** is five plain files you version like code:
 
 | File | What | Editable by |
 |---|---|---|
 | `delta.env` | backends, keys, budgets | operator |
-| `vocab.json` | the write rail (product nouns/verbs) | operator |
-| `POLICY.md` | fixed highest-priority prompt guidance | operator |
+| `vocab.json` | the write rail (your product's nouns/verbs) | operator |
+| `POLICY.md` | fixed, highest-priority prompt guidance | operator |
 | `DELTA.md` | identity **+ what the agent has learned** | human **and** agent |
 | `PROMPT_CONTEXT.md` | optional dynamic vars (`{{model}}`, `{{now.date}}`, `{{request.*}}`) | operator |
 
-`DELTA.md` is the **self-learning** surface: the agent can rewrite the whole file with the
-`remember` tool so the next uninterrupted run can use the change. Writes are atomic,
-size-capped, and up to 20 prior versions are retained for Cockpit reverts.
-
-To run the raw seam directly instead of the dev launcher:
-
-```sh
-set -a; source .env; set +a               # export .env (bare KEY=value lines)
-bun run start                             # serve on :8080
-bash scripts/smoke.sh                     # live check against the running server
-```
-
-`.env` needs `OPENROUTER_API_KEY` (or `MODEL_API_KEY`) and, for `web_search`, `EXA_API_KEY`.
+`DELTA.md` is the **self-learning** surface: the agent rewrites it with the `remember` tool, so
+the next uninterrupted run uses the change. Writes are atomic, size-capped, and reversible.
 
 ## Surface (the seam)
 
 | Route | What |
 |---|---|
 | `POST /v1/responses` | OpenAI-Responses-compatible sync turn |
-| `GET /healthz` | Liveness (autosuspend wake + reconciler) |
 | `POST /v1/tasks` | Async long-run: `202 {id}` → SSE progress → completion; cancellable |
 | `GET /v1/tasks/:id` · `/events` · `DELETE` | Status · SSE tail · cancel |
 | `GET /v1/queue` | Queued and running rows |
+| `GET /healthz` | Liveness (autosuspend wake + reconciler) |
 
-## What's built
+## From source
 
-- **Durable Run + queue** — serial per session, concurrent across; survives crash/redeploy;
-  resumes in-flight runs from the SQLite journal. An interrupted non-idempotent call is
-  not silently re-fired; its external outcome must be verified before retrying.
-- **Provider** — zero-dep OpenAI-compatible streaming, retries + model failover, usage +
-  cost capture, error-as-value, and Anthropic prompt-cache breakpoints.
-- **Loop + hands** — recorded model-usage guards (steps/tokens/cost); builtins
-  (`web_search`/`web_fetch`/workspace files, `code`→codex CLI, `spawn_subagent`); run
-  profiles (`work`/`chat`); a tool directory (index + `search_tools`, schema on demand).
-- **MCP client** — Streamable HTTP + stdio, boot-time discovery, and progressive tool
-  disclosure through `search_tools`.
-- **Compaction** — usage-aware Goal/Progress/Next/Artifacts summary; bounded context on
-  long runs.
-- **Observability** — durable main-loop events feed SQLite, SSE, and an NDJSON exporter.
+```sh
+git clone https://github.com/Carrara-Labs/delta-harness
+cd delta-harness && bun install
+bun test        # 480+ tests (unit + child-process crash/resume)
+bun run build   # dist/delta
+```
 
-## Ship
+Full guide (models, MCP tools, memory, subagents, deploy, recovery): **[deltaharness.dev/docs](https://deltaharness.dev/docs/)**.
+Contributions welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
-`Dockerfile` (two-stage, compiled binary in `debian-slim`) + `fly.toml.sample` (one Machine
-per agent; externally controlled suspend/resume). `bun run build` emits `dist/delta`.
-
-## Docs
-
-Full guide, architecture, and operating reference: **[deltaharness.dev](https://deltaharness.dev)**.
-
-## Contributing
-
-Issues and PRs welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md). By contributing you agree
-to the [DCO](https://developercertificate.org/) (`Signed-off-by` on each commit).
+> **Status:** `0.1.x` — early release. The API surface and bundle format may still shift before `1.0`.
 
 ## License
 

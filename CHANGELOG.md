@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-07-16
+
+### Fixed
+- Subagents inherit the parent's model: `childEnv` forwards `DELTA_MODEL_PRIMARY`, not just the
+  legacy `DELTA_MODEL` alias.
+
+### Changed
+- Clearer, technical README and npm package description.
+- Removed stale monorepo doc-sync tooling so `bun run check` works on a clean clone.
+
+### Added
+- `docker run` published to `ghcr.io/carrara-labs/delta-harness` (on the Deploy docs).
+- Hardened release/secret-scan workflows (checksum-verified gitleaks, tag-gated scan, ghcr publish).
+
 ## [0.1.0] — 2026-07-16
 
 Initial public release.
