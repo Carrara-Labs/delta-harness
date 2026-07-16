@@ -18,3 +18,7 @@ workspace/
 # local dogfood agents (contain keys) + run state
 agents/
 .delta/
+
+# railway link config (never commit)
+.railway/
+site/.railway/

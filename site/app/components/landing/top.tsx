@@ -33,9 +33,9 @@ export function TopSection() {
 
         <div className="quick-command">
           <code>
-            <span className="prompt">$</span>./dist/delta init ./my-agent
+            <span className="prompt">$</span>delta init ./my-agent
           </code>
-          <CopyButton text="./dist/delta init ./my-agent" label="Copy init command" />
+          <CopyButton text="delta init ./my-agent" label="Copy init command" />
         </div>
       </div>
     </section>

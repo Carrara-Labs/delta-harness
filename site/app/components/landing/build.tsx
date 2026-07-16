@@ -9,40 +9,39 @@ export function BuildSection() {
             <p className="section-kicker">Build</p>
             <h2 className="section-heading">Create and run in two commands. Shape four files.</h2>
             <p className="section-intro">
-              Build once from source, then scaffold and launch a versionable agent bundle.
+              Install in one command, then scaffold and launch a versionable agent bundle.
             </p>
           </div>
 
           <div className="steps">
             <article className="step">
-              <h3 className="step-label">Build once, then initialize and run</h3>
+              <h3 className="step-label">Install, then initialize and run</h3>
               <p>
-                Install and compile from source. Then <code>delta init</code> scaffolds without
-                overwriting files, and <code>delta dev</code> opens the local Cockpit.
+                One command to install. Then <code>delta init</code> scaffolds without overwriting
+                files, and <code>delta dev</code> opens the local Cockpit. Prefer a package?{" "}
+                <code>bunx @carrara-labs/delta-harness</code> runs it via Bun.
               </p>
               <div className="code-block">
                 <div className="code-block-header">
                   <span>Terminal</span>
                   <CopyButton
-                    text={`bun install
-bun run build
-./dist/delta init ./my-agent
-./dist/delta dev ./my-agent`}
+                    text={`curl -fsSL https://deltaharness.dev/install.sh | sh
+delta init ./my-agent
+delta dev ./my-agent`}
                     label="Copy setup commands"
                   />
                 </div>
                 <pre>
                   <code>
-                    <span className="comment"># build the binary</span>
+                    <span className="comment"># install (macOS / Linux)</span>
                     {`
-bun install
-bun run build
+curl -fsSL https://deltaharness.dev/install.sh | sh
 
 `}
                     <span className="comment"># create and launch an agent</span>
                     {`
-./dist/delta init ./my-agent
-./dist/delta dev ./my-agent`}
+delta init ./my-agent
+delta dev ./my-agent`}
                   </code>
                 </pre>
               </div>
