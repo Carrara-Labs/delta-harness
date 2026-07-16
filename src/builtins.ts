@@ -145,7 +145,9 @@ const SAFE_PROCESS_ENV = /^(PATH|HOME|SHELL|TMPDIR|LANG|LC_.*|TERM)$/;
 const SUBAGENT_CONFIG_ENV = new Set([
   "MODEL_BASE_URL",
   "MODEL_API",
-  "DELTA_MODEL",
+  "DELTA_MODEL_PRIMARY", // current model env; config aliases DELTA_MODEL_PRIMARY → DELTA_MODEL
+  "DELTA_MODEL", // legacy alias, kept for back-compat
+
   "DELTA_MODEL_FALLBACKS",
   "DELTA_UTILITY_MODEL",
   "DELTA_PROFILE",

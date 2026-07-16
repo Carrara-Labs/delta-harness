@@ -48,15 +48,9 @@ docker stop delta-website-react-router
 
 ## Documentation source
 
-`../website/guide.md` remains the canonical source during the parallel-build phase. After regenerating
-the current docs with `bun run build:website-docs` from the repository root, sync the standalone app:
-
-```sh
-bun run sync:docs
-```
-
-The sync copies both `/guide.md` and the crawlable `/docs/index.html`, then adds canonical, Open Graph,
-and Twitter metadata. `bun run check:docs` fails if either copy has drifted.
+`public/guide.md` is the canonical guide. The crawlable `public/docs/index.html` and
+`public/llms-full.txt` are rendered from it (with canonical, Open Graph, and Twitter metadata).
+Edit the guide, then keep the rendered copies in step.
 
 ## Public route contract
 

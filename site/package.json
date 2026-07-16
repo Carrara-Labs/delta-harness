@@ -8,11 +8,9 @@
   },
   "scripts": {
     "build": "react-router build",
-    "check": "bun run check:docs && bun run lint && bun run typecheck && bun run build",
-    "check:docs": "bun scripts/sync-docs.mjs --check",
+    "check": "bun run lint && bun run typecheck && bun run build",
     "dev": "react-router dev",
     "lint": "biome check .",
-    "sync:docs": "bun scripts/sync-docs.mjs",
     "start": "react-router-serve ./build/server/index.js",
     "typecheck": "react-router typegen && tsc"
   },

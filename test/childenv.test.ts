@@ -8,7 +8,8 @@ const source = {
   LC_ALL: "C",
   MODEL_API_KEY: "provider-secret",
   OPENROUTER_API_KEY: "unused-provider-secret",
-  DELTA_MODEL: "example/model",
+  DELTA_MODEL_PRIMARY: "example/model",
+  DELTA_MODEL: "legacy/model",
   DELTA_MCP_REFRESH_TOKEN: "knowledge base-secret",
   DELTA_BROKER_AUTH: "broker-secret",
   DELTA_CONTROL_TOKEN: "control-secret",
@@ -36,7 +37,8 @@ describe("childEnv", () => {
     expect(env.HOME).toBe("/home/delta");
     expect(env.MODEL_API_KEY).toBe("provider-secret");
     expect(env.OPENROUTER_API_KEY).toBeUndefined();
-    expect(env.DELTA_MODEL).toBe("example/model");
+    expect(env.DELTA_MODEL_PRIMARY).toBe("example/model");
+    expect(env.DELTA_MODEL).toBe("legacy/model");
     for (const key of [
       "DELTA_MCP_REFRESH_TOKEN",
       "DELTA_BROKER_AUTH",
