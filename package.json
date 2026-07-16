@@ -1,0 +1,60 @@
+{
+  "name": "@carrara-labs/delta-harness",
+  "version": "0.1.0",
+  "description": "A lean, product-neutral operator harness — the in-VM agent loop that runs one working agent per process or VM.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "Nicolas Touron",
+  "homepage": "https://deltaharness.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Carrara-Labs/delta-harness.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Carrara-Labs/delta-harness/issues"
+  },
+  "keywords": [
+    "agent",
+    "ai-agent",
+    "autonomous-agent",
+    "llm",
+    "harness",
+    "mcp",
+    "openai",
+    "anthropic",
+    "bun",
+    "agent-runtime"
+  ],
+  "bin": {
+    "delta": "src/index.ts"
+  },
+  "files": [
+    "src",
+    "assets",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "TRADEMARKS.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "build": "bun build --compile --minify src/index.ts --outfile dist/delta"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.2",
+    "@types/bun": "1.3.14",
+    "typescript": "6.0.3"
+  }
+}

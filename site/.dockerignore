@@ -1,0 +1,9 @@
+node_modules
+build
+.react-router
+.git
+.DS_Store
+README.md
+scripts/import-legacy-home.mjs
+scripts/import-legacy-interactions.mjs
+scripts/sync-docs.mjs

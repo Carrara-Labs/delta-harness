@@ -1,0 +1,54 @@
+# Sample fly.toml for one Delta agent (one app or Machine per agent). The control plane
+# owns provisioning + lifecycle; this is the shape of what it deploys.
+# Copy to fly.toml, set <agent>, and let the control plane drive suspend/resume via
+# the Machines API (NOT fly-proxy autostop — see below).
+
+app = "delta-<agent>"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  DELTA_BIND = "0.0.0.0"
+  DELTA_DB = "/data/delta.db"
+  DELTA_WORKSPACE = "/data/workspace"
+  DELTA_AGENT_ID = "<stable-agent-id>"
+  DELTA_MODEL_PRIMARY = "anthropic/claude-sonnet-5"
+  # DELTA_PROFILE = "work"          # placement ceiling; requests may only narrow it
+  # TELEMETRY_URL = "https://<control-plane>/collector"
+  # DELTA_MCP_SERVERS = '[{"name":"kb","transport":"http","url":"https://<knowledge-base>/mcp"}]'
+
+# Secrets (set via `fly secrets set`, never in this file):
+#   MODEL_API_KEY / OPENROUTER_API_KEY   metered model access
+#   EXA_API_KEY                          web_search
+#   DELTA_CONTROL_TOKEN                  run API and scheduling bearer
+#   DELTA_INSPECT_TOKEN                  separate privileged inspection bearer
+#   DELTA_SELF_MD_B64 / DELTA_POLICY_MD_B64 / DELTA_CONTEXT_MD_B64 /
+#     DELTA_VOCAB_JSON_B64               first-boot bundle seeds
+#   DELTA_BROKER_TOKEN_URL + DELTA_BROKER_AUTH   subscription path (needs an
+#     explicit Responses model and allowlisted MODEL_BASE_URL; see the guide at https://deltaharness.dev)
+
+[[mounts]]
+  source = "delta_state"
+  destination = "/data"        # SQLite WAL + workspace; survives suspend/restart
+
+# No [[services]] or [http_service] is declared. This sample is private 6PN-only.
+# A Fly Proxy service would also require at least one [[services.ports]] entry.
+[checks]
+  [checks.delta_health]
+    type = "http"
+    port = 8080
+    method = "get"
+    path = "/healthz"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "5s"
+
+[[vm]]
+  # Start here only after testing the real workload. Upload parsing permits a 100 MB
+  # batch and uses multiple in-memory copies; code tools and subagents add headroom.
+  memory = "512mb"
+  cpus = 1
+  cpu_kind = "shared"

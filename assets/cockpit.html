@@ -1,0 +1,1179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Delta Cockpit</title>
+<style>
+  /* A dev instrument, dark single-theme. System font throughout (no mono). Tailwind
+     Stone grayscale, no brand accent — the light button is the accent. No CDN. */
+  :root {
+    /* Tailwind Stone — warm grayscale, no brand accent. The light button IS the accent. */
+    --bg: #0c0a09; --panel: #1c1917; --panel2: #17130f; --border: #292524; --border2: #44403c;
+    --text: #f5f5f4; --muted: #a8a29e; --dim: #78716c;
+    --light: #fafaf9;                       /* the very-light primary (buttons) on dark */
+    --accent: #e7e5e4; --accent-dim: #44403c; /* light "accent" text + subtle tint/border */
+    --user-bg: #f5f5f4; --user-fg: #1c1917;  /* your messages = a bright light bubble */
+    --warn: #cbb78d; --error: #e0a3a3; --ok: #a8a29e; --violet: #cbb8e0;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text); font: 14px/1.55 var(--sans);
+    -webkit-font-smoothing: antialiased; display: flex; flex-direction: column; overflow: hidden;
+  }
+  a { color: var(--accent); }
+  pre, code, table, .mono { font-family: var(--sans); }
+  /* ── Top bar (one row: brand · tabs · … · agent · meter · live) ── */
+  :root { --col: 780px; } /* the readable chat column width */
+  header.bar {
+    display: flex; align-items: center; gap: 8px 16px; height: 50px; padding: 0 16px;
+    border-bottom: 1px solid var(--border); background: var(--panel2); flex: none;
+  }
+  .brand { font-weight: 700; letter-spacing: .3px; color: var(--accent); font-size: 14px; white-space: nowrap; margin-right: 4px; }
+  .brand .tri { margin-right: 5px; }
+  nav#tabs { display: flex; gap: 2px; }
+  nav#tabs button {
+    background: none; border: none; color: var(--muted); font: inherit; font-size: 13px;
+    padding: 6px 12px; border-radius: 7px; cursor: pointer; transition: background .15s, color .15s;
+  }
+  nav#tabs button:hover { color: var(--text); background: #ffffff0a; }
+  nav#tabs button.active { color: var(--accent); background: rgba(255,255,255,.08); }
+  .spacer { flex: 1; }
+  .agent { font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+  .agent b { color: var(--text); font-weight: 600; }
+  .meter { display: flex; gap: 15px; align-items: center; color: var(--muted); font-size: 12.5px; }
+  .meter b { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .indicator {
+    display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px;
+    border: 1px solid var(--border); border-radius: 999px; font-size: 11.5px; cursor: pointer;
+    user-select: none; background: var(--panel); white-space: nowrap;
+  }
+  .indicator .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+  .indicator.live .dot { background: var(--accent); box-shadow: 0 0 6px var(--accent); animation: pulse 1.6s infinite; }
+  .indicator.replay { color: var(--warn); border-color: #3a3320; }
+  .indicator.replay .dot { background: var(--warn); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  @media (max-width: 760px) { .agent, .meter { display: none; } .brand { font-size: 0; } .brand .tri { font-size: 15px; margin: 0; } nav#tabs button { padding: 6px 9px; } }
+  /* ── Layout ─────────────────────────────────────────── */
+  main { flex: 1; overflow: hidden; display: flex; }
+  .tab { display: none; flex: 1; overflow: auto; padding: 20px 20px; }
+  .tab.active { display: block; }
+  #thread-tab.active { display: flex; flex-direction: row; padding: 0; overflow: hidden; }
+  /* Left: a minimal, borderless thread list */
+  #thread-list { width: 230px; flex: none; padding: 16px 8px 12px 16px; display: flex; flex-direction: column; overflow: hidden; }
+  .tl-head { display: flex; align-items: center; margin: 0 8px 8px; }
+  .tl-head .lbl { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  .tl-head .newthread-btn { margin-left: auto; background: none; border: none; color: var(--accent); font: inherit; font-size: 12.5px; cursor: pointer; padding: 3px 6px; border-radius: 6px; }
+  .tl-head .newthread-btn:hover { background: rgba(255,255,255,.08); }
+  #thread-items { overflow-y: auto; padding-right: 4px; }
+  .titem { padding: 7px 9px; border-radius: 8px; cursor: pointer; margin-bottom: 1px; }
+  .titem:hover { background: #ffffff0a; }
+  .titem.active { background: #ffffff12; }
+  .titem .tt { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .titem.active .tt { color: var(--text); }
+  .titem .tm { font-size: 11px; color: var(--dim); margin-top: 2px; }
+  .titem.live .tt { color: var(--text); font-weight: 500; }
+  .titem.live .ld { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); display: inline-block; margin-right: 8px; vertical-align: 1px; animation: pulse 1.6s infinite; }
+  /* Right: conversation + floating composer */
+  #thread-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #timeline { flex: 1; overflow: auto; padding: 22px 20px 16px; }
+  #thread-col { max-width: var(--col); margin: 0 auto; }
+  /* ── Composer (floating, modern) ────────────────────── */
+  .composer { flex: none; padding: 6px 20px 18px; background: transparent; }
+  .composer-inner { max-width: var(--col); margin: 0 auto; background: var(--panel); border: 1px solid var(--border2); border-radius: 16px; padding: 8px 10px 6px; box-shadow: 0 14px 34px -20px #000, 0 0 0 1px #ffffff06 inset; transition: border-color .15s; }
+  .composer.drag .composer-inner { border-color: var(--accent); }
+  .composer-inner:focus-within { border-color: var(--accent-dim); }
+  .composer textarea {
+    width: 100%; background: transparent; color: var(--text); border: none;
+    font: inherit; padding: 6px 8px; resize: none; min-height: 70px; max-height: 220px; line-height: 1.55;
+  }
+  .composer textarea:focus { outline: none; }
+  .composer .row { display: flex; gap: 6px; align-items: center; padding: 0 2px; }
+  .composer .hint { color: var(--dim); font-size: 11.5px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .composer .iconbtn { background: none; border: none; color: var(--muted); border-radius: 8px; padding: 6px 9px; font: inherit; font-size: 14px; cursor: pointer; line-height: 1; }
+  .composer .iconbtn:hover { color: var(--text); background: #ffffff0d; }
+  .composer .send { background: var(--light); color: var(--bg); border: none; border-radius: 9px; width: 32px; height: 30px; font-size: 15px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+  .composer .send:hover { filter: brightness(.94); }
+  .composer .send:disabled { opacity: .4; cursor: default; }
+  @media (max-width: 760px) { #thread-list { display: none; } }
+  /* ── Chat timeline ──────────────────────────────────── */
+  /* Session grouping: turns flow together; a divider marks a new conversation. */
+  .sess-divider { display: flex; align-items: center; gap: 14px; color: var(--dim); font-size: 10.5px; letter-spacing: .18em; text-transform: uppercase; margin: 48px 0 30px; }
+  .sess-divider::before, .sess-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+  .turn-block { padding: 0 0 18px; }
+  /* answer (Q → A) sits above; the run's details (trace) tuck below it */
+  .trace { margin-top: 14px; }
+  .trace:empty { display: none; }
+  /* Chat bubbles — user right + bright, assistant left + subtle */
+  .msg { display: flex; margin: 22px 0; position: relative; }
+  /* Floating timestamps: hung in the margins — left of agent items, right of user bubbles.
+     Absolute against each position:relative row, so they never take column width. */
+  .ts { position: absolute; top: 1px; font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
+  .msg .ts { top: 14px; } /* align with the bubble's first text line, past its padding */
+  .ts.left { right: calc(100% + 16px); text-align: right; }
+  .ts.right { left: calc(100% + 16px); }
+  @media (max-width: 940px) { .ts { display: none; } }
+  .msg.user { justify-content: flex-end; }
+  .msg.assistant { justify-content: flex-start; }
+  .bubble { max-width: 80%; border-radius: 18px; padding: 12px 17px; white-space: pre-wrap; word-break: break-word; line-height: 1.62; font-size: 15px; }
+  .bubble.user { background: var(--user-bg); color: var(--user-fg); border-bottom-right-radius: 6px; font-weight: 450; transition: opacity .3s ease; }
+  /* A queued message: dimmed while it waits behind an active run, with a small tag hung
+     below it. run.started removes .queued → the bubble brightens and the tag disappears. */
+  .msg.user.queued .bubble.user { opacity: .5; }
+  .qtag { position: absolute; bottom: -15px; right: 4px; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+  .msg:not(.queued) .qtag { display: none; }
+  .bubble.assistant { background: var(--panel); border: 1px solid var(--border); color: var(--text); border-bottom-left-radius: 6px; }
+  /* Reasoning — a quiet monochrome aside */
+  .reason { max-width: 80%; border-left: 2px solid var(--border2); padding: 4px 0 4px 14px; margin: 12px 0; color: var(--muted); font-style: italic; white-space: pre-wrap; font-size: 13.5px; line-height: 1.6; }
+  .reason .rl { font-size: 10px; text-transform: uppercase; letter-spacing: .12em; color: var(--dim); font-style: normal; margin-bottom: 4px; }
+  /* Events — the muted machinery, tucked in the trace below the answer */
+  .event { position: relative; margin: 8px 0; font-size: 12px; color: var(--muted); }
+  .event .ec { min-width: 0; }
+  .chip { display: inline-block; padding: 2px 9px; border-radius: 6px; font-size: 11.5px; background: rgba(255,255,255,.04); border: 1px solid var(--border); color: var(--muted); }
+  .model-line { color: var(--muted); }
+  .model-line b { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .tool { border: 1px solid var(--border); border-radius: 9px; background: rgba(255,255,255,.03); margin: 5px 0; overflow: hidden; max-width: 560px; }
+  .tool summary { padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; list-style: none; }
+  .tool summary::-webkit-details-marker { display: none; }
+  .tool .badge { font-size: 9.5px; padding: 1px 7px; border-radius: 5px; text-transform: uppercase; letter-spacing: .5px; }
+  .badge.mcp { background: rgba(203,184,224,.1); color: var(--violet); border: 1px solid var(--border2); }
+  .badge.builtin { background: rgba(255,255,255,.05); color: var(--muted); border: 1px solid var(--border2); }
+  .tool .status { margin-left: auto; font-size: 11px; color: var(--muted); }
+  .tool .status.err { color: var(--error); }
+  .tool .status.run { color: var(--warn); }
+  .tool .detail { padding: 0 12px 10px; border-top: 1px solid var(--border); }
+  .tool pre { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 8px; overflow-x: auto; margin: 8px 0 0; font-size: 12px; max-height: 300px; }
+  /* A turn: an input header (model.call, expandable) with the answer/tools/reasoning below */
+  .turn { margin: 4px 0 20px; }
+  .turn-head { position: relative; }
+  .turn-run { color: var(--dim); font-size: 12px; }
+  /* Standalone turn marker — a quiet temporal label sitting above the input card */
+  .turn-label { color: var(--dim); font-size: 10.5px; text-transform: uppercase; letter-spacing: .11em; margin: 0 0 7px 1px; }
+  .turn-body { margin-top: 10px; }
+  /* Expandable "true-to-life input" on the model call — collapsed, it's just the "input ▸"
+     affordance on the left; the per-call stats live below the output (.turn-stats), not here. */
+  .callcard { border: 1px solid var(--border); border-radius: 9px; background: rgba(255,255,255,.02); }
+  .callcard > summary { padding: 8px 12px; cursor: pointer; list-style: none; display: flex; align-items: center; }
+  .callcard > summary::-webkit-details-marker { display: none; }
+  .callcard .expand { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .callcard[open] .expand { color: var(--text); }
+  .callcard .callmeta { margin-left: auto; color: var(--dim); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .callcard .callmeta b { color: var(--muted); font-weight: 600; }
+  /* Per-call stats (model · tokens · cache · cost · latency) — under this turn's output */
+  .turn-stats { margin: 10px 0 0 2px; font-size: 12px; }
+  .callinput { padding: 14px 16px 16px; border-top: 1px solid var(--border); max-height: 640px; overflow: auto; }
+  .ihead { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 12px; }
+  .imsg { margin: 14px 0; }
+  .irole { font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--dim); margin-bottom: 5px; }
+  .imsg.system .irole { color: var(--warn); }
+  .imsg.user .irole { color: var(--text); }
+  .itext { white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.62; color: var(--muted); background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; max-height: 440px; overflow: auto; }
+  .imsg.system .itext, .imsg.user .itext { color: var(--text); }
+  .itool { font-size: 12px; color: var(--muted); margin-top: 6px; padding-left: 4px; word-break: break-word; }
+  .itools { margin-top: 14px; }
+  .itools > summary { font-size: 12px; color: var(--muted); cursor: pointer; }
+  .itools pre { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 11px; overflow-x: auto; margin: 8px 0 0; font-size: 12px; max-height: 360px; }
+  .err-row { color: var(--error); }
+  .err-row .tag { background: #2a1416; border: 1px solid #52242a; border-radius: 4px; padding: 1px 8px; margin-right: 6px; }
+  .label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 4px; }
+  .recall .rl { color: var(--accent); font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 3px; }
+  .recall-chip { display: block; margin: 2px 0; color: var(--muted); border-left: 2px solid var(--accent-dim); padding-left: 8px; }
+  .recall-chip .k { color: var(--accent); }
+  .editor { width: 100%; min-height: 320px; background: var(--panel2); color: var(--text); border: 1px solid var(--accent-dim); border-radius: 6px; font: 12.5px var(--sans); padding: 10px; resize: vertical; }
+  .editbar { display: flex; gap: 10px; align-items: center; padding: 8px 12px 12px; }
+  .editbar .status { color: var(--muted); font-size: 12px; }
+  button.act { background: var(--light); color: var(--bg); border: none; border-radius: 7px; padding: 6px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+  button.act:hover { filter: brightness(.94); }
+  .editbar button.ghost { background: none; border: 1px solid var(--border2); color: var(--muted); border-radius: 7px; padding: 6px 14px; font: inherit; cursor: pointer; }
+  /* ── DELTA.md self-edit history / diff / revert ── */
+  .selfhist { border-top: 1px solid var(--border); margin: 4px 12px 14px; padding-top: 12px; }
+  .selfhist-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+  .selfhist-title { font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .selfhist-sub { font-size: 11.5px; color: var(--dim); }
+  .selfhist > .status { display: block; color: var(--muted); font-size: 12px; margin: 4px 0 8px; }
+  .selfrev { padding: 8px 0; border-top: 1px solid var(--border); }
+  .selfrev-row { display: flex; gap: 10px; align-items: center; }
+  .selfrev-when { font-size: 12px; color: var(--muted); margin-right: auto; font-variant-numeric: tabular-nums; }
+  .selfrev button.ghost { background: none; border: 1px solid var(--border2); color: var(--muted); border-radius: 7px; padding: 5px 12px; font: inherit; font-size: 12px; cursor: pointer; }
+  .selfrev button.act { padding: 5px 14px; font-size: 12px; }
+  .selfdiff { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 8px; margin: 8px 0 2px; overflow-x: auto; font-size: 12px; line-height: 1.5; }
+  .dline { white-space: pre-wrap; word-break: break-word; }
+  .d-add { color: #9bd6a6; background: rgba(120,200,140,.08); }
+  .d-del { color: var(--error); background: rgba(224,163,163,.08); }
+  .d-ctx { color: var(--muted); }
+  .peek { overflow: auto; }
+  .peek table { font-size: 11.5px; }
+  .peek td { max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+  /* ── Tables / trees (Runs, Files, Setup) ────────────── */
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--bg); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover td { background: var(--panel); }
+  .status-badge { padding: 1px 8px; border-radius: 4px; font-size: 11px; }
+  .s-done { color: var(--ok); } .s-failed { color: var(--error); } .s-running, .s-queued { color: var(--warn); } .s-cancelled { color: var(--muted); }
+  .filetree { display: grid; grid-template-columns: 260px 1fr; gap: 14px; height: 100%; }
+  .filelist { border: 1px solid var(--border); border-radius: 8px; overflow: auto; background: var(--panel2); }
+  .filelist .entry { padding: 5px 12px; cursor: pointer; display: flex; gap: 8px; align-items: center; white-space: pre; }
+  .filelist .entry:hover { background: var(--panel); }
+  .filelist .entry.dir { color: var(--text); }
+  .fileview { border: 1px solid var(--border); border-radius: 8px; background: var(--panel2); overflow: auto; }
+  .fileview pre { margin: 0; padding: 12px; white-space: pre-wrap; word-break: break-word; font-size: 12.5px; }
+  /* ── Files: a borderless folder tree (like the thread) + a framed preview ── */
+  .ftree { display: grid; grid-template-columns: minmax(240px, 320px) 1fr; gap: 20px; height: 100%; padding: 6px 2px; }
+  .ftree-nav { overflow: auto; padding-right: 4px; }
+  .ftree-sec { color: var(--dim); font-size: 10.5px; text-transform: uppercase; letter-spacing: .11em; margin: 14px 8px 4px; }
+  .ftree-sec:first-child { margin-top: 2px; }
+  .frow { display: flex; align-items: center; gap: 7px; padding: 4px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap; color: var(--muted); user-select: none; }
+  .frow:hover { background: #ffffff08; color: var(--text); }
+  .frow.sel { background: rgba(255,255,255,.08); color: var(--text); }
+  .frow .chev { width: 11px; flex: none; color: var(--dim); font-size: 9px; transition: transform .12s; }
+  .frow.open > .chev { transform: rotate(90deg); }
+  .frow .ficon { width: 15px; flex: none; text-align: center; color: var(--dim); font-size: 12px; }
+  .frow.sel .ficon, .frow.sel .chev { color: var(--muted); }
+  .frow .fname { overflow: hidden; text-overflow: ellipsis; }
+  .frow .fsize { margin-left: auto; padding-left: 12px; color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .fchildren { display: none; }
+  .fchildren.open { display: block; }
+  .ftree-pane { border: 1px solid var(--border); border-radius: 10px; background: var(--panel2); overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+  .fmeta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; padding: 11px 16px; border-bottom: 1px solid var(--border); }
+  .fmeta .fmeta-name { font-weight: 600; color: var(--text); }
+  .fmeta .fmeta-kind { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--bg); background: var(--accent); padding: 1px 7px; border-radius: 4px; }
+  .fmeta .fmeta-bits { margin-left: auto; display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--dim); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .fmeta .fmeta-bits b { color: var(--muted); font-weight: 500; }
+  .fmeta .fmeta-open { color: var(--accent); text-decoration: none; }
+  .fmeta .fmeta-open:hover { text-decoration: underline; }
+  .fbody { flex: 1; overflow: auto; min-height: 0; }
+  .fbody pre { margin: 0; padding: 14px 16px; white-space: pre-wrap; word-break: break-word; font-size: 12.5px; }
+  .fimg { padding: 20px; display: flex; justify-content: center; align-items: flex-start; }
+  .fimg img { max-width: 100%; height: auto; border-radius: 6px; box-shadow: 0 4px 24px #0009;
+    background-image: linear-gradient(45deg, #ffffff08 25%, transparent 0), linear-gradient(-45deg, #ffffff08 25%, transparent 0), linear-gradient(45deg, transparent 75%, #ffffff08 0), linear-gradient(-45deg, transparent 75%, #ffffff08 0);
+    background-size: 18px 18px; background-position: 0 0, 0 9px, 9px -9px, -9px 0; }
+  .fpdf { flex: 1; width: 100%; min-height: 480px; border: 0; background: #fff; }
+  .fblank { color: var(--dim); padding: 40px; text-align: center; display: flex; flex-direction: column; gap: 14px; align-items: center; }
+  .fblank .glyph { font-size: 30px; opacity: .7; }
+  a.act { text-decoration: none; display: inline-block; }
+  .cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); align-items: start; }
+  .card { border: 1px solid var(--border); border-radius: 8px; background: var(--panel2); padding: 12px 14px; }
+  .card h3 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--accent); }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 12.5px; }
+  .kv .k { color: var(--muted); }
+  .kv .v { color: var(--text); word-break: break-all; }
+  .pill { display: inline-block; padding: 1px 8px; margin: 2px 3px 2px 0; border-radius: 4px; background: var(--panel); border: 1px solid var(--border); font-size: 11.5px; }
+  .pill.on { color: var(--text); background: rgba(255,255,255,.05); border-color: var(--border2); } .pill.off { color: var(--dim); }
+  .empty { color: var(--dim); padding: 24px; text-align: center; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #232a38; border-radius: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+<header class="bar">
+  <span class="brand"><span class="tri">▲</span>Delta Cockpit</span>
+  <nav id="tabs">
+    <button type="button" data-tab="thread" class="active">Thread</button>
+    <button type="button" data-tab="runs">Runs</button>
+    <button type="button" data-tab="files">Files</button>
+    <button type="button" data-tab="data">Data</button>
+    <button type="button" data-tab="setup">Setup</button>
+  </nav>
+  <span class="spacer"></span>
+  <span class="agent">agent <b id="agent-id">—</b></span>
+  <span class="meter">
+    <span>tokens <b id="m-tokens">0</b></span>
+    <span>cost <b id="m-cost">$0.0000</b></span>
+    <span>runs <b id="m-runs">0</b></span>
+  </span>
+  <span class="indicator live" id="mode" title="Click to return to the global live view">
+    <span class="dot"></span><span id="mode-text">LIVE</span>
+  </span>
+</header>
+<main>
+  <section id="thread-tab" class="tab active">
+    <aside id="thread-list">
+      <div class="tl-head">
+        <span class="lbl">Threads</span>
+        <button type="button" class="newthread-btn" id="newthread">+ New</button>
+      </div>
+      <div id="thread-items"></div>
+    </aside>
+    <div id="thread-main">
+      <div id="timeline"><div id="thread-col"><div class="empty">Waiting for events… drive the agent below, or with <code>delta send</code>.</div></div></div>
+      <div class="composer" id="composer">
+        <div class="composer-inner">
+          <textarea id="input" placeholder="Message the agent…   (⌘/Ctrl+Enter to send · drop or 📎 to attach files)"></textarea>
+          <div class="row">
+            <input type="file" id="fileinput" multiple hidden />
+            <button type="button" class="iconbtn" id="attach" title="Attach files to the inbox">📎</button>
+            <span class="hint" id="composer-hint">a message starts a new thread</span>
+            <button type="button" class="send" id="send" title="Send (⌘/Ctrl+Enter)">↑</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+  <section id="runs-tab" class="tab"><div class="empty">Loading runs…</div></section>
+  <section id="files-tab" class="tab"><div class="ftree">
+    <div class="ftree-nav" id="filenav"></div>
+    <div class="ftree-pane" id="filepane"><div class="fblank"><span class="glyph">🗂</span><span>Select a file to preview it.</span></div></div>
+  </div></section>
+  <section id="data-tab" class="tab"><div class="empty">Loading tables…</div></section>
+  <section id="setup-tab" class="tab"><div class="empty">Loading config…</div></section>
+</main>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const el = (tag, cls, txt) => { const n = document.createElement(tag); if (cls) n.className = cls; if (txt != null) n.textContent = txt; return n; };
+const fmtTime = (ts) => new Date(ts).toLocaleTimeString([], { hour12: false }) + "." + String(ts % 1000).padStart(3, "0");
+const fmtUsd = (n) => "$" + (n || 0).toFixed(4);
+const fmtNum = (n) => (n || 0).toLocaleString();
+const short = (id) => id ? String(id).slice(0, 12) : "?";
+// The daemon's live config, fetched once and shared (agent id, operator files, tools…).
+let cfgCache = null;
+const getConfig = () => (cfgCache ??= fetch("/v1/dev/config").then((x) => x.json()).catch(() => ({})));
+
+// ── State ──────────────────────────────────────────────
+let stream = null;              // AbortController for the active stream
+const runBlocks = new Map();    // run_id -> { section, turns:Map }
+const sessions = new Map();     // session_id -> the session container element (turn grouping)
+let meter = { cost: 0, tokens: 0, runs: new Set() };
+let threadHead = null;          // last run's resp id — passed as previous_response_id to
+                                // thread follow-ups into ONE session (so the agent remembers)
+let current = "live";           // selected view: "live" (all) | "new" | a session_id
+const threadLastRun = new Map();// session_id -> its latest run id (composer continues it)
+
+// ── SSE over fetch (EventSource can't send Authorization; same-origin loopback
+// needs none, a remote proxy injects it). One parser, used live AND on replay.
+async function connect({ run = null, session = null, live = true } = {}) {
+  if (stream) stream.abort();
+  stream = new AbortController();
+  const signal = stream.signal;
+  const params = new URLSearchParams({ since: "0", live: live ? "1" : "0" });
+  if (run) params.set("run", run);
+  if (session) params.set("session", session);
+  $("#thread-col").innerHTML = "";
+  runBlocks.clear();
+  sessions.clear();
+  meter = { cost: 0, tokens: 0, runs: new Set() }; refreshMeter();
+  let res;
+  try { res = await fetch("/v1/dev/stream?" + params, { signal }); }
+  catch (e) { return; }
+  if (!res.ok || !res.body) { timelineEmpty("stream unavailable (" + res.status + ")"); return; }
+  const reader = res.body.getReader(), dec = new TextDecoder();
+  let buf = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split("\n\n"); buf = parts.pop() || "";
+      for (const part of parts) {
+        const line = part.split("\n").find((l) => l.startsWith("data:"));
+        if (!line) continue;
+        try { render(JSON.parse(line.slice(5).trim())); } catch (e) {}
+      }
+    }
+  } catch (e) { /* aborted or network end */ }
+  if (!signal.aborted) timelineEmpty("— end of stream —");
+}
+function timelineEmpty(msg) { const c = $("#thread-col"); if (!c.querySelector(".turn-block")) { c.innerHTML = ""; c.appendChild(el("div", "empty", msg)); } }
+
+// ── The one timeline renderer (live == replay) ─────────
+// Turns are grouped by session so a threaded conversation reads as one flow; a divider
+// marks the start of a new session. Each turn (run) is a sub-block within its session.
+function block(e) {
+  const runId = e.run_id, sid = e.session_id || runId;
+  let b = runBlocks.get(runId);
+  if (b) return b;
+  const empty = $("#thread-col").querySelector(".empty"); if (empty) empty.remove();
+  let sess = sessions.get(sid);
+  if (!sess) {
+    if (sessions.size > 0) $("#thread-col").appendChild(el("div", "sess-divider", "new session"));
+    sess = el("div", "session");
+    $("#thread-col").appendChild(sess);
+    sessions.set(sid, sess);
+  }
+  // A turn renders in TRUE temporal order — the machinery and the messages appear
+  // exactly when they happen (the answer lands below `turn N`, where the model produced
+  // it), so the dev sees the real sequence, not a rearranged chat.
+  const section = el("div", "turn-block");
+  sess.appendChild(section);
+  b = { section, turns: new Map() };
+  runBlocks.set(runId, b);
+  hydrateBlock(runId, b); // conversation text lives in `messages`, not the event stream
+  return b;
+}
+// The user message + committed assistant answer come from /v1/dev/runs/:id (the
+// `messages` transcript) — output_text.delta is ephemeral (live-only), so on replay
+// or reload the durable text must be pulled. User bubble is prepended; the final
+// assistant text is appended only if no live delta bubble already rendered it.
+async function hydrateBlock(runId, b) {
+  if (b.hydrated) return; b.hydrated = true;
+  try {
+    const r = await fetch("/v1/dev/runs/" + runId).then((x) => x.json());
+    if (!r || r.error) return;
+    const tx = r.transcript || [];
+    const firstUser = tx.find((m) => m.role === "user" && typeof m.content === "string");
+    // The user bubble: prefer the transcript, but fall back to the run's stored `input`
+    // (r.input) — a QUEUED run has no transcript row yet, so without the fallback its
+    // message would never render (just an answer with no question above it). The input is
+    // known from the moment of enqueue; the UI must never depend on the run having run.
+    const userText = firstUser ? firstUser.content : (typeof r.input === "string" ? r.input : null);
+    // Timestamps: the transcript has none, so use the run's created/finished times.
+    if (userText != null) {
+      // Dim it while it waits in the queue; a run.started/resumed event clears this (and if
+      // that event already fired before this async fetch resolved, b.started guards it).
+      const queued = r.status === "queued" && !b.started;
+      const bub = msgBubble(b.section, "user", userText, { prepend: true, ts: r.created_at && fmtTime(r.created_at), queued });
+      b.userMsg = bub.closest(".msg");
+    }
+    // The durable answer lands in the LAST turn's body (below its input header), so a
+    // reload matches the live layout — input above output — instead of the bottom.
+    if (!b.section.querySelector(".bubble.assistant")) {
+      const lastAsst = [...tx].reverse().find((m) => m.role === "assistant" && typeof m.content === "string" && m.content);
+      if (lastAsst) {
+        const turns = [...b.turns.values()].filter((c) => c.body);
+        msgBubble(turns.length ? turns[turns.length - 1].body : b.section, "assistant", lastAsst.content, { ts: r.finished_at && fmtTime(r.finished_at) });
+      }
+    }
+  } catch (e) {}
+}
+// A floating timestamp hung in the margin — left of agent items, right of user bubbles.
+function stampEl(ts, side) { return el("span", "ts " + side, ts); }
+// A chat bubble appended to `target` (user → right, assistant → left). Returns the bubble.
+function msgBubble(target, role, text, opts) {
+  opts = opts || {};
+  const msg = el("div", "msg " + role + (opts.queued ? " queued" : ""));
+  if (opts.ts) msg.appendChild(stampEl(opts.ts, role === "user" ? "right" : "left"));
+  const bub = el("div", "bubble " + role); if (text != null) bub.textContent = text;
+  msg.appendChild(bub);
+  if (opts.queued) msg.appendChild(el("span", "qtag", "queued")); // hidden via CSS once .queued clears
+  if (opts.prepend) target.insertBefore(msg, target.firstChild);
+  else { target.appendChild(msg); scroll(); }
+  return bub;
+}
+// A compact muted event line (run-level machinery), timestamp floating in the left margin.
+function addRow(b, ts, node) {
+  const row = el("div", "event");
+  if (ts) row.appendChild(stampEl(ts, "left"));
+  const ec = el("div", "ec"); if (node) ec.appendChild(node);
+  row.appendChild(ec); b.section.appendChild(row); scroll();
+  return ec;
+}
+function scroll() { const t = $("#timeline"); if (t.scrollHeight - t.scrollTop - t.clientHeight < 140) t.scrollTop = t.scrollHeight; }
+function turnCtx(b, turn) { let c = b.turns.get(turn); if (!c) { c = {}; b.turns.set(turn, c); } return c; }
+// A turn = an INPUT header (the model.call line, expandable to the full input) with the
+// answer / reasoning / tools in a body BELOW it. Stable order live AND on reload: input
+// above output, the answer always below `turn N`.
+function turnOf(b, turn) {
+  const c = turnCtx(b, turn);
+  if (c.container) return c;
+  c.container = el("div", "turn");
+  c.head = el("div", "turn-head");
+  c.body = el("div", "turn-body");
+  c.stats = el("div", "turn-stats"); // per-call metrics, always the last row (below output)
+  c.head.appendChild(el("div", "turn-run", "turn " + turn + " · running…"));
+  c.container.appendChild(c.head); c.container.appendChild(c.body); c.container.appendChild(c.stats);
+  b.section.appendChild(c.container); scroll();
+  return c;
+}
+
+function render(e) {
+  const b = block(e);
+  const t = fmtTime(e.ts);
+  const d = e.data || {};
+  switch (e.type) {
+    case "run.enqueued":
+      // Waiting behind an active run: show its place in line. The message bubble renders
+      // dimmed (hydrateBlock reads status:queued); run.started below clears the dim.
+      addRow(b, t, el("span", "chip", "▶ queued" + (d.position > 1 ? " · #" + d.position : ""))); break;
+    case "run.started": case "run.resumed": case "run.cancelled":
+      // Any terminal-or-active event ends the queued state — un-dim the message. started
+      // covers the run running; cancelled covers a run killed WHILE still queued (it never
+      // emits run.started, so without this its bubble would stay dimmed forever). b.started
+      // also guards the fire-before-hydrateBlock-fetch-resolves ordering (renders un-queued).
+      b.started = true;
+      if (b.userMsg) b.userMsg.classList.remove("queued");
+      addRow(b, t, el("span", "chip", e.type.replace("run.", "▶ "))); break;
+    case "turn.start": { const c = turnOf(b, e.turn); c.startTs = e.ts; break; } // dispatch time — when the request went out
+    case "reasoning.delta": {
+      const c = turnOf(b, e.turn);
+      if (!c.reasoning) {
+        const wrap = el("div", "reason"); wrap.appendChild(el("div", "rl", "reasoning"));
+        c.reasoningText = el("span"); wrap.appendChild(c.reasoningText);
+        c.body.appendChild(wrap); c.reasoning = true;
+      }
+      c.reasoningText.textContent += d.delta || ""; scroll(); break;
+    }
+    case "output_text.delta": {
+      const c = turnOf(b, e.turn);
+      if (!c.assistant) { c.assistantText = msgBubble(c.body, "assistant", "", { ts: t }); c.assistant = true; }
+      c.assistantText.textContent += d.delta || ""; scroll(); break;
+    }
+    case "hydrate":
+      addRow(b, t, el("span", "chip", `hydrate · ${(Array.isArray(d.tools) ? d.tools.length : d.tools) || 0} tools · ${d.chars || 0} chars`)); break;
+    case "recall": {
+      // Provenance: WHICH prior learnings primed this run.
+      const wrap = el("div", "recall");
+      wrap.appendChild(el("div", "rl", `recall · ${d.count ?? (d.items || []).length} learnings`));
+      for (const it of d.items || []) {
+        const chip = el("div", "recall-chip");
+        chip.appendChild(el("span", "k", `(${it.kind}/${it.audience}) `));
+        chip.append(it.content || "");
+        wrap.appendChild(chip);
+      }
+      addRow(b, t, wrap); break;
+    }
+    case "retrieval": {
+      const names = Array.isArray(d.names) && d.names.length ? " · " + d.names.join(", ") : "";
+      addRow(b, t, el("span", "chip", `retrieval · ${d.surfaced ?? "?"} surfaced · loaded ${d.loaded ?? "?"}${names}`)); break;
+    }
+    case "model.call": {
+      // Input header: just the "input ▸" affordance, expandable into the EXACT input the
+      // model saw (system spine + full messages + tool schemas). The per-call metrics
+      // (model · tokens · cache · cost) render BELOW this turn's output, in c.stats — so
+      // the card is "what went in" and the stats sit with "what came back".
+      const c = turnOf(b, e.turn);
+      c.head.innerHTML = ""; // replace the "running…" placeholder
+      // Stamp the input with its DISPATCH time (turn.start), not the model.call event ts —
+      // model.call fires at call completion (it carries latency+usage), so using it would
+      // render the input as later than the answer that streamed while the call was running.
+      c.head.appendChild(stampEl(fmtTime(c.startTs ?? e.ts), "left"));
+      c.head.appendChild(el("div", "turn-label", "turn " + (e.turn ?? ""))); // standalone marker, above the input
+      const det = el("details", "callcard");
+      det.dataset.runId = e.run_id; det.dataset.turn = String(e.turn ?? "");
+      const sum = el("summary");
+      sum.appendChild(el("span", "expand", "input ▸"));
+      sum.appendChild(inputSummary(d)); // true-to-life size + cache warmth of what the model read
+      det.appendChild(sum);
+      det.addEventListener("toggle", () => { if (det.open) loadCallDetail(det); });
+      c.head.appendChild(det);
+      c.stats.innerHTML = ""; c.stats.appendChild(modelLine(d)); // per-call stats, below the output
+      accrue(e); break;
+    }
+    case "tool.call": { const c = turnOf(b, e.turn); c.body.appendChild(toolCard(e, d)); scroll(); break; }
+    case "tool.result": updateTool(e, d); break;
+    case "checkpoint": case "turn.end": break; // quiet by default
+    case "compaction":
+      addRow(b, t, el("span", "chip", `compaction · ${d.before ?? "?"}→${d.after ?? "?"} tokens`)); break;
+    case "reflection":
+      addRow(b, t, el("span", "chip", `reflection · ${d.kind ?? ""} ${d.outcome ?? ""}`)); break;
+    case "error": {
+      const row = el("div", "err-row");
+      row.appendChild(el("span", "tag", d["error.type"] || "error"));
+      row.appendChild(document.createTextNode(d.message || ""));
+      addRow(b, t, row); break;
+    }
+    case "run.finished": {
+      // The run total: everything billed across all turns. total = in + out (each turn
+      // re-sends the growing context, so this is the true billed volume); cache % is over
+      // INPUT only (output is never cacheable) — the honest run-wide cache warmth.
+      const s = d.status || "done";
+      const inTok = d["gen_ai.usage.input_tokens"] || 0;
+      const outTok = d["gen_ai.usage.output_tokens"] || 0;
+      const total = d["gen_ai.usage.total_tokens"] ?? inTok + outTok;
+      const cachePct = inTok ? Math.round(((d["gen_ai.usage.cached_tokens"] || 0) / inTok) * 100) : 0;
+      const line = el("div", "model-line");
+      line.append("● " + s + " · run complete · ");
+      line.appendChild(el("b", null, fmtUsd(d["gen_ai.usage.cost_usd"])));
+      line.append(" · "); line.appendChild(el("b", null, fmtNum(total))); line.append(" tokens");
+      line.append(" · in "); line.appendChild(el("b", null, fmtNum(inTok)));
+      line.append(" out "); line.appendChild(el("b", null, fmtNum(outTok)));
+      line.append(" · "); line.appendChild(el("b", null, cachePct + "%")); line.append(" cached");
+      addRow(b, t, line); break;
+    }
+    default: addRow(b, t, el("span", "chip", e.type));
+  }
+}
+// The response side of a call: what came back (model · out · cost · latency · provider).
+// Input-side facts (tokens read, cache warmth) live on the input card via inputSummary().
+function modelLine(d) {
+  const line = el("div", "model-line");
+  line.append("↳ ");
+  line.appendChild(el("b", null, d["gen_ai.request.model"] || "model"));
+  line.append(" · out "); line.appendChild(el("b", null, fmtNum(d["gen_ai.usage.output_tokens"])));
+  line.append(" · "); line.appendChild(el("b", null, fmtUsd(d["gen_ai.usage.cost_usd"])));
+  line.append(" · "); line.appendChild(el("b", null, (d.latency_ms ?? "?") + "ms"));
+  if (d["gen_ai.provider"]) line.append(" · " + d["gen_ai.provider"]);
+  return line;
+}
+// The input side, previewed on the collapsed card: the size + cache-warmth of the exact
+// payload the model read. Expand the card for the full spine + messages + tool schemas.
+function inputSummary(d) {
+  const inTok = d["gen_ai.usage.input_tokens"] || 0;
+  const cachePct = inTok ? Math.round(((d["gen_ai.usage.cached_tokens"] || 0) / inTok) * 100) : 0;
+  const s = el("span", "callmeta");
+  s.appendChild(el("b", null, fmtNum(inTok))); s.append(" tokens in · ");
+  s.appendChild(el("b", null, cachePct + "%")); s.append(" cached");
+  return s;
+}
+function toolCard(e, d) {
+  const name = d["gen_ai.tool.name"] || "tool";
+  const isMcp = name.includes("__");
+  const det = el("details", "tool");
+  det.dataset.callId = d["gen_ai.tool.call.id"] || ""; det.dataset.runId = e.run_id; det.dataset.tool = name;
+  const sum = el("summary");
+  sum.appendChild(el("span", "badge " + (isMcp ? "mcp" : "builtin"), isMcp ? "mcp" : "built-in"));
+  sum.appendChild(el("span", "tname", name));
+  sum.appendChild(el("span", "status run", "running…"));
+  det.appendChild(sum);
+  det.addEventListener("toggle", () => { if (det.open) loadToolDetail(det); });
+  return det;
+}
+function updateTool(e, d) {
+  const b = runBlocks.get(e.run_id); if (!b) return;
+  const name = d["gen_ai.tool.name"];
+  const cards = b.section.querySelectorAll("details.tool");
+  for (let i = cards.length - 1; i >= 0; i--) {
+    const c = cards[i], st = c.querySelector(".status");
+    if (c.dataset.tool === name && st.classList.contains("run")) {
+      st.classList.remove("run");
+      if (d.is_error) { st.classList.add("err"); st.textContent = "error · " + (d.duration_ms ?? "?") + "ms"; }
+      else st.textContent = "✓ " + (d.duration_ms ?? "?") + "ms";
+      return;
+    }
+  }
+}
+async function loadToolDetail(det) {
+  if (det.dataset.loaded) return; det.dataset.loaded = "1";
+  const detail = el("div", "detail"); detail.appendChild(el("div", "label", "loading journal…")); det.appendChild(detail);
+  try {
+    const r = await fetch("/v1/dev/runs/" + det.dataset.runId).then((x) => x.json());
+    const j = (r.journal || []).find((x) => x.call_id === det.dataset.callId) || (r.journal || []).find((x) => x.tool === det.dataset.tool);
+    detail.innerHTML = "";
+    if (!j) { detail.appendChild(el("div", "label", "no journal entry yet")); return; }
+    detail.appendChild(el("div", "label", "args")); detail.appendChild(pre(j.args));
+    detail.appendChild(el("div", "label", "result")); detail.appendChild(pre(j.result));
+  } catch (e) { detail.innerHTML = ""; detail.appendChild(el("div", "label", "failed to load")); }
+}
+function pre(v) { const p = el("pre"); p.textContent = typeof v === "string" ? v : JSON.stringify(v, null, 2); return p; }
+
+// The true-to-life per-call input: exactly what the model saw (system spine + full
+// message list + tool schemas), captured at the call site and redacted on read.
+async function loadCallDetail(det) {
+  if (det.dataset.loaded) return; det.dataset.loaded = "1";
+  const panel = el("div", "callinput"); panel.appendChild(el("div", "irole", "loading input…")); det.appendChild(panel);
+  try {
+    const r = await fetch("/v1/dev/runs/" + det.dataset.runId + "/calls").then((x) => x.json());
+    const call = (r.calls || []).find((c) => String(c.turn) === det.dataset.turn);
+    panel.innerHTML = "";
+    if (!call) { panel.appendChild(el("div", "irole", "no capture for this call (set DELTA_CAPTURE_CALLS=1 — delta dev enables it)")); return; }
+    renderCallInput(panel, call);
+  } catch (e) { panel.innerHTML = ""; panel.appendChild(el("div", "irole", "failed to load input")); }
+}
+function renderCallInput(panel, call) {
+  const req = call.request || {};
+  const msgs = req.messages || [];
+  const tools = req.tools || [];
+  const head = el("div", "ihead");
+  head.textContent = msgs.length + " messages · " + tools.length + " tools" + (req.reasoning_effort ? " · reasoning " + req.reasoning_effort : "");
+  panel.appendChild(head);
+  for (const m of msgs) {
+    const wrap = el("div", "imsg " + (m.role || "unknown"));
+    wrap.appendChild(el("div", "irole", (m.role || "?") + (m.ephemeral ? " · ephemeral (re-sent every turn)" : "")));
+    const text = el("div", "itext");
+    if (typeof m.content === "string") text.textContent = m.content;
+    else if (Array.isArray(m.content)) text.textContent = m.content.map((p) => (p && p.type === "text" ? p.text : "[" + ((p && p.type) || "part") + "]")).join("\n");
+    else if (m.content == null && m.tool_calls) text.textContent = "(no text — tool calls only)";
+    wrap.appendChild(text);
+    for (const tc of m.tool_calls || []) wrap.appendChild(el("div", "itool", "→ " + (tc.function && tc.function.name || "?") + "(" + (tc.function && tc.function.arguments || "") + ")"));
+    panel.appendChild(wrap);
+  }
+  if (tools.length) {
+    const t = el("details", "itools");
+    const s = el("summary"); s.textContent = "tools offered · " + tools.length;
+    t.appendChild(s);
+    t.appendChild(pre(tools.map((x) => ({ name: x.function && x.function.name, description: x.function && x.function.description, parameters: x.function && x.function.parameters }))));
+    panel.appendChild(t);
+  }
+}
+
+function accrue(e) {
+  const d = e.data || {};
+  meter.cost += d["gen_ai.usage.cost_usd"] || 0;
+  meter.tokens += (d["gen_ai.usage.input_tokens"] || 0) + (d["gen_ai.usage.output_tokens"] || 0);
+  meter.runs.add(e.run_id); refreshMeter();
+}
+function refreshMeter() {
+  $("#m-cost").textContent = fmtUsd(meter.cost);
+  $("#m-tokens").textContent = fmtNum(meter.tokens);
+  $("#m-runs").textContent = meter.runs.size;
+}
+
+// ── Thread navigation (the left list is the source of truth for what you view + talk to) ──
+// current is "live" (all activity), "new" (unsent), or a session_id. The top-right
+// indicator is also a one-click escape back to Live, so you can never get stuck in a view.
+async function loadThreadList() {
+  try {
+    const { runs } = await fetch("/v1/dev/runs?limit=200").then((x) => x.json());
+    const bySid = new Map();
+    for (const r of runs || []) {
+      let g = bySid.get(r.session_id);
+      if (!g) { g = { sid: r.session_id, title: "", first: Infinity, last: -1, lastRun: r.id, count: 0 }; bySid.set(r.session_id, g); }
+      g.count++;
+      if (r.created_at <= g.first) { g.first = r.created_at; g.title = r.last_input_preview || g.title; } // earliest input = title
+      if (r.created_at >= g.last) { g.last = r.created_at; g.lastRun = r.id; }                            // latest run = thread head
+    }
+    threadLastRun.clear();
+    const groups = [...bySid.values()].sort((a, b) => b.last - a.last);
+    for (const g of groups) threadLastRun.set(g.sid, g.lastRun);
+    const box = $("#thread-items"); box.innerHTML = "";
+    const live = el("div", "titem live"); live.dataset.sid = "live";
+    live.innerHTML = '<div class="tt"><span class="ld"></span>Live — all activity</div><div class="tm">every run, as it happens</div>';
+    live.addEventListener("click", () => selectView("live"));
+    box.appendChild(live);
+    for (const g of groups) {
+      const it = el("div", "titem"); it.dataset.sid = g.sid;
+      it.appendChild(el("div", "tt", g.title || "(no input)"));
+      it.appendChild(el("div", "tm", g.count + (g.count > 1 ? " turns" : " turn")));
+      it.addEventListener("click", () => selectView(g.sid));
+      box.appendChild(it);
+    }
+    highlightThread();
+  } catch (e) {}
+}
+function highlightThread() {
+  document.querySelectorAll("#thread-items .titem").forEach((n) => n.classList.toggle("active", n.dataset.sid === current));
+}
+function selectView(target) {
+  current = target;
+  const ind = $("#mode");
+  if (target === "live") {
+    ind.className = "indicator live"; $("#mode-text").textContent = "LIVE";
+    threadHead = null; setThreadHint(); connect({ live: true });
+  } else if (target === "new") {
+    ind.className = "indicator"; $("#mode-text").textContent = "NEW THREAD";
+    threadHead = null; setThreadHint();
+    if (stream) stream.abort();
+    $("#thread-col").innerHTML = ""; runBlocks.clear(); sessions.clear();
+    $("#thread-col").appendChild(el("div", "empty", "New thread — your first message starts a fresh session."));
+    $("#input").focus();
+  } else {
+    ind.className = "indicator"; $("#mode-text").textContent = "THREAD";
+    threadHead = threadLastRun.get(target) || null; setThreadHint();
+    connect({ session: target, live: true });
+  }
+  highlightThread();
+}
+$("#mode").addEventListener("click", () => { if (current !== "live") selectView("live"); });
+
+// ── Composer ───────────────────────────────────────────
+function setThreadHint() {
+  $("#composer-hint").textContent =
+    current !== "live" && current !== "new" ? "continuing this thread — the agent remembers it" : "a message starts a new thread";
+}
+async function send() {
+  const ta = $("#input"), text = ta.value.trim(); if (!text) return;
+  $("#send").disabled = true;
+  try {
+    // Thread follow-ups into ONE session (previous_response_id) so the agent keeps the
+    // prior turns as memory — the same mechanism a prod driver uses.
+    const body = { input: text, store: true, ...(threadHead ? { previous_response_id: threadHead } : {}) };
+    const r = await fetch("/v1/tasks", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.id) {
+      ta.value = ""; threadHead = j.id;
+      if (current === "live" || current === "new") {
+        // A brand-new thread: learn its session and focus it in the list.
+        try {
+          const d = await fetch("/v1/dev/runs/" + j.id).then((x) => x.json());
+          await loadThreadList();
+          if (d && d.session_id) selectView(d.session_id); else setThreadHint();
+        } catch (e) { setThreadHint(); }
+      } else { setThreadHint(); loadThreadList(); } // continuing: the live session stream already shows it
+    } else $("#composer-hint").textContent = "error: " + ((j.error && j.error.message) || r.status);
+  } catch (e) { $("#composer-hint").textContent = "send failed: " + e; }
+  $("#send").disabled = false;
+}
+function uploadFiles(list) {
+  const files = [...(list || [])]; if (!files.length) return;
+  const fd = new FormData(); for (const f of files) fd.append("file", f);
+  $("#composer-hint").textContent = "uploading " + files.length + " file(s)…";
+  fetch("/v1/files", { method: "POST", body: fd }).then((x) => x.json())
+    .then((r) => { $("#composer-hint").textContent = "inbox ← " + (r.files || []).map((f) => String(f.path).split("/").pop()).join(", "); })
+    .catch((e) => { $("#composer-hint").textContent = "upload failed: " + e; });
+}
+$("#send").addEventListener("click", send);
+$("#input").addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") send(); });
+$("#newthread").addEventListener("click", () => selectView("new"));
+$("#attach").addEventListener("click", () => $("#fileinput").click());
+$("#fileinput").addEventListener("change", (e) => { uploadFiles(e.target.files); e.target.value = ""; });
+const comp = $("#composer");
+["dragover", "dragenter"].forEach((ev) => comp.addEventListener(ev, (e) => { e.preventDefault(); comp.classList.add("drag"); }));
+["dragleave", "drop"].forEach((ev) => comp.addEventListener(ev, (e) => { e.preventDefault(); comp.classList.remove("drag"); }));
+comp.addEventListener("drop", (e) => { e.preventDefault(); comp.classList.remove("drag"); uploadFiles(e.dataTransfer?.files); });
+
+// ── Tabs ───────────────────────────────────────────────
+document.querySelectorAll("nav#tabs button").forEach((btn) => btn.addEventListener("click", () => {
+  document.querySelectorAll("nav#tabs button").forEach((b) => b.classList.toggle("active", b === btn));
+  const tab = btn.dataset.tab;
+  document.querySelectorAll(".tab").forEach((s) => s.classList.toggle("active", s.id === tab + "-tab"));
+  if (tab === "thread") loadThreadList();
+  if (tab === "runs") loadRuns();
+  if (tab === "files") loadFileTree();
+  if (tab === "data") loadTables();
+  if (tab === "setup") loadSetup();
+}));
+
+// ── Runs tab ───────────────────────────────────────────
+async function loadRuns() {
+  const sec = $("#runs-tab");
+  try {
+    const { runs } = await fetch("/v1/dev/runs?limit=100").then((x) => x.json());
+    if (!runs || !runs.length) { sec.innerHTML = '<div class="empty">No runs yet.</div>'; return; }
+    const tbl = el("table");
+    tbl.innerHTML = "<thead><tr><th>run</th><th>status</th><th>model</th><th class='num'>in</th><th class='num'>out</th><th class='num'>cost</th><th>input</th></tr></thead>";
+    const tb = el("tbody");
+    for (const r of runs) {
+      const tr = el("tr", "clickable");
+      const cells = [
+        short(r.id),
+        `<span class="status-badge s-${r.status}">${r.status}</span>`,
+        r.model || "—",
+        fmtNum(r.tokens && r.tokens.in), fmtNum(r.tokens && r.tokens.out), fmtUsd(r.cost_usd),
+        r.last_input_preview || "",
+      ];
+      tr.innerHTML = `<td>${cells[0]}</td><td>${cells[1]}</td><td>${escapeHtml(cells[2])}</td><td class="num">${cells[3]}</td><td class="num">${cells[4]}</td><td class="num">${cells[5]}</td><td>${escapeHtml(cells[6])}</td>`;
+      tr.addEventListener("click", async () => { document.querySelector('nav#tabs button[data-tab="thread"]').click(); await loadThreadList(); selectView(r.session_id); });
+      tb.appendChild(tr);
+    }
+    tbl.appendChild(tb); sec.innerHTML = ""; sec.appendChild(tbl);
+  } catch (e) { sec.innerHTML = '<div class="empty">Failed to load runs.</div>'; }
+}
+function escapeHtml(s) { const d = document.createElement("div"); d.textContent = String(s); return d.innerHTML; }
+
+// ── Files tab ──────────────────────────────────────────
+// A lazy folder tree (left) drives a rich preview (right): images and PDFs render
+// in place over `?raw=1`, text stays editable, anything else offers a download —
+// so a dev sees the real bytes the agent sent or saved, plus their metadata.
+const rawUrl = (path) => "/v1/dev/files?path=" + encodeURIComponent(path) + "&raw=1";
+const fmtBytes = (n) => {
+  n = n || 0;
+  if (n < 1024) return n + " B";
+  if (n < 1048576) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + " KB";
+  return (n / 1048576).toFixed(1) + " MB";
+};
+const fmtAgo = (ms) => {
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
+};
+function fileKind(name, mime) {
+  mime = mime || "";
+  if (mime.startsWith("image/")) return mime.slice(6).toUpperCase();
+  if (mime === "application/pdf") return "PDF";
+  if (mime === "application/zip") return "ZIP";
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  if (ext && ext !== name.toLowerCase()) return ext.toUpperCase();
+  return mime === "text/plain" ? "TEXT" : "FILE";
+}
+const frow = (depth, cls) => { const r = el("div", "frow" + (cls ? " " + cls : "")); r.style.paddingLeft = 10 + depth * 15 + "px"; return r; };
+
+let selRow = null;
+function selectFile(row, path) {
+  if (selRow) selRow.classList.remove("sel");
+  selRow = row; if (row) row.classList.add("sel");
+  openFile(path);
+}
+async function loadFileTree() {
+  const nav = $("#filenav"); nav.innerHTML = ""; selRow = null;
+  // Pin the operator files the daemon really serves (DELTA.md, POLICY.md, vocab.json,
+  // PROMPT_CONTEXT.md) — the truth of what steers this agent in prod, not a hardcoded guess.
+  const ops = (await getConfig()).operator_files || [];
+  if (ops.length) {
+    nav.appendChild(el("div", "ftree-sec", "Operator"));
+    for (const f of ops) {
+      const row = frow(0, "file");
+      row.appendChild(el("span", "chev")); row.appendChild(el("span", "ficon", "★")); row.appendChild(el("span", "fname", f));
+      row.addEventListener("click", () => selectFile(row, "operator/" + f));
+      nav.appendChild(row);
+    }
+  }
+  nav.appendChild(el("div", "ftree-sec", "Workspace"));
+  const root = el("div", "fchildren open"); nav.appendChild(root);
+  await renderDir("workspace", root, 0);
+}
+async function renderDir(path, mount, depth) {
+  let r;
+  try { r = await fetch("/v1/dev/files?path=" + encodeURIComponent(path)).then((x) => x.json()); }
+  catch (e) { mount.appendChild(el("div", "ftree-sec", "error")); return; }
+  const entries = (r.entries || []).slice().sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === "dir" ? -1 : 1));
+  if (!entries.length) { const e = frow(depth); e.appendChild(el("span", "chev")); e.appendChild(el("span", "fname fsize", "empty")); mount.appendChild(e); return; }
+  for (const en of entries) {
+    const child = path + "/" + en.name;
+    if (en.type === "dir") {
+      const row = frow(depth, "dir");
+      row.appendChild(el("span", "chev", "▸")); row.appendChild(el("span", "fname", en.name));
+      const kids = el("div", "fchildren");
+      row.addEventListener("click", async () => {
+        const open = row.classList.toggle("open"); kids.classList.toggle("open", open);
+        if (open && !kids.dataset.loaded) { kids.dataset.loaded = "1"; await renderDir(child, kids, depth + 1); }
+      });
+      mount.appendChild(row); mount.appendChild(kids);
+    } else {
+      const row = frow(depth, "file");
+      row.appendChild(el("span", "chev")); row.appendChild(el("span", "fname", en.name)); row.appendChild(el("span", "fsize", fmtBytes(en.size)));
+      row.addEventListener("click", () => selectFile(row, child));
+      mount.appendChild(row);
+    }
+  }
+}
+async function openFile(path) {
+  const pane = $("#filepane");
+  pane.innerHTML = ""; pane.appendChild(fblank("", "loading…"));
+  let r;
+  try { r = await fetch("/v1/dev/files?path=" + encodeURIComponent(path)).then((x) => x.json()); }
+  catch (e) { pane.innerHTML = ""; pane.appendChild(fblank("⚠", "could not load file")); return; }
+  renderFile(pane, path, r);
+}
+function fblank(glyph, text, href, name) {
+  const d = el("div", "fblank");
+  if (glyph) d.appendChild(el("span", "glyph", glyph));
+  d.appendChild(el("span", null, text));
+  if (href) { const a = el("a", "act", "Download"); a.href = href; if (name) a.setAttribute("download", name); d.appendChild(a); }
+  return d;
+}
+function fileMeta(name, mime, r) {
+  const m = el("div", "fmeta");
+  const nm = el("span", "fmeta-name", name); if (r.path) nm.title = r.path; m.appendChild(nm);
+  m.appendChild(el("span", "fmeta-kind", fileKind(name, mime)));
+  const bits = el("div", "fmeta-bits");
+  const bit = (label, val) => { const s = el("span"); s.append(label + " "); s.appendChild(el("b", null, val)); bits.appendChild(s); };
+  bit("size", fmtBytes(r.size));
+  if (r.mtime) bit("edited", fmtAgo(r.mtime));
+  bit("type", mime);
+  m.appendChild(bits);
+  return m;
+}
+function renderFile(pane, path, r) {
+  pane.innerHTML = "";
+  if (r.error) { pane.appendChild(fblank("⛔", r.error.message || "error")); return; }
+  const name = (r.path || path).split("/").pop();
+  const mime = r.mime || (r.binary ? "application/octet-stream" : "text/plain");
+  const meta = fileMeta(name, mime, r); pane.appendChild(meta);
+  // Previewable binaries get an escape hatch: open the raw bytes in a real browser tab
+  // (full-size image, or the browser's native PDF viewer — headless QA can't render it).
+  if (mime.startsWith("image/") || mime === "application/pdf") {
+    const open = el("a", "fmeta-open", "open ↗"); open.href = rawUrl(path); open.target = "_blank"; open.rel = "noopener";
+    meta.querySelector(".fmeta-bits").appendChild(open);
+  }
+  const body = el("div", "fbody"); pane.appendChild(body);
+  if (r.truncated) { body.appendChild(fblank("🗄", "too large to preview inline · " + fmtBytes(r.size), rawUrl(path), name)); return; }
+  if (mime.startsWith("image/")) {
+    const wrap = el("div", "fimg"); const img = el("img"); img.src = rawUrl(path); img.alt = name;
+    img.addEventListener("error", () => { wrap.replaceWith(fblank("🖼", "could not render image", rawUrl(path), name)); });
+    wrap.appendChild(img); body.appendChild(wrap); return;
+  }
+  if (mime === "application/pdf") {
+    // Sandbox the embed: an agent-authored PDF can carry active content, so deny it a
+    // scripting context and same-origin access. The browser's own viewer still renders;
+    // for a full-fidelity view the "open ↗" hatch pops it into a real browser tab.
+    body.style.display = "flex"; const f = el("iframe", "fpdf"); f.setAttribute("sandbox", ""); f.src = rawUrl(path); body.appendChild(f); return;
+  }
+  if (r.content != null) {
+    body.appendChild(pre(r.content));
+    if (r.path && (r.path.startsWith("operator/") || r.path.startsWith("workspace/"))) {
+      const bar = el("div", "editbar"); const edit = el("button", "act", "Edit");
+      edit.addEventListener("click", () => startEdit(pane, path, r)); bar.appendChild(edit); pane.appendChild(bar);
+    }
+    // DELTA.md is the agent's self-file: surface its revision history + revert below the body.
+    if (isSelfFile(r.path || path)) renderSelfHistory(pane);
+    return;
+  }
+  body.appendChild(fblank("📦", "binary file — no inline preview", rawUrl(path), name));
+}
+function startEdit(pane, path, r) {
+  pane.innerHTML = "";
+  pane.appendChild(fileMeta((r.path || path).split("/").pop(), r.mime || "text/plain", r));
+  const body = el("div", "fbody"); const wrap = el("div"); wrap.style.padding = "14px 16px";
+  const ta = el("textarea", "editor"); ta.value = r.content || ""; wrap.appendChild(ta); body.appendChild(wrap); pane.appendChild(body);
+  const bar = el("div", "editbar");
+  const save = el("button", "act", "Save"); const cancel = el("button", "ghost", "Cancel");
+  const status = el("span", "status");
+  save.addEventListener("click", async () => {
+    save.disabled = true; status.textContent = "saving…";
+    try {
+      const res = await fetch("/v1/dev/files?path=" + encodeURIComponent(path), { method: "PUT", body: ta.value });
+      const j = await res.json();
+      status.textContent = res.ok ? (j.note || "saved") : (j.error && j.error.message) || "save failed";
+    } catch (e) { status.textContent = "save failed: " + e; }
+    save.disabled = false;
+  });
+  cancel.addEventListener("click", () => openFile(path));
+  bar.appendChild(save); bar.appendChild(cancel); bar.appendChild(status); pane.appendChild(bar);
+}
+
+// ── DELTA.md self-history (the undo button for the agent's own `remember` writes) ──
+// The self-file is the ONE file the agent rewrites autonomously. Every prior version is
+// snapshotted server-side; this panel surfaces that history so a bad self-edit can be
+// diffed against current and reverted — the safety net was API-only until now.
+const isSelfFile = (p) => (p || "").startsWith("operator/") && /(^|\/)DELTA\.md$/.test(p || "");
+// A minimal line LCS → unified +/-/space diff. The self-file is small (≤~3k bytes), so an
+// O(n·m) table is fine and keeps us dependency-free.
+function lineDiff(oldText, newText) {
+  const a = (oldText || "").split("\n"), b = (newText || "").split("\n");
+  const m = a.length, n = b.length;
+  const lcs = Array.from({ length: m + 1 }, () => new Int32Array(n + 1));
+  for (let i = m - 1; i >= 0; i--) for (let j = n - 1; j >= 0; j--)
+    lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+  const out = []; let i = 0, j = 0;
+  while (i < m && j < n) {
+    if (a[i] === b[j]) { out.push([" ", a[i]]); i++; j++; }
+    else if (lcs[i + 1][j] >= lcs[i][j + 1]) { out.push(["-", a[i]]); i++; }
+    else { out.push(["+", b[j]]); j++; }
+  }
+  while (i < m) out.push(["-", a[i++]]);
+  while (j < n) out.push(["+", b[j++]]);
+  return out;
+}
+function renderDiff(oldText, newText) {
+  const box = el("pre", "selfdiff");
+  for (const [sign, line] of lineDiff(oldText, newText)) {
+    const cls = sign === "+" ? "d-add" : sign === "-" ? "d-del" : "d-ctx";
+    box.appendChild(el("div", "dline " + cls, (sign === " " ? " " : sign) + " " + line));
+  }
+  if (!box.childNodes.length) box.appendChild(el("div", "dline d-ctx", "(no differences)"));
+  return box;
+}
+async function renderSelfHistory(pane) {
+  const wrap = el("div", "selfhist");
+  const head = el("div", "selfhist-head");
+  head.appendChild(el("span", "selfhist-title", "Self-edit history"));
+  head.appendChild(el("span", "selfhist-sub", "the agent's own DELTA.md writes — diff & revert"));
+  wrap.appendChild(head);
+  const status = el("span", "status"); wrap.appendChild(status);
+  pane.appendChild(wrap);
+  let data;
+  try { data = await fetch("/v1/dev/self/revisions").then((x) => x.json()); }
+  catch (e) { status.textContent = "could not load history"; return; }
+  const revs = data.revisions || [];
+  if (!revs.length) { status.textContent = "no prior versions yet — the agent hasn't self-edited."; return; }
+  for (const rev of revs) {
+    const item = el("div", "selfrev");
+    const row = el("div", "selfrev-row");
+    row.appendChild(el("span", "selfrev-when", "#" + rev.id + " · " + fmtAgo(rev.ts)));
+    const diffBtn = el("button", "ghost", "Diff vs current");
+    const revertBtn = el("button", "act", "Revert");
+    row.appendChild(diffBtn); row.appendChild(revertBtn);
+    item.appendChild(row);
+    const diffMount = el("div"); item.appendChild(diffMount);
+    let shown = false;
+    diffBtn.addEventListener("click", () => {
+      shown = !shown;
+      diffMount.innerHTML = "";
+      diffBtn.textContent = shown ? "Hide diff" : "Diff vs current";
+      // Diff reads new→old as current→revision so "+" = what reverting would ADD back.
+      if (shown) diffMount.appendChild(renderDiff(data.current, rev.content));
+    });
+    revertBtn.addEventListener("click", async () => {
+      revertBtn.disabled = true; status.textContent = "reverting…";
+      try {
+        const res = await fetch("/v1/dev/self/revert?id=" + rev.id, { method: "POST" });
+        const j = await res.json();
+        if (res.ok) { status.textContent = j.note || "reverted"; openFile("operator/DELTA.md"); }
+        else { status.textContent = (j.error && j.error.message) || "revert failed"; revertBtn.disabled = false; }
+      } catch (e) { status.textContent = "revert failed: " + e; revertBtn.disabled = false; }
+    });
+    wrap.appendChild(item);
+  }
+}
+
+// ── Data tab (raw table peek, ack=root) ────────────────
+async function loadTables() {
+  const sec = $("#data-tab");
+  try {
+    const { tables } = await fetch("/v1/dev/tables").then((x) => x.json());
+    const layout = el("div", "filetree");
+    const list = el("div", "filelist");
+    for (const tb of tables || []) {
+      const n = el("div", "entry", `${tb.name} · ${fmtNum(tb.rows)}`);
+      n.addEventListener("click", () => peekTable(tb.name));
+      list.appendChild(n);
+    }
+    const view = el("div", "fileview peek"); view.id = "tableview";
+    view.appendChild(el("div", "empty", "Select a table — raw peek, sent with ack=root."));
+    layout.appendChild(list); layout.appendChild(view);
+    sec.innerHTML = ""; sec.appendChild(layout);
+  } catch (e) { sec.innerHTML = '<div class="empty">Failed to load tables.</div>'; }
+}
+async function peekTable(name) {
+  const view = $("#tableview");
+  view.innerHTML = ""; view.appendChild(el("div", "label", name + " (newest first, ≤200)"));
+  try {
+    const r = await fetch(`/v1/dev/tables/${name}?ack=root&limit=200`).then((x) => x.json());
+    if (!r.rows || !r.rows.length) { view.appendChild(el("div", "empty", "no rows")); return; }
+    const tbl = el("table");
+    tbl.innerHTML = "<thead><tr>" + r.cols.map((c) => `<th>${escapeHtml(c)}</th>`).join("") + "</tr></thead>";
+    const tb = el("tbody");
+    for (const row of r.rows) {
+      const tr = el("tr");
+      tr.innerHTML = r.cols.map((c) => `<td>${escapeHtml(row[c] == null ? "" : String(row[c]))}</td>`).join("");
+      tb.appendChild(tr);
+    }
+    tbl.appendChild(tb); view.appendChild(tbl);
+  } catch (e) { view.appendChild(el("div", "empty", "peek failed")); }
+}
+
+// ── Setup tab ──────────────────────────────────────────
+async function loadSetup() {
+  const sec = $("#setup-tab");
+  try {
+    const c = await getConfig();
+    const cards = el("div", "cards");
+    cards.appendChild(cardKV("Identity", { agent_id: c.agent_id || "—", version: c.version, build: c.build || "—", port: c.port, profile: c.profile, namespace: c.namespace }));
+    if (c.model) cards.appendChild(cardKV("Model", { model: c.model.model, utility: c.model.utility || "—", reasoning_effort: c.model.reasoning_effort || "default", api: c.model.api, base_url: c.model.base_url }));
+    if (c.secrets_present) {
+      const card = el("div", "card"); card.appendChild(el("h3", null, "Secrets present"));
+      for (const [k, v] of Object.entries(c.secrets_present)) card.appendChild(el("span", "pill " + (v ? "on" : "off"), (v ? "✓ " : "· ") + k));
+      cards.appendChild(card);
+    }
+    if (c.tools) {
+      const n = (c.tools.mcp || []).length + (c.tools.builtin || []).length;
+      const card = el("div", "card"); card.appendChild(el("h3", null, "Tools · " + n));
+      for (const t of c.tools.mcp || []) card.appendChild(el("span", "pill", t));
+      for (const t of c.tools.builtin || []) card.appendChild(el("span", "pill", t));
+      cards.appendChild(card);
+    }
+    if ((c.mcp_servers || []).length) {
+      const card = el("div", "card"); card.appendChild(el("h3", null, "MCP servers"));
+      for (const s of c.mcp_servers) card.appendChild(el("span", "pill", s.name + " · " + s.transport));
+      cards.appendChild(card);
+    }
+    if (c.vocab) cards.appendChild(cardKV("Vocab", c.vocab));
+    const ops = c.operator_files || [];
+    if (ops.length) {
+      const opCard = el("div", "card"); opCard.appendChild(el("h3", null, "Operator files"));
+      for (const f of ops) {
+        const link = el("a", null, "★ " + f); link.href = "#";
+        link.addEventListener("click", (e) => { e.preventDefault(); document.querySelector('nav#tabs button[data-tab="files"]').click(); openFile("operator/" + f); });
+        const row = el("div"); row.appendChild(link); opCard.appendChild(row);
+      }
+      cards.appendChild(opCard);
+    }
+    sec.innerHTML = ""; sec.appendChild(cards);
+    $("#agent-id").textContent = c.agent_id || "local";
+  } catch (e) { sec.innerHTML = '<div class="empty">Failed to load config.</div>'; }
+}
+function cardKV(title, obj) {
+  const card = el("div", "card"); card.appendChild(el("h3", null, title));
+  const kv = el("div", "kv");
+  for (const [k, v] of Object.entries(obj)) {
+    kv.appendChild(el("span", "k", k));
+    kv.appendChild(el("span", "v", Array.isArray(v) ? v.join(", ") : String(v ?? "—")));
+  }
+  card.appendChild(kv); return card;
+}
+
+// ── Boot ───────────────────────────────────────────────
+getConfig().then((c) => { $("#agent-id").textContent = c.agent_id || "local"; });
+loadThreadList();
+connect({ live: true });
+</script>
+</body>
+</html>

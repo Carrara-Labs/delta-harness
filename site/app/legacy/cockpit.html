@@ -1,0 +1,462 @@
+<div class="page">
+          <div class="cockpit-wrap" id="proof-run">
+            <div class="cockpit-intro">
+              <div>
+                <p class="section-kicker">Delta Cockpit</p>
+                <h2 id="cockpit-title">Inspect the work, not just the answer.</h2>
+              </div>
+              <p>Open any thread to inspect every model turn, tool call, delegated task, file and recorded cost. These illustrative timelines use the same trace primitives and controls as <code>delta dev</code>.</p>
+            </div>
+
+            <dl class="run-receipt" aria-label="Illustrative Cockpit summary">
+              <div><dt>Workflows</dt><dd>Renewal · churn · pricing · executive</dd></div>
+              <div><dt>Evidence</dt><dd>Model input · tools · journals · files</dd></div>
+              <div><dt>Explore</dt><dd>4 threads · 6 runs</dd></div>
+              <div><dt>Visibility</dt><dd>Tokens · cache · latency · cost</dd></div>
+            </dl>
+
+            <div class="product-cockpit" role="region" aria-labelledby="cockpit-title">
+              <div class="pc-bar">
+                <div class="pc-brand"><span class="pc-brand-glyph" aria-hidden="true">▲</span><span class="pc-brand-label">Delta Cockpit</span></div>
+                <div class="pc-tabs" role="tablist" aria-label="Cockpit views">
+                  <button class="pc-tab-button active" id="pc-tab-thread" type="button" role="tab" aria-selected="true" aria-controls="pc-thread" data-cockpit-tab="thread">Thread</button>
+                  <button class="pc-tab-button" id="pc-tab-runs" type="button" role="tab" aria-selected="false" aria-controls="pc-runs" data-cockpit-tab="runs">Runs</button>
+                  <button class="pc-tab-button" id="pc-tab-files" type="button" role="tab" aria-selected="false" aria-controls="pc-files" data-cockpit-tab="files">Files</button>
+                  <button class="pc-tab-button" id="pc-tab-data" type="button" role="tab" aria-selected="false" aria-controls="pc-data" data-cockpit-tab="data">Data</button>
+                  <button class="pc-tab-button" id="pc-tab-setup" type="button" role="tab" aria-selected="false" aria-controls="pc-setup" data-cockpit-tab="setup">Setup</button>
+                </div>
+                <span class="pc-spacer"></span>
+                <span class="pc-agent">agent <b>account-intel</b></span>
+                <span class="pc-meter"><span>tokens <b data-pc-meter="tokens">92,157</b></span><span>cost <b data-pc-meter="cost">$0.0456</b></span><span>runs <b data-pc-meter="runs">2</b></span></span>
+                <span class="pc-live">ILLUSTRATIVE DATA</span>
+              </div>
+              <div class="pc-mobile-meter"><span>tokens <b data-pc-meter="tokens">92,157</b></span><span>cost <b data-pc-meter="cost">$0.0456</b></span><span>runs <b data-pc-meter="runs">2</b></span></div>
+
+              <div class="pc-stage">
+                <section class="pc-panel pc-thread-panel active" id="pc-thread" role="tabpanel" aria-labelledby="pc-tab-thread" tabindex="0">
+                  <aside class="pc-thread-list" aria-label="Example threads">
+                    <div class="pc-thread-head"><span>Threads</span><span class="pc-new" aria-hidden="true">Example set</span></div>
+                    <ul class="pc-thread-items" aria-label="Thread examples">
+                      <li><button class="pc-thread-item" type="button" data-demo-thread="all" data-tokens="408,600" data-cost="$0.2201" data-runs="6" aria-pressed="false"><span class="pc-thread-name"><span class="pc-thread-live-dot"></span>Live · all activity</span><span class="pc-thread-meta">6 runs across 4 sessions</span></button></li>
+                      <li><button class="pc-thread-item active" type="button" data-demo-thread="renewal" data-tokens="92,157" data-cost="$0.0456" data-runs="2" aria-pressed="true"><span class="pc-thread-name">Build Acme's renewal decision pack</span><span class="pc-thread-meta">2 turns</span></button></li>
+                      <li><button class="pc-thread-item" type="button" data-demo-thread="churn" data-tokens="131,695" data-cost="$0.0802" data-runs="1" aria-pressed="false"><span class="pc-thread-name">Explain the Q3 retention drop</span><span class="pc-thread-meta">1 turn</span></button></li>
+                      <li><button class="pc-thread-item" type="button" data-demo-thread="pricing" data-tokens="113,734" data-cost="$0.0584" data-runs="1" aria-pressed="false"><span class="pc-thread-name">Assess competitor pricing exposure</span><span class="pc-thread-meta">1 turn</span></button></li>
+                      <li><button class="pc-thread-item" type="button" data-demo-thread="executive" data-tokens="71,014" data-cost="$0.0359" data-runs="2" aria-pressed="false"><span class="pc-thread-name">Prepare the weekly account memo</span><span class="pc-thread-meta">2 turns</span></button></li>
+                    </ul>
+                  </aside>
+
+                  <div class="pc-thread-main">
+                    <div class="pc-timeline" role="region" aria-label="Selected thread timeline" tabindex="0">
+                      <div class="pc-thread-column pc-thread-view" data-demo-thread-view="renewal">
+                        <div class="pc-session-divider">Acme renewal decision pack</div>
+                        <div class="pc-conversation-run">
+                          <div class="pc-message user"><div class="pc-bubble user">Build an approval-ready Acme renewal decision pack from the CRM, 90 days of support, the account-team channel and <code>inbox/2026-07-13/acme-call.txt</code>. Challenge the narrative independently, save the brief and evidence note, then submit one proposal for review. Do not change the CRM.</div></div>
+                          <div class="pc-recall"><strong>Recall · 2 learnings</strong><span>(procedure/agent) Lead renewal briefs with material risk, then evidence.</span><span>(preference/user) Preserve approved context when revising an existing review item.</span></div>
+
+                          <div class="pc-trace">
+                            <div class="pc-turn-label">Turn 1</div>
+                            <details class="pc-input-card">
+                              <summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>6,840</b> tokens in · <b>82%</b> cached</span></summary>
+                              <div class="pc-input-detail" data-demo-call-detail="renewal-r1-t1" role="region" aria-label="Illustrative normalized request for Acme run 1 turn 1" tabindex="0"></div>
+                            </details>
+                            <div class="pc-tool-stack">
+                              <details class="pc-tool"><summary><span class="pc-tool-badge mcp">mcp</span><span class="pc-tool-name">crm__get_account</span><span class="pc-tool-status">✓ 214ms</span></summary><div class="pc-tool-detail">Journal · read-time redaction applied<code>args  { "account_id": "acme" }
+result  { "arr_usd": 248000, "renewal": "2026-09-30", "probability": 0.62 }</code></div></details>
+                              <details class="pc-tool"><summary><span class="pc-tool-badge mcp">mcp</span><span class="pc-tool-name">support__search_tickets</span><span class="pc-tool-status">✓ 486ms</span></summary><div class="pc-tool-detail">Journal · read-time redaction applied<code>args  { "account": "acme", "window": "90d" }
+result  14 tickets · 4 open · permissions and data sync dominate</code></div></details>
+                              <details class="pc-tool"><summary><span class="pc-tool-badge mcp">mcp</span><span class="pc-tool-name">slack__search</span><span class="pc-tool-status">✓ 362ms</span></summary><div class="pc-tool-detail">Journal · read-time redaction applied<code>args  { "query": "acme renewal implementation" }
+result  18 days behind · sponsor engaged · no confirmed recovery owner</code></div></details>
+                              <details class="pc-tool"><summary><span class="pc-tool-badge mcp">mcp</span><span class="pc-tool-name">review__get_review_item</span><span class="pc-tool-status">✓ 188ms</span></summary><div class="pc-tool-detail">Journal · read-time redaction applied<code>args  { "review_item_id": "RI-4821" }
+result  { "revision": 2, "status": "changes_requested" }</code></div></details>
+                              <details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">read_file</span><span class="pc-tool-status">✓ 24ms</span></summary><div class="pc-tool-detail">Workspace read<code>inbox/2026-07-13/acme-call.txt · 412 lines</code></div></details>
+                            </div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>161</b> · <b>$0.0032</b> · <b>1,284ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 2</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>8,112</b> tokens in · <b>86%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="renewal-r1-t2" role="region" aria-label="Illustrative normalized request for Acme run 1 turn 2" tabindex="0"></div></details>
+                            <div class="pc-tool-stack"><details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">write_file</span><span class="pc-tool-status">✓ 21ms</span></summary><div class="pc-tool-detail">Workspace write<code>wrote 3,842 chars to evidence/acme-source-pack.md</code></div></details></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>183</b> · <b>$0.0035</b> · <b>1,176ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 3</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>8,708</b> tokens in · <b>88%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="renewal-r1-t3" role="region" aria-label="Illustrative normalized request for Acme run 1 turn 3" tabindex="0"></div></details>
+                            <div class="pc-tool-stack"><details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">spawn_subagent</span><span class="pc-tool-status">✓ 6.8s</span></summary><div class="pc-tool-detail">Fresh child context · shared workspace · narrowly forwarded model credential<code>task  Read evidence/acme-source-pack.md. Challenge the evidence independently. Identify contradictions, missing owners and unsupported claims. Save the note to evidence/acme-risk-check.md. Make no external changes.
+result  saved evidence/acme-risk-check.md · 3 material risks · 2 contradictions · 1 missing owner</code></div></details></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>144</b> · <b>$0.0037</b> · <b>1,288ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 4</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>9,220</b> tokens in · <b>90%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="renewal-r1-t4" role="region" aria-label="Illustrative normalized request for Acme run 1 turn 4" tabindex="0"></div></details>
+                            <div class="pc-tool-stack"><details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">read_file</span><span class="pc-tool-status">✓ 18ms</span></summary><div class="pc-tool-detail">Workspace read<code>evidence/acme-risk-check.md · 2.7 KB</code></div></details></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>117</b> · <b>$0.0033</b> · <b>1,046ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 5</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>10,014</b> tokens in · <b>91%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="renewal-r1-t5" role="region" aria-label="Illustrative normalized request for Acme run 1 turn 5" tabindex="0"></div></details>
+                            <div class="pc-tool-stack"><details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">write_file</span><span class="pc-tool-status">✓ 22ms</span></summary><div class="pc-tool-detail">Workspace write<code>wrote 1,486 chars to briefs/acme-renewal.md</code></div></details></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>185</b> · <b>$0.0042</b> · <b>1,338ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 6</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>10,786</b> tokens in · <b>92%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="renewal-r1-t6" role="region" aria-label="Illustrative normalized request for Acme run 1 turn 6" tabindex="0"></div></details>
+                            <div class="pc-tool-stack"><details class="pc-tool"><summary><span class="pc-tool-badge mcp">mcp</span><span class="pc-tool-name">review__propose_change</span><span class="pc-tool-status">✓ 274ms</span></summary><div class="pc-tool-detail">Journal · proposal sent to connected review product<code>args  { "supersedes_id": "RI-4821", "artifact_path": "briefs/acme-renewal.md", "run_ref": "resp_a3f09d2c8e174b65a2f941d6bc730e5f", "summary": "Revision 3 leads with material risk and includes an independent challenge." }
+result  { "review_item_id": "RI-4821", "revision": 3, "status": "pending" }</code></div></details></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>92</b> · <b>$0.0034</b> · <b>1,074ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 7</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>11,700</b> tokens in · <b>93%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="renewal-r1-t7" role="region" aria-label="Illustrative normalized request for Acme run 1 turn 7" tabindex="0"></div></details>
+                            <div class="pc-message"><div class="pc-bubble assistant">Built Acme's renewal decision pack. <code>briefs/acme-renewal.md</code> leads with the 18-day delay and unconfirmed recovery owner. <code>evidence/acme-risk-check.md</code> preserves the independent challenge. Revision 3 is pending on <code>RI-4821</code>. The CRM remains unchanged.</div></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>218</b> · <b>$0.0078</b> · <b>1,422ms</b> · primary</div>
+                            <div class="pc-run-total"><strong>● done · run complete</strong><span>74,880 tokens · in 73,380 · out 1,500 · 90% cached · $0.0371</span></div>
+                          </div>
+                        </div>
+
+                        <div class="pc-conversation-run">
+                          <div class="pc-message user"><div class="pc-bubble user">Review outcome for <code>RI-4821</code> revision 3: accepted with one edit. Proposed: “no recovery owner.” Accepted: “recovery owner proposed; start date unconfirmed.” Reviewer note: distinguish proposed from committed ownership.</div></div>
+                          <div class="pc-event-line"><span class="pc-event-chip">▶ started · review disposition</span></div>
+                          <div class="pc-trace">
+                            <div class="pc-turn-label">Turn 1</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>4,812</b> tokens in · <b>84%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="renewal-r2-t1" role="region" aria-label="Illustrative normalized review disposition request turn 1" tabindex="0"></div></details>
+                            <div class="pc-tool-stack">
+                              <details class="pc-tool"><summary><span class="pc-tool-badge mcp">mcp</span><span class="pc-tool-name">review__get_review_item</span><span class="pc-tool-status">✓ 176ms</span></summary><div class="pc-tool-detail">Journal · read-time redaction applied<code>result  { "review_item_id": "RI-4821", "revision": 3, "status": "approved_with_edit" }</code></div></details>
+                              <details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">read_file</span><span class="pc-tool-status">✓ 16ms</span></summary><div class="pc-tool-detail">Workspace read<code>briefs/acme-renewal.md · revision 3 proposed bytes</code></div></details>
+                            </div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>164</b> · <b>$0.0026</b> · <b>924ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 2</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>5,738</b> tokens in · <b>87%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="renewal-r2-t2" role="region" aria-label="Illustrative normalized review disposition request turn 2" tabindex="0"></div></details>
+                            <div class="pc-tool-stack"><details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">write_file</span><span class="pc-tool-status">✓ 19ms</span></summary><div class="pc-tool-detail">Workspace write<code>wrote 1,522 chars to briefs/acme-renewal.md</code></div></details></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>192</b> · <b>$0.0028</b> · <b>988ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 3</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>6,182</b> tokens in · <b>89%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="renewal-r2-t3" role="region" aria-label="Illustrative normalized review disposition request turn 3" tabindex="0"></div></details>
+                            <div class="pc-message"><div class="pc-bubble assistant">Synced the accepted brief. It now distinguishes the proposed recovery owner from a committed owner and leaves the start date unconfirmed. Review item <code>RI-4821</code> is approved. The CRM remains unchanged.</div></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>189</b> · <b>$0.0031</b> · <b>906ms</b> · primary</div>
+                            <div class="pc-run-total"><strong>● done · run complete</strong><span>17,277 tokens · in 16,732 · out 545 · 87% cached · $0.0085</span></div>
+                            <div class="pc-event-line"><span class="pc-event-chip">reflection · preference stored</span></div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div class="pc-thread-column pc-thread-view" data-demo-thread-view="churn" hidden="">
+                        <div class="pc-session-divider">Q3 retention diagnosis</div>
+                        <div class="pc-conversation-run">
+                          <div class="pc-message user"><div class="pc-bubble user">Explain the 7.1-point Q3 NRR decline. Separate broad market pressure from concentrated account failures, test competing explanations, and save a decision memo with the accounts and interventions that matter. Do not update any customer record.</div></div>
+                          <div class="pc-trace">
+                            <div class="pc-turn-label">Turn 1</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>12,904</b> tokens in · <b>81%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="churn-r1-t1" role="region" aria-label="Illustrative normalized retention diagnosis request turn 1" tabindex="0"></div></details>
+                            <div class="pc-tool-stack"><details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">research</span><span class="pc-tool-status">✓ 18.4s</span></summary><div class="pc-tool-detail">Three bounded read-only researchers · full findings saved by the parent<code>tasks  [
+  "Concentration by ARR, product and tenure",
+  "Support precursors before churn",
+  "Conflicts between CRM loss reasons and exit interviews"
+]
+result  3 summaries · research/resp_6b9e2c4f137a42c9b8d501e7a64c023d.0/0-Concentration_by_ARR__product_and_tenure.md · 1-Support_precursors_before_churn.md · 2-Conflicts_between_CRM_loss_reasons_and_e.md</code></div></details></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>176</b> · <b>$0.0072</b> · <b>1,324ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 2</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>17,418</b> tokens in · <b>87%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="churn-r1-t2" role="region" aria-label="Illustrative normalized retention diagnosis request turn 2" tabindex="0"></div></details>
+                            <div class="pc-tool-stack">
+                              <details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">read_file</span><span class="pc-tool-status">✓ 16ms</span></summary><div class="pc-tool-detail">Workspace read<code>research/resp_6b9e2c4f137a42c9b8d501e7a64c023d.0/0-Concentration_by_ARR__product_and_tenure.md · 8.1 KB</code></div></details>
+                              <details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">read_file</span><span class="pc-tool-status">✓ 15ms</span></summary><div class="pc-tool-detail">Workspace read<code>research/resp_6b9e2c4f137a42c9b8d501e7a64c023d.0/1-Support_precursors_before_churn.md · 6.7 KB</code></div></details>
+                              <details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">read_file</span><span class="pc-tool-status">✓ 17ms</span></summary><div class="pc-tool-detail">Workspace read<code>research/resp_6b9e2c4f137a42c9b8d501e7a64c023d.0/2-Conflicts_between_CRM_loss_reasons_and_e.md · 5.4 KB</code></div></details>
+                            </div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>184</b> · <b>$0.0068</b> · <b>1,176ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 3</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>20,260</b> tokens in · <b>90%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="churn-r1-t3" role="region" aria-label="Illustrative normalized retention diagnosis request turn 3" tabindex="0"></div></details>
+                            <div class="pc-tool-stack"><details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">eval_n</span><span class="pc-tool-status">✓ 24.1s</span></summary><div class="pc-tool-detail">Three independent attempts plus one judge<code>task  Test three causal explanations for the Q3 NRR decline. Analyze only. Do not write files or take external actions.
+rubric  quantitative support · falsifiability · actionable next step
+result  winner 2 of 3 · concentrated failures with onboarding precursor</code></div></details></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>244</b> · <b>$0.0094</b> · <b>1,462ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 4</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>21,804</b> tokens in · <b>92%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="churn-r1-t4" role="region" aria-label="Illustrative normalized retention diagnosis request turn 4" tabindex="0"></div></details>
+                            <div class="pc-tool-stack"><details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">write_file</span><span class="pc-tool-status">✓ 21ms</span></summary><div class="pc-tool-detail">Workspace write<code>wrote 2,304 chars to analysis/q3-retention.md</code></div></details></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>312</b> · <b>$0.0108</b> · <b>1,506ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 5</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>23,490</b> tokens in · <b>93%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="churn-r1-t5" role="region" aria-label="Illustrative normalized retention diagnosis request turn 5" tabindex="0"></div></details>
+                            <div class="pc-message"><div class="pc-bubble assistant">Saved <code>analysis/q3-retention.md</code>. The decline is concentrated, not portfolio-wide: 11 accounts explain 72% of lost ARR, and 8 entered renewal with unresolved onboarding work. Permissions and data-sync issues account for 61% of their support volume. The memo flags three CRM loss reasons that conflict with the underlying evidence. No customer record was changed.</div></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>303</b> · <b>$0.0120</b> · <b>1,684ms</b> · primary</div>
+                            <div class="pc-run-total"><strong>● done · run complete</strong><span>131,695 tokens · in 129,876 · out 1,819 · 89% cached · $0.0802</span></div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div class="pc-thread-column pc-thread-view" data-demo-thread-view="pricing" hidden="">
+                        <div class="pc-session-divider">Competitive pricing exposure</div>
+                        <div class="pc-conversation-run">
+                          <div class="pc-message user"><div class="pc-bubble user">Compare this week's public API pricing for OpenAI, Anthropic and Google with last Monday's snapshot. Quantify exposure across open opportunities and upcoming renewals, save a cited response brief, and repeat the check every Monday at 07:00 Paris time. Do not change pricing or CRM records.</div></div>
+                          <div class="pc-trace">
+                            <div class="pc-turn-label">Turn 1</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>10,240</b> tokens in · <b>83%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="pricing-r1-t1" role="region" aria-label="Illustrative normalized pricing exposure request turn 1" tabindex="0"></div></details>
+                            <div class="pc-tool-stack">
+                              <details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">web_search</span><span class="pc-tool-status">✓ 684ms</span></summary><div class="pc-tool-detail">Public web search<code>query  OpenAI official API pricing
+result  5 results · official pricing page ranked first</code></div></details>
+                              <details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">web_search</span><span class="pc-tool-status">✓ 612ms</span></summary><div class="pc-tool-detail">Public web search<code>query  Anthropic official API pricing
+result  5 results · official pricing page ranked first</code></div></details>
+                              <details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">web_search</span><span class="pc-tool-status">✓ 731ms</span></summary><div class="pc-tool-detail">Public web search<code>query  Google Gemini official API pricing
+result  5 results · official pricing page ranked first</code></div></details>
+                            </div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>186</b> · <b>$0.0068</b> · <b>1,194ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 2</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>16,842</b> tokens in · <b>87%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="pricing-r1-t2" role="region" aria-label="Illustrative normalized pricing exposure request turn 2" tabindex="0"></div></details>
+                            <div class="pc-tool-stack">
+                              <details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">web_fetch</span><span class="pc-tool-status">✓ 1.1s</span></summary><div class="pc-tool-detail">Fetched official source<code>https://developers.openai.com/api/docs/pricing · 18.2 KB · fetched 2026-07-14T08:12:11Z</code></div></details>
+                              <details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">web_fetch</span><span class="pc-tool-status">✓ 986ms</span></summary><div class="pc-tool-detail">Fetched official source<code>https://platform.claude.com/docs/en/about-claude/pricing · 14.8 KB · fetched 2026-07-14T08:12:12Z</code></div></details>
+                              <details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">web_fetch</span><span class="pc-tool-status">✓ 1.2s</span></summary><div class="pc-tool-detail">Fetched official source<code>https://ai.google.dev/gemini-api/docs/pricing · 21.4 KB · fetched 2026-07-14T08:12:12Z</code></div></details>
+                            </div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>208</b> · <b>$0.0089</b> · <b>1,884ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 3</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>24,690</b> tokens in · <b>90%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="pricing-r1-t3" role="region" aria-label="Illustrative normalized pricing exposure request turn 3" tabindex="0"></div></details>
+                            <div class="pc-tool-stack">
+                              <details class="pc-tool"><summary><span class="pc-tool-badge mcp">mcp</span><span class="pc-tool-name">crm__search_accounts</span><span class="pc-tool-status">✓ 342ms</span></summary><div class="pc-tool-detail">Journal · read-time redaction applied<code>args  { "competitors": ["openai", "anthropic", "google"], "stage": "open" }
+result  19 opportunities · $1.4M pipeline · 7 directly exposed</code></div></details>
+                              <details class="pc-tool"><summary><span class="pc-tool-badge mcp">mcp</span><span class="pc-tool-name">billing__list_contracts</span><span class="pc-tool-status">✓ 296ms</span></summary><div class="pc-tool-detail">Journal · read-time redaction applied<code>args  { "renewal_within_days": 90 }
+result  6 renewals · $740k ARR · 3 require response this week</code></div></details>
+                              <details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">read_file</span><span class="pc-tool-status">✓ 16ms</span></summary><div class="pc-tool-detail">Workspace read<code>evidence/pricing/2026-07-13.md · 9.2 KB</code></div></details>
+                            </div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>221</b> · <b>$0.0107</b> · <b>1,316ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 4</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>18,386</b> tokens in · <b>91%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="pricing-r1-t4" role="region" aria-label="Illustrative normalized pricing exposure request turn 4" tabindex="0"></div></details>
+                            <div class="pc-tool-stack">
+                              <details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">write_file</span><span class="pc-tool-status">✓ 22ms</span></summary><div class="pc-tool-detail">Workspace write<code>wrote 2,618 chars to analysis/pricing-watch-2026-07-14.md</code></div></details>
+                              <details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">write_file</span><span class="pc-tool-status">✓ 18ms</span></summary><div class="pc-tool-detail">Workspace write<code>wrote 1,904 chars to evidence/pricing-sources-2026-07-14.md</code></div></details>
+                            </div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>284</b> · <b>$0.0115</b> · <b>1,408ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 5</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>20,744</b> tokens in · <b>92%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="pricing-r1-t5" role="region" aria-label="Illustrative normalized pricing exposure request turn 5" tabindex="0"></div></details>
+                            <div class="pc-tool-stack"><details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">schedule_self</span><span class="pc-tool-status">✓ 128ms</span></summary><div class="pc-tool-detail">Control plane schedule<code>args  { "spec": { "kind": "cron", "cronExpr": "0 7 * * 1", "tz": "Europe/Paris" }, "prompt": "Repeat the competitive pricing exposure check with current public sources." }
+result  scheduled sched_pricing_monday
+        next run 2026-07-20T05:00:00.000Z</code></div></details></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>117</b> · <b>$0.0091</b> · <b>1,022ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 6</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>21,638</b> tokens in · <b>93%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="pricing-r1-t6" role="region" aria-label="Illustrative normalized pricing exposure request turn 6" tabindex="0"></div></details>
+                            <div class="pc-message"><div class="pc-bubble assistant">Saved the cited pricing brief and source ledger. None of the three competitors cut headline price, but two moved high-value features into lower tiers and one added annual-commit credits. Nineteen open opportunities and six renewals have meaningful exposure; three accounts need a response this week. The check will run every Monday at 07:00 Europe/Paris. No pricing or CRM record was changed.</div></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>178</b> · <b>$0.0114</b> · <b>1,196ms</b> · primary</div>
+                            <div class="pc-run-total"><strong>● done · run complete</strong><span>113,734 tokens · in 112,540 · out 1,194 · 91% cached · $0.0584</span></div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div class="pc-thread-column pc-thread-view" data-demo-thread-view="executive" hidden="">
+                        <div class="pc-session-divider">Weekly executive account memo</div>
+                        <div class="pc-conversation-run">
+                          <div class="pc-message user"><div class="pc-bubble user">Prepare Friday's executive account memo. Lead with the decisions that need attention, reconcile portfolio metrics with account evidence, save the draft, and submit one review proposal.</div></div>
+                          <div class="pc-recall"><strong>Recall · 1 learning</strong><span>(procedure/agent) Separate gross pipeline from net renewal exposure.</span></div>
+                          <div class="pc-trace">
+                            <div class="pc-turn-label">Turn 1</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>6,640</b> tokens in · <b>80%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="executive-r1-t1" role="region" aria-label="Illustrative normalized executive memo request turn 1" tabindex="0"></div></details>
+                            <div class="pc-tool-stack">
+                              <details class="pc-tool"><summary><span class="pc-tool-badge mcp">mcp</span><span class="pc-tool-name">warehouse__get_metrics</span><span class="pc-tool-status">✓ 422ms</span></summary><div class="pc-tool-detail">Journal · read-time redaction applied<code>result  $2.4M gross pipeline at risk · $860k net renewal exposure</code></div></details>
+                              <details class="pc-tool"><summary><span class="pc-tool-badge mcp">mcp</span><span class="pc-tool-name">crm__search_accounts</span><span class="pc-tool-status">✓ 338ms</span></summary><div class="pc-tool-detail">Journal · read-time redaction applied<code>result  7 accounts need decisions · 3 have committed mitigations</code></div></details>
+                              <details class="pc-tool"><summary><span class="pc-tool-badge mcp">mcp</span><span class="pc-tool-name">support__get_theme_summary</span><span class="pc-tool-status">✓ 376ms</span></summary><div class="pc-tool-detail">Journal · read-time redaction applied<code>result  permissions and data sync remain the leading renewal precursor</code></div></details>
+                              <details class="pc-tool"><summary><span class="pc-tool-badge mcp">mcp</span><span class="pc-tool-name">slack__search</span><span class="pc-tool-status">✓ 294ms</span></summary><div class="pc-tool-detail">Journal · read-time redaction applied<code>result  11 cited account-team decisions across 5 channels</code></div></details>
+                              <details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">read_file</span><span class="pc-tool-status">✓ 17ms</span></summary><div class="pc-tool-detail">Workspace read<code>memos/weekly-account-2026-W28.md · 3.8 KB</code></div></details>
+                            </div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>114</b> · <b>$0.0035</b> · <b>1,188ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 2</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>8,408</b> tokens in · <b>85%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="executive-r1-t2" role="region" aria-label="Illustrative normalized executive memo request turn 2" tabindex="0"></div></details>
+                            <div class="pc-tool-stack"><details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">eval_n</span><span class="pc-tool-status">✓ 15.8s</span></summary><div class="pc-tool-detail">Three independent attempts plus one judge<code>task  Draft and compare three executive memo narratives. Draft only. Do not write files or take external actions.
+rubric  decision clarity · evidence coverage · executive brevity
+result  winner 1 of 3 · lead with net exposure, retain gross pipeline as context</code></div></details></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>142</b> · <b>$0.0038</b> · <b>1,304ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 3</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>8,292</b> tokens in · <b>88%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="executive-r1-t3" role="region" aria-label="Illustrative normalized executive memo request turn 3" tabindex="0"></div></details>
+                            <div class="pc-tool-stack"><details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">write_file</span><span class="pc-tool-status">✓ 19ms</span></summary><div class="pc-tool-detail">Workspace write<code>wrote 2,146 chars to memos/weekly-account-2026-W29.md</code></div></details></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>116</b> · <b>$0.0036</b> · <b>1,062ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 4</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>8,844</b> tokens in · <b>90%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="executive-r1-t4" role="region" aria-label="Illustrative normalized executive memo request turn 4" tabindex="0"></div></details>
+                            <div class="pc-tool-stack"><details class="pc-tool"><summary><span class="pc-tool-badge mcp">mcp</span><span class="pc-tool-name">review__propose_change</span><span class="pc-tool-status">✓ 262ms</span></summary><div class="pc-tool-detail">Journal · proposal sent to connected review product<code>args  { "artifact_path": "memos/weekly-account-2026-W29.md", "run_ref": "resp_2e7c5b9d4a814f6ca320e7581b96d04a", "summary": "Friday account memo with seven decision points." }
+result  { "review_item_id": "EM-204", "status": "pending" }</code></div></details></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>79</b> · <b>$0.0031</b> · <b>1,004ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 5</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>10,246</b> tokens in · <b>91%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="executive-r1-t5" role="region" aria-label="Illustrative normalized executive memo request turn 5" tabindex="0"></div></details>
+                            <div class="pc-message"><div class="pc-bubble assistant">Saved <code>memos/weekly-account-2026-W29.md</code> and submitted <code>EM-204</code> for review. The memo separates $2.4M gross pipeline from $860k net renewal exposure and names the seven account decisions that need attention.</div></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>139</b> · <b>$0.0042</b> · <b>1,202ms</b> · primary</div>
+                            <div class="pc-run-total"><strong>● done · run complete</strong><span>55,420 tokens · in 54,430 · out 990 · 87% cached · $0.0272</span></div>
+                          </div>
+                        </div>
+
+                        <div class="pc-conversation-run">
+                          <div class="pc-message user"><div class="pc-bubble user">Review outcome for <code>EM-204</code>: accepted with edits. Proposed headline: “$2.4M pipeline at risk.” Accepted headline: “$860k net renewal exposure after committed mitigations.” Reviewer note: lead with net exposure and preserve gross pipeline as context.</div></div>
+                          <div class="pc-event-line"><span class="pc-event-chip">▶ started · review disposition</span></div>
+                          <div class="pc-trace">
+                            <div class="pc-turn-label">Turn 1</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>4,420</b> tokens in · <b>82%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="executive-r2-t1" role="region" aria-label="Illustrative normalized executive memo review disposition turn 1" tabindex="0"></div></details>
+                            <div class="pc-tool-stack">
+                              <details class="pc-tool"><summary><span class="pc-tool-badge mcp">mcp</span><span class="pc-tool-name">review__get_review_item</span><span class="pc-tool-status">✓ 164ms</span></summary><div class="pc-tool-detail">Journal · read-time redaction applied<code>result  { "review_item_id": "EM-204", "status": "approved_with_edit" }</code></div></details>
+                              <details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">read_file</span><span class="pc-tool-status">✓ 15ms</span></summary><div class="pc-tool-detail">Workspace read<code>memos/weekly-account-2026-W29.md · proposed bytes</code></div></details>
+                            </div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>164</b> · <b>$0.0030</b> · <b>882ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 2</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>5,082</b> tokens in · <b>86%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="executive-r2-t2" role="region" aria-label="Illustrative normalized executive memo review disposition turn 2" tabindex="0"></div></details>
+                            <div class="pc-tool-stack"><details class="pc-tool"><summary><span class="pc-tool-badge">built-in</span><span class="pc-tool-name">write_file</span><span class="pc-tool-status">✓ 18ms</span></summary><div class="pc-tool-detail">Workspace write<code>wrote accepted bytes to memos/weekly-account-2026-W29.md</code></div></details></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>202</b> · <b>$0.0028</b> · <b>936ms</b> · primary</div>
+
+                            <div class="pc-turn-label">Turn 3</div>
+                            <details class="pc-input-card"><summary><span>input <span class="pc-input-chevron" aria-hidden="true">›</span></span><span class="pc-input-meta"><b>5,528</b> tokens in · <b>88%</b> cached</span></summary><div class="pc-input-detail" data-demo-call-detail="executive-r2-t3" role="region" aria-label="Illustrative normalized executive memo review disposition turn 3" tabindex="0"></div></details>
+                            <div class="pc-message"><div class="pc-bubble assistant">Synced the accepted memo. The headline now uses $860k net renewal exposure after committed mitigations, with $2.4M gross pipeline retained as context. Review item <code>EM-204</code> is approved.</div></div>
+                            <div class="pc-call-stats"><b>anthropic/claude-sonnet-5</b> · out <b>198</b> · <b>$0.0029</b> · <b>914ms</b> · primary</div>
+                            <div class="pc-run-total"><strong>● done · run complete</strong><span>15,594 tokens · in 15,030 · out 564 · 85% cached · $0.0087</span></div>
+                            <div class="pc-event-line"><span class="pc-event-chip">reflection · preference stored</span></div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="pc-composer" role="group" aria-label="Illustrative composer preview, not interactive">
+                      <div class="pc-composer-inner">
+                        <span class="pc-composer-placeholder">Continue this thread...</span>
+                        <div class="pc-composer-row"><span class="pc-attach-button" aria-hidden="true">+</span><span class="pc-composer-hint">composer preview · thread context preserved</span><span class="pc-send" aria-hidden="true">↑</span></div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="pc-panel" id="pc-runs" role="tabpanel" aria-labelledby="pc-tab-runs" tabindex="0" hidden="">
+                  <div class="pc-data-title pc-runs-title"><span>recent runs · select one to open its thread</span><span class="pc-scroll-hint">scroll horizontally</span></div>
+                  <div class="pc-runs-scroll">
+                    <div class="pc-table-wrap">
+                      <table class="pc-table">
+                        <caption class="pc-sr-only">Recent runs across all account-intel threads</caption>
+                        <thead><tr><th scope="col">run</th><th scope="col">status</th><th scope="col">model</th><th scope="col" class="num">in</th><th scope="col" class="num">out</th><th scope="col" class="num">cost</th><th scope="col">input</th></tr></thead>
+                        <tbody>
+                          <tr data-demo-run-thread="executive" role="button" tabindex="0" aria-label="Open the accepted executive memo thread"><td>resp_5db7a18</td><td class="pc-status-done">done</td><td>anthropic/claude-sonnet-5</td><td class="num">15,030</td><td class="num">564</td><td class="num">$0.0087</td><td>Review outcome for EM-204...</td></tr>
+                          <tr data-demo-run-thread="pricing" role="button" tabindex="0" aria-label="Open the competitor pricing exposure thread"><td>resp_d4a8f1c</td><td class="pc-status-done">done</td><td>anthropic/claude-sonnet-5</td><td class="num">112,540</td><td class="num">1,194</td><td class="num">$0.0584</td><td>Assess competitor pricing exposure...</td></tr>
+                          <tr data-demo-run-thread="churn" role="button" tabindex="0" aria-label="Open the Q3 retention diagnosis thread"><td>resp_6b9e2c4</td><td class="pc-status-done">done</td><td>anthropic/claude-sonnet-5</td><td class="num">129,876</td><td class="num">1,819</td><td class="num">$0.0802</td><td>Explain the Q3 retention drop...</td></tr>
+                          <tr data-demo-run-thread="renewal" role="button" tabindex="0" aria-label="Open the accepted Acme renewal thread"><td>resp_b71e02c</td><td class="pc-status-done">done</td><td>anthropic/claude-sonnet-5</td><td class="num">16,732</td><td class="num">545</td><td class="num">$0.0085</td><td>Review outcome for RI-4821...</td></tr>
+                          <tr data-demo-run-thread="executive" role="button" tabindex="0" aria-label="Open the executive memo thread"><td>resp_2e7c5b9</td><td class="pc-status-done">done</td><td>anthropic/claude-sonnet-5</td><td class="num">54,430</td><td class="num">990</td><td class="num">$0.0272</td><td>Prepare the weekly account memo...</td></tr>
+                          <tr data-demo-run-thread="renewal" role="button" tabindex="0" aria-label="Open the Acme renewal decision pack thread"><td>resp_a3f09d2</td><td class="pc-status-done">done</td><td>anthropic/claude-sonnet-5</td><td class="num">73,380</td><td class="num">1,500</td><td class="num">$0.0371</td><td>Build Acme's renewal decision pack...</td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="pc-panel" id="pc-files" role="tabpanel" aria-labelledby="pc-tab-files" tabindex="0" hidden="">
+                  <div class="pc-file-grid">
+                    <div class="pc-tree" role="region" aria-label="Workspace file tree" tabindex="0">
+                      <div class="pc-tree-section">Operator</div>
+                      <div class="pc-file-row">★ DELTA.md</div>
+                      <div class="pc-file-row">★ POLICY.md</div>
+                      <div class="pc-file-row">★ vocab.json</div>
+                      <div class="pc-file-row">★ PROMPT_CONTEXT.md</div>
+                      <div class="pc-tree-section">Workspace</div>
+                      <div class="pc-file-row">▾ briefs</div>
+                      <div class="pc-file-row indent active" aria-current="true">acme-renewal.md <span class="pc-file-size">1.5 KB</span></div>
+                      <div class="pc-file-row">▾ analysis</div>
+                      <div class="pc-file-row indent">pricing-watch-2026-07-14.md <span class="pc-file-size">2.6 KB</span></div>
+                      <div class="pc-file-row indent">q3-retention.md <span class="pc-file-size">2.3 KB</span></div>
+                      <div class="pc-file-row">▾ evidence</div>
+                      <div class="pc-file-row indent">acme-risk-check.md <span class="pc-file-size">2.7 KB</span></div>
+                      <div class="pc-file-row indent">acme-source-pack.md <span class="pc-file-size">3.8 KB</span></div>
+                      <div class="pc-file-row indent">pricing-sources-2026-07-14.md <span class="pc-file-size">1.9 KB</span></div>
+                      <div class="pc-file-row indent">▾ pricing</div>
+                      <div class="pc-file-row indent-2">2026-07-13.md <span class="pc-file-size">9.2 KB</span></div>
+                      <div class="pc-file-row">▾ inbox</div>
+                      <div class="pc-file-row indent">▾ 2026-07-13</div>
+                      <div class="pc-file-row indent-2">acme-call.txt <span class="pc-file-size">38 KB</span></div>
+                      <div class="pc-file-row">▾ memos</div>
+                      <div class="pc-file-row indent">weekly-account-2026-W28.md <span class="pc-file-size">3.8 KB</span></div>
+                      <div class="pc-file-row indent">weekly-account-2026-W29.md <span class="pc-file-size">2.1 KB</span></div>
+                      <div class="pc-file-row">▾ research</div>
+                      <div class="pc-file-row indent">▾ resp_6b9e2c4f137a42c9b8d501e7a64c023d.0</div>
+                      <div class="pc-file-row indent-2">0-Concentration_by_ARR__product_and_tenure.md <span class="pc-file-size">8.1 KB</span></div>
+                      <div class="pc-file-row indent-2">1-Support_precursors_before_churn.md <span class="pc-file-size">6.7 KB</span></div>
+                      <div class="pc-file-row indent-2">2-Conflicts_between_CRM_loss_reasons_and_e.md <span class="pc-file-size">5.4 KB</span></div>
+                      <div class="pc-file-row">DELTA.md <span class="pc-file-size">2.8 KB</span></div>
+                      <div class="pc-file-row">FILES.md <span class="pc-file-size">374 B</span></div>
+                      <div class="pc-file-row">POLICY.md <span class="pc-file-size">3.4 KB</span></div>
+                      <div class="pc-file-row">PROMPT_CONTEXT.md <span class="pc-file-size">1.1 KB</span></div>
+                      <div class="pc-file-row">vocab.json <span class="pc-file-size">612 B</span></div>
+                    </div>
+
+                    <div class="pc-preview" role="region" aria-label="Selected file preview" tabindex="0">
+                      <div class="pc-preview-head"><span class="pc-preview-name">acme-renewal.md</span><span class="pc-kind">MD</span><span class="pc-preview-meta">size 1.5 KB · edited just now · type text/plain</span></div>
+                      <pre class="pc-file-content"># Acme renewal brief
+
+Review item: RI-4821 · revision 3 · approved
+
+## Executive signal
+Renewal is at risk. The implementation is 18 days behind the approved plan, and support volume remains concentrated in two workflow blockers.
+
+## Material risks
+1. Timeline confidence fell after the June integration change.
+2. Fourteen support tickets cluster around permissions and data sync.
+3. Executive sponsorship is active. A recovery owner is proposed, but the start date is not confirmed.
+
+## Evidence
+- CRM opportunity and renewal plan, checked today
+- Support ticket themes, trailing 90 days
+- Account-team call notes and cited Slack decisions
+
+## Recommended next step
+Confirm the recovery owner's start date and a dated two-week plan before changing the CRM stage.</pre>
+                      <div class="pc-preview-actions">
+                        <span class="pc-edit" aria-hidden="true">Preview</span>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="pc-panel" id="pc-data" role="tabpanel" aria-labelledby="pc-tab-data" tabindex="0" hidden="">
+                  <div class="pc-data-grid">
+                    <div class="pc-data-list" role="region" aria-label="Inspectable data tables" tabindex="0">
+                      <div class="pc-data-row">sessions <span>4</span></div>
+                      <div class="pc-data-row active" aria-current="true">memory <span>6</span></div>
+                      <div class="pc-data-row">memory_occurrence <span>16</span></div>
+                      <div class="pc-data-row">promotion <span>2</span></div>
+                      <div class="pc-data-row">events <span>246</span></div>
+                      <div class="pc-data-row">meta <span>3</span></div>
+                      <div class="pc-data-row">lease <span>1</span></div>
+                    </div>
+
+                    <div class="pc-preview pc-data-table-wrap" role="region" aria-label="Memory table preview" tabindex="0">
+                      <div class="pc-data-title"><span>memory (newest first, ≤200) · ack=root</span><span class="pc-scroll-hint">scroll horizontally</span></div>
+                      <table class="pc-table">
+                        <caption class="pc-sr-only">Example rows from the memory table</caption>
+                        <thead><tr><th scope="col">id</th><th scope="col">namespace</th><th scope="col">agent_id</th><th scope="col">user_id</th><th scope="col">audience</th><th scope="col">task_type</th><th scope="col">artifact_kind</th><th scope="col">content</th><th scope="col">trust</th><th scope="col">source</th><th scope="col">confidence</th><th scope="col">hits</th><th scope="col">last_used</th><th scope="col">created_at</th></tr></thead>
+                        <tbody>
+                          <tr><td>50</td><td>account-review</td><td>account-intel</td><td>nic</td><td>user</td><td></td><td>preference</td><td>Lead executive account memos with net exposure after committed mitigations; keep gross pipeline as context.</td><td>trusted</td><td>review</td><td>0.97</td><td>0</td><td></td><td>1784023200000</td></tr>
+                          <tr><td>49</td><td>account-review</td><td>account-intel</td><td>nic</td><td>user</td><td></td><td>preference</td><td>Distinguish proposed owners from confirmed owners in renewal briefs.</td><td>trusted</td><td>review</td><td>0.97</td><td>0</td><td></td><td>1784021400000</td></tr>
+                          <tr><td>48</td><td>account-review</td><td>account-intel</td><td></td><td>agent</td><td></td><td>procedure</td><td>Lead renewal briefs with material risk, then evidence.</td><td>trusted</td><td>review</td><td>0.96</td><td>5</td><td>1783947600000</td><td>1783515600000</td></tr>
+                          <tr><td>47</td><td>account-review</td><td>account-intel</td><td>nic</td><td>user</td><td></td><td>preference</td><td>Preserve approved context when revising a review item.</td><td>trusted</td><td>review</td><td>0.93</td><td>3</td><td>1783947300000</td><td>1783688400000</td></tr>
+                          <tr><td>46</td><td>account-review</td><td>account-intel</td><td></td><td>agent</td><td></td><td>pitfall</td><td>Do not change the CRM stage before human approval.</td><td>trusted</td><td>review</td><td>0.98</td><td>4</td><td>1783947000000</td><td>1783774800000</td></tr>
+                          <tr><td>45</td><td>account-review</td><td>account-intel</td><td></td><td>task_type</td><td>renewal-brief</td><td>procedure</td><td>Cross-check support themes against account-team notes.</td><td>trusted</td><td>self</td><td>0.89</td><td>2</td><td>1783946400000</td><td>1783857600000</td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="pc-panel" id="pc-setup" role="tabpanel" aria-labelledby="pc-tab-setup" tabindex="0" hidden="">
+                  <div class="pc-setup-grid">
+                    <div class="pc-setup-card"><h3>Identity</h3><dl class="pc-kv"><dt>agent_id</dt><dd>account-intel</dd><dt>version</dt><dd>0.1.0</dd><dt>build</dt><dd>not set</dd><dt>port</dt><dd>8080</dd><dt>profile</dt><dd>work</dd><dt>namespace</dt><dd>account-review</dd></dl></div>
+                    <div class="pc-setup-card"><h3>Model</h3><dl class="pc-kv"><dt>model</dt><dd>anthropic/claude-sonnet-5</dd><dt>utility</dt><dd>anthropic/claude-haiku-4.5</dd><dt>reasoning_effort</dt><dd>medium</dd><dt>api</dt><dd>chat</dd><dt>base_url</dt><dd>https://openrouter.ai</dd></dl></div>
+                    <div class="pc-setup-card"><h3>Secrets present</h3><span class="pc-pill on">✓ MODEL_API_KEY</span><span class="pc-pill on">✓ EXA_API_KEY</span><span class="pc-pill on">✓ DELTA_INSPECT_TOKEN</span><span class="pc-pill on">✓ DELTA_CONTROL_TOKEN</span><span class="pc-pill on">✓ TELEMETRY_TOKEN</span><span class="pc-pill">· DELTA_BROKER_AUTH</span><span class="pc-pill on">✓ DELTA_MCP_REFRESH</span></div>
+                    <div class="pc-setup-card"><h3>MCP servers</h3><span class="pc-pill">crm · http</span><span class="pc-pill">support · http</span><span class="pc-pill">slack · http</span><span class="pc-pill">review · http</span><span class="pc-pill">warehouse · http</span><span class="pc-pill">billing · http</span></div>
+
+                    <div class="pc-setup-card pc-setup-wide">
+                      <h3>Tools · 27</h3>
+                      <div class="pc-tool-group"><span class="pc-tool-group-label">Web, workspace and self · 11</span><span class="pc-pill">web_search</span><span class="pc-pill">web_fetch</span><span class="pc-pill">read_file</span><span class="pc-pill">list_dir</span><span class="pc-pill">grep</span><span class="pc-pill">write_file</span><span class="pc-pill">move_file</span><span class="pc-pill">delete_file</span><span class="pc-pill">remember</span><span class="pc-pill">recall</span><span class="pc-pill">todo</span></div>
+                      <div class="pc-tool-group"><span class="pc-tool-group-label">Delegation · 4</span><span class="pc-pill">code</span><span class="pc-pill">research</span><span class="pc-pill">spawn_subagent</span><span class="pc-pill">eval_n</span></div>
+                      <div class="pc-tool-group"><span class="pc-tool-group-label">Schedules · 3</span><span class="pc-pill">schedule_self</span><span class="pc-pill">list_schedules</span><span class="pc-pill">cancel_schedule</span></div>
+                      <div class="pc-tool-group"><span class="pc-tool-group-label">Connected · 9</span><span class="pc-pill">crm__get_account</span><span class="pc-pill">crm__search_accounts</span><span class="pc-pill">support__search_tickets</span><span class="pc-pill">support__get_theme_summary</span><span class="pc-pill">slack__search</span><span class="pc-pill">warehouse__get_metrics</span><span class="pc-pill">billing__list_contracts</span><span class="pc-pill">review__get_review_item</span><span class="pc-pill">review__propose_change</span></div>
+                    </div>
+
+                    <div class="pc-setup-card"><h3>Vocab</h3><dl class="pc-kv"><dt>coreVerbs</dt><dd>get_account, search_accounts, search_tickets, get_theme_summary, search, get_metrics, list_contracts, get_review_item, propose_change</dd><dt>subjectKeys</dt><dd>account</dd><dt>writeNoun</dt><dd>review workspace</dd><dt>runRefKey</dt><dd>run_ref</dd><dt>learningTargetKind</dt><dd>note</dd><dt>taskNoun</dt><dd>account brief</dd><dt>itemNoun</dt><dd>review item</dd><dt>writeVerbSuffix</dt><dd>propose_change</dd></dl></div>
+                    <div class="pc-setup-card"><h3>Operator files</h3><span class="pc-pill">★ DELTA.md</span><span class="pc-pill">★ POLICY.md</span><span class="pc-pill">★ vocab.json</span><span class="pc-pill">★ PROMPT_CONTEXT.md</span></div>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </div>
+
+        </div>

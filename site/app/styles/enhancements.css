@@ -1,0 +1,224 @@
+.mobile-menu-trigger {
+  display: none;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text);
+}
+
+.v3 .hero-copy {
+  max-width: 900px;
+  text-wrap: balance;
+}
+
+.v3 .eyebrow-dot {
+  position: relative;
+  flex: 0 0 auto;
+  box-shadow: none;
+}
+
+.v3 .eyebrow-dot::after {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--success);
+  content: "";
+  animation: eyebrow-live-pulse 2.2s ease-out infinite;
+}
+
+.v3 .site-header {
+  background: color-mix(in srgb, var(--bg) 94%, transparent);
+}
+
+.v3 .nav {
+  min-height: 60px;
+}
+
+.v3 .brand {
+  min-height: 44px;
+  gap: 11px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.v3 .brand-mark {
+  width: 29px;
+  height: 29px;
+  flex: 0 0 auto;
+}
+
+@media (min-width: 841px) {
+  .v3 .nav {
+    grid-template-columns: max-content minmax(0, 1fr) max-content;
+    gap: clamp(24px, 2.5vw, 36px);
+  }
+
+  .v3 .nav-links {
+    min-width: 0;
+    white-space: nowrap;
+  }
+}
+
+.v3 .nav-tools {
+  gap: 10px;
+}
+
+.v3 .nav-github-link {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--text-soft);
+}
+
+.v3 .nav-github-link:hover {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+.v3 .nav-github-link svg {
+  width: 18px;
+  height: 18px;
+}
+
+.v3 .nav-docs-button {
+  min-height: 38px;
+  gap: 7px;
+  padding-inline: 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.v3 .nav-docs-button:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+@keyframes eyebrow-live-pulse {
+  0% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+
+  75%,
+  100% {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v3 .eyebrow-dot::after {
+    animation: none;
+  }
+}
+
+.mobile-menu-trigger:hover {
+  background: var(--surface-soft);
+}
+
+.delta-mobile-sheet {
+  width: min(88vw, 380px);
+  border-color: var(--line);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.delta-mobile-sheet-header {
+  gap: 6px;
+  padding: 28px 24px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.delta-mobile-sheet-header [data-slot="sheet-title"] {
+  color: var(--text);
+  font-size: 18px;
+  letter-spacing: -0.02em;
+}
+
+.delta-mobile-sheet-header [data-slot="sheet-description"] {
+  color: var(--text-soft);
+  line-height: 1.5;
+}
+
+.delta-mobile-nav {
+  display: grid;
+  padding: 10px 14px;
+}
+
+.delta-mobile-nav a {
+  display: grid;
+  gap: 3px;
+  padding: 14px 10px;
+  border-radius: 12px;
+  transition: background-color 150ms ease;
+}
+
+.delta-mobile-nav a:hover {
+  background: var(--surface-soft);
+}
+
+.delta-mobile-nav strong {
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.delta-mobile-nav span {
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+@media (max-width: 840px) {
+  .v3 .nav {
+    display: flex;
+  }
+
+  .v3 .nav-links {
+    display: none;
+  }
+
+  .v3 .nav-tools {
+    margin-left: auto;
+  }
+
+  .mobile-menu-trigger {
+    display: inline-flex;
+    width: 44px;
+    height: 44px;
+  }
+
+  .v3 .nav-tools {
+    gap: 8px;
+  }
+
+  .v3 .nav-github-link {
+    width: 44px;
+    height: 44px;
+  }
+
+  .v3 .nav-docs-button {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 460px) {
+  .v3 .nav-github-link {
+    display: none;
+  }
+}
+
+@media (max-width: 360px) {
+  .v3 .nav-docs-button {
+    width: 44px;
+    padding: 0;
+  }
+
+  .v3 .nav-docs-button span {
+    display: none;
+  }
+}

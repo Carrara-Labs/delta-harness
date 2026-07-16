@@ -1,0 +1,21 @@
+{
+  "name": "Delta Agent Harness",
+  "short_name": "Delta",
+  "description": "The open-source harness for long-running agent tasks.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "lang": "en",
+  "categories": ["developer tools", "productivity"],
+  "background_color": "#f7f7f4",
+  "theme_color": "#1d1b16",
+  "icons": [
+    {
+      "src": "/delta-logo-light-background.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

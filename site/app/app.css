@@ -1,0 +1,148 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  /* Delta primitives: keep the full palette available, use it semantically and sparingly. */
+  --delta-ink: #1d1b16;
+  --delta-cream: #edece5;
+  --delta-canvas: #f7f7f4;
+  --delta-mist: #f0efeb;
+  --delta-sand: #d6cdaf;
+  --delta-olive: #8a7f55;
+  --delta-slate: #c8ccd4;
+  --delta-slate-deep: #6c7587;
+  --delta-sage: #c0d1c2;
+  --delta-sage-deep: #607e64;
+  --delta-stone: #d9d4ce;
+  --delta-stone-deep: #8a8074;
+  --delta-clay: #ddc7b7;
+  --delta-clay-deep: #9d755a;
+
+  --background: var(--delta-canvas);
+  --foreground: var(--delta-ink);
+  --card: #ffffff;
+  --card-foreground: var(--delta-ink);
+  --popover: #ffffff;
+  --popover-foreground: var(--delta-ink);
+  --primary: var(--delta-ink);
+  --primary-foreground: var(--delta-cream);
+  --secondary: var(--delta-mist);
+  --secondary-foreground: var(--delta-ink);
+  --muted: var(--delta-mist);
+  --muted-foreground: #5f5b53;
+  --accent: var(--delta-cream);
+  --accent-foreground: var(--delta-ink);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: var(--delta-stone);
+  --input: var(--delta-stone);
+  --ring: var(--delta-sage-deep);
+  --chart-1: var(--delta-sage);
+  --chart-2: var(--delta-sage-deep);
+  --chart-3: var(--delta-slate);
+  --chart-4: var(--delta-slate-deep);
+  --chart-5: var(--delta-sand);
+  --radius: 0.625rem;
+  --sidebar: var(--delta-canvas);
+  --sidebar-foreground: var(--delta-ink);
+  --sidebar-primary: var(--delta-ink);
+  --sidebar-primary-foreground: var(--delta-cream);
+  --sidebar-accent: var(--delta-mist);
+  --sidebar-accent-foreground: var(--delta-ink);
+  --sidebar-border: var(--delta-stone);
+  --sidebar-ring: var(--delta-sage-deep);
+}
+
+.dark {
+  --background: var(--delta-ink);
+  --foreground: var(--delta-cream);
+  --card: #25231e;
+  --card-foreground: var(--delta-cream);
+  --popover: #25231e;
+  --popover-foreground: var(--delta-cream);
+  --primary: var(--delta-cream);
+  --primary-foreground: var(--delta-ink);
+  --secondary: #2d2a24;
+  --secondary-foreground: var(--delta-cream);
+  --muted: #2d2a24;
+  --muted-foreground: #b8b2aa;
+  --accent: #2d2a24;
+  --accent-foreground: var(--delta-cream);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: color-mix(in srgb, var(--delta-cream) 13%, transparent);
+  --input: color-mix(in srgb, var(--delta-cream) 18%, transparent);
+  --ring: var(--delta-sage);
+  --chart-1: var(--delta-sage);
+  --chart-2: var(--delta-sage-deep);
+  --chart-3: var(--delta-slate);
+  --chart-4: var(--delta-slate-deep);
+  --chart-5: var(--delta-sand);
+  --sidebar: #25231e;
+  --sidebar-foreground: var(--delta-cream);
+  --sidebar-primary: var(--delta-cream);
+  --sidebar-primary-foreground: var(--delta-ink);
+  --sidebar-accent: #2d2a24;
+  --sidebar-accent-foreground: var(--delta-cream);
+  --sidebar-border: color-mix(in srgb, var(--delta-cream) 13%, transparent);
+  --sidebar-ring: var(--delta-sage);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}

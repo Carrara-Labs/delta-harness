@@ -1,0 +1,20 @@
+node_modules/
+dist/
+*.db
+*.db-*
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# site build artifacts
+site/build/
+site/.react-router/
+
+# local data
+data/
+workspace/
+
+# local dogfood agents (contain keys) + run state
+agents/
+.delta/

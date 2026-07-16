@@ -1,0 +1,13 @@
+*
+!Dockerfile
+!.dockerignore
+!package.json
+!bun.lock
+!tsconfig.json
+!biome.json
+!src/
+!src/**
+!assets/
+!assets/**
+!scripts/
+!scripts/entrypoint.sh

@@ -1,0 +1,4 @@
+# Supply-chain posture (Pi-grade, adapted for bun): exact pins, committed lockfile,
+# zero runtime deps until a dependency earns its place.
+[install]
+exact = true

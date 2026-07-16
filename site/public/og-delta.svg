@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title description">
+  <title id="title">Delta — Agents that finish the work</title>
+  <desc id="description">Social preview for the Delta agent harness.</desc>
+  <rect width="1200" height="630" fill="#f7f7f5" />
+  <path d="M0 1h1200" stroke="#deded9" />
+  <g transform="translate(72 60)" fill="none" stroke="#151515" stroke-linejoin="round">
+    <path d="M18 0 36 34H0L18 0Z" stroke-width="2.4" />
+  </g>
+  <text x="124" y="88" fill="#151515" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="25" font-weight="650" letter-spacing="-0.5">delta</text>
+  <g transform="translate(74 178)">
+    <circle cx="6" cy="-8" r="6" fill="#8dc49e" opacity="0.28" />
+    <circle cx="6" cy="-8" r="3.5" fill="#39734c" />
+    <text x="24" y="0" fill="#62625e" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="22" font-weight="600">The lean runtime for durable knowledge work</text>
+  </g>
+  <text x="72" y="315" fill="#151515" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="103" font-weight="620" letter-spacing="-5.8">Agents that</text>
+  <text x="72" y="423" fill="#151515" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="103" font-weight="620" letter-spacing="-5.8">finish the work.</text>
+  <text x="76" y="535" fill="#62625e" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="28">Tools · memory · delegation · review · durable execution</text>
+  <path d="M72 578h1056" stroke="#deded9" />
+  <text x="72" y="609" fill="#85857e" font-family="ui-monospace, 'SFMono-Regular', Menlo, monospace" font-size="18">deltaharness.dev</text>
+</svg>
