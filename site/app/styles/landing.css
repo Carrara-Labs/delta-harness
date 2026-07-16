@@ -423,14 +423,27 @@
         margin-top: 58px;
       }
 
+      .install-card {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--surface);
+        box-shadow: 0 10px 32px rgba(25, 25, 20, 0.035);
+      }
+
+      .install-card-head {
+        display: flex;
+        align-items: stretch;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 0 8px 0 4px;
+        border-bottom: 1px solid var(--line);
+        background: var(--surface-soft);
+      }
+
       .install-tablist {
         display: flex;
-        gap: 4px;
         overflow-x: auto;
-        padding: 4px;
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        background: var(--surface-soft);
         scrollbar-width: none;
       }
 
@@ -439,10 +452,10 @@
       }
 
       .install-tab {
+        position: relative;
         flex: 0 0 auto;
-        padding: 7px 14px;
+        padding: 12px 14px;
         border: 0;
-        border-radius: 8px;
         background: transparent;
         color: var(--text-soft);
         cursor: pointer;
@@ -450,7 +463,7 @@
         font-size: 13px;
         font-weight: 550;
         letter-spacing: -0.01em;
-        transition: color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+        transition: color 150ms ease;
       }
 
       .install-tab:hover {
@@ -458,31 +471,35 @@
       }
 
       .install-tab.is-active {
-        background: var(--surface);
-        box-shadow: 0 1px 2px rgba(25, 25, 20, 0.08);
         color: var(--text);
+      }
+
+      .install-tab.is-active::after {
+        content: "";
+        position: absolute;
+        right: 14px;
+        bottom: -1px;
+        left: 14px;
+        height: 2px;
+        border-radius: 2px 2px 0 0;
+        background: var(--text);
       }
 
       .install-tab:focus-visible {
         outline: 2px solid var(--success);
-        outline-offset: 2px;
+        outline-offset: -2px;
       }
 
-      .install-panel {
-        display: flex;
-        min-height: 56px;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-        padding: 8px 9px 8px 20px;
-        border: 1px solid var(--line);
-        border-radius: 14px;
-        background: var(--surface);
-        box-shadow: 0 10px 32px rgba(25, 25, 20, 0.035);
-      }
-
-      .install-panel .copy-button {
+      .install-copy {
+        align-self: center;
         flex: 0 0 auto;
+      }
+
+      .install-card-body {
+        display: flex;
+        min-height: 52px;
+        align-items: center;
+        padding: 14px 18px;
       }
 
       .install-command {
@@ -491,7 +508,7 @@
         overflow-x: auto;
         color: var(--code);
         font-family: var(--mono);
-        font-size: 13px;
+        font-size: 13.5px;
         white-space: nowrap;
         scrollbar-width: none;
       }
@@ -3086,12 +3103,12 @@
           margin-top: 42px;
         }
 
-        .install-panel {
-          padding-left: 14px;
+        .install-card-body {
+          padding: 12px 14px;
         }
 
         .install-command {
-          font-size: 11px;
+          font-size: 11.5px;
         }
 
         .copy-button {
@@ -4358,7 +4375,7 @@
         margin-top: 64px;
       }
 
-      .v3 .install-panel {
+      .v3 .install-card {
         box-shadow: var(--soft-shadow);
       }
 
@@ -5616,14 +5633,13 @@
           margin-top: 36px;
         }
 
-        .v3 .install-panel {
-          min-height: 54px;
-          padding-left: 14px;
-          gap: 10px;
+        .v3 .install-card-body {
+          min-height: 50px;
+          padding: 12px 14px;
         }
 
         .v3 .install-command {
-          font-size: 10.5px;
+          font-size: 11px;
         }
 
         .v3 .copy-button {

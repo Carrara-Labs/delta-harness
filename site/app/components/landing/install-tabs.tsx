@@ -48,42 +48,50 @@ export function InstallTabs() {
 
   return (
     <div className="install-tabs">
-      <div className="install-tablist" role="tablist" aria-label="Install Delta">
-        {TABS.map((candidate) => {
-          const selected = candidate.id === active;
-          return (
-            <button
-              key={candidate.id}
-              type="button"
-              role="tab"
-              id={`install-tab-${candidate.id}`}
-              aria-selected={selected}
-              aria-controls="install-panel"
-              tabIndex={selected ? 0 : -1}
-              className={`install-tab${selected ? " is-active" : ""}`}
-              onClick={() => setActive(candidate.id)}
-            >
-              {candidate.label}
-            </button>
-          );
-        })}
-      </div>
+      <div className="install-card">
+        <div className="install-card-head">
+          <div className="install-tablist" role="tablist" aria-label="Install Delta">
+            {TABS.map((candidate) => {
+              const selected = candidate.id === active;
+              return (
+                <button
+                  key={candidate.id}
+                  type="button"
+                  role="tab"
+                  id={`install-tab-${candidate.id}`}
+                  aria-selected={selected}
+                  aria-controls="install-panel"
+                  tabIndex={selected ? 0 : -1}
+                  className={`install-tab${selected ? " is-active" : ""}`}
+                  onClick={() => setActive(candidate.id)}
+                >
+                  {candidate.label}
+                </button>
+              );
+            })}
+          </div>
+          <CopyButton
+            text={tab.command}
+            label={`Copy ${tab.label} command`}
+            className="copy-button install-copy"
+          />
+        </div>
 
-      <div
-        className="install-panel"
-        id="install-panel"
-        role="tabpanel"
-        aria-labelledby={`install-tab-${tab.id}`}
-      >
-        <code className="install-command">
-          {tab.prompt ? (
-            <span className="prompt" aria-hidden="true">
-              {tab.prompt}
-            </span>
-          ) : null}
-          {tab.command}
-        </code>
-        <CopyButton text={tab.command} label={`Copy ${tab.label} command`} />
+        <div
+          className="install-card-body"
+          id="install-panel"
+          role="tabpanel"
+          aria-labelledby={`install-tab-${tab.id}`}
+        >
+          <code className="install-command">
+            {tab.prompt ? (
+              <span className="prompt" aria-hidden="true">
+                {tab.prompt}
+              </span>
+            ) : null}
+            {tab.command}
+          </code>
+        </div>
       </div>
 
       <p className="install-note">{tab.note}</p>
