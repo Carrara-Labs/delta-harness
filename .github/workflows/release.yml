@@ -52,7 +52,7 @@ jobs:
         run: |
           bun build --compile --minify --target=${{ matrix.target }} \
             src/index.ts --outfile "delta-${{ matrix.target }}"
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: delta-${{ matrix.target }}
 
