@@ -415,6 +415,99 @@
         user-select: none;
       }
 
+      .install-tabs {
+        display: flex;
+        width: min(100%, 570px);
+        flex-direction: column;
+        gap: 12px;
+        margin-top: 58px;
+      }
+
+      .install-tablist {
+        display: flex;
+        gap: 4px;
+        overflow-x: auto;
+        padding: 4px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--surface-soft);
+        scrollbar-width: none;
+      }
+
+      .install-tablist::-webkit-scrollbar {
+        display: none;
+      }
+
+      .install-tab {
+        flex: 0 0 auto;
+        padding: 7px 14px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--text-soft);
+        cursor: pointer;
+        font-family: var(--sans);
+        font-size: 13px;
+        font-weight: 550;
+        letter-spacing: -0.01em;
+        transition: color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+      }
+
+      .install-tab:hover {
+        color: var(--text);
+      }
+
+      .install-tab.is-active {
+        background: var(--surface);
+        box-shadow: 0 1px 2px rgba(25, 25, 20, 0.08);
+        color: var(--text);
+      }
+
+      .install-tab:focus-visible {
+        outline: 2px solid var(--success);
+        outline-offset: 2px;
+      }
+
+      .install-panel {
+        display: flex;
+        min-height: 56px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 8px 9px 8px 20px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--surface);
+        box-shadow: 0 10px 32px rgba(25, 25, 20, 0.035);
+      }
+
+      .install-panel .copy-button {
+        flex: 0 0 auto;
+      }
+
+      .install-command {
+        min-width: 0;
+        flex: 1 1 auto;
+        overflow-x: auto;
+        color: var(--code);
+        font-family: var(--mono);
+        font-size: 13px;
+        white-space: nowrap;
+        scrollbar-width: none;
+      }
+
+      .install-command::-webkit-scrollbar {
+        display: none;
+      }
+
+      .install-note {
+        margin: 0;
+        padding-left: 2px;
+        color: var(--text-faint);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
       .copy-button {
         display: inline-flex;
         min-width: 76px;
@@ -2989,6 +3082,18 @@
           font-size: 11px;
         }
 
+        .install-tabs {
+          margin-top: 42px;
+        }
+
+        .install-panel {
+          padding-left: 14px;
+        }
+
+        .install-command {
+          font-size: 11px;
+        }
+
         .copy-button {
           min-width: 42px;
         }
@@ -4248,6 +4353,15 @@
         box-shadow: var(--soft-shadow);
       }
 
+      .v3 .install-tabs {
+        width: min(100%, 600px);
+        margin-top: 64px;
+      }
+
+      .v3 .install-panel {
+        box-shadow: var(--soft-shadow);
+      }
+
       .v3 .proof {
         padding: 0 0 clamp(88px, 9vw, 128px);
       }
@@ -5495,6 +5609,20 @@
         }
 
         .v3 .quick-command code {
+          font-size: 10.5px;
+        }
+
+        .v3 .install-tabs {
+          margin-top: 36px;
+        }
+
+        .v3 .install-panel {
+          min-height: 54px;
+          padding-left: 14px;
+          gap: 10px;
+        }
+
+        .v3 .install-command {
           font-size: 10.5px;
         }
 

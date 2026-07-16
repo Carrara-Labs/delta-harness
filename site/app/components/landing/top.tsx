@@ -1,4 +1,4 @@
-import { CopyButton } from "~/components/copy-button";
+import { InstallTabs } from "~/components/landing/install-tabs";
 
 export function TopSection() {
   return (
@@ -31,12 +31,7 @@ export function TopSection() {
           </a>
         </div>
 
-        <div className="quick-command">
-          <code>
-            <span className="prompt">$</span>delta init ./my-agent
-          </code>
-          <CopyButton text="delta init ./my-agent" label="Copy init command" />
-        </div>
+        <InstallTabs />
       </div>
     </section>
   );
