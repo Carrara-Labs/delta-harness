@@ -18,8 +18,11 @@ afterAll(() => rmSync(ws, { recursive: true, force: true }));
 const mock = Bun.serve({
   port: 0,
   fetch: async (req) => {
-    const body = (await req.json()) as { messages: Array<{ content: string }> };
-    const user = body.messages.at(-1)?.content ?? "";
+    const body = (await req.json()) as { messages: Array<{ content: unknown }> };
+    // Message content may be a plain string OR structured content blocks (the spine sends the
+    // latter in some paths); coerce to a searchable string so `.match` never throws on an array.
+    const raw = body.messages.at(-1)?.content ?? "";
+    const user = typeof raw === "string" ? raw : JSON.stringify(raw);
     const attempt = user.match(/attempt (\d+)/i)?.[1] ?? "x";
     return new Response(
       `data: ${JSON.stringify({ choices: [{ delta: { content: `answer from attempt ${attempt}` }, finish_reason: "stop" }] })}\n\n` +
