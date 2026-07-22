@@ -85,7 +85,6 @@ function buildDeps(cfg: Config, dbPath: string): Deps {
     toolTimeoutMs: cfg.toolTimeoutMs,
     toolResultCap: cfg.toolResultCap,
     hydrateTools: cfg.hydrateTools,
-    researchTools: cfg.researchTools,
     ...(cfg.hydrateSearchTool ? { hydrateSearchTool: cfg.hydrateSearchTool } : {}),
     reflect: cfg.reflect,
     vocab: cfg.vocab,

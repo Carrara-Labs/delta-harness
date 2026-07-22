@@ -29,7 +29,7 @@ import type {
   Usage,
 } from "./provider";
 import { normalizeEffort, OVERFLOW } from "./provider";
-import { researchTools, runResearch } from "./research";
+import { childTools, runResearch } from "./research";
 import { retrieveSkills } from "./retrieval";
 import { scrubText } from "./scrub";
 import { type Charter, loadSelf, parseCharterMarkdown, writeSelf } from "./self";
@@ -146,10 +146,6 @@ export type Deps = {
   /** Max chars of a tool result kept inline before it's spilled to a re-readable file.
    * Bounds the single biggest cause of a mid-run context-window overflow. */
   toolResultCap?: number;
-  /** Operator allowlist (exact tool ids) of MCP READ tools a `research` sub-agent may use, on top
-   * of the safe read-only builtins. Default-deny: no MCP tool is exposed to a child unless named
-   * here (read-only can't be inferred from a name). From DELTA_RESEARCH_TOOLS. */
-  researchTools?: string[];
   /** Cockpit true-to-life capture (DELTA_CAPTURE_CALLS): snapshot the exact assembled
    * request (system spine + full messages + tool schemas) and response for each model
    * call into the `calls` table, so the dev UI can show precisely what the model saw.
@@ -353,19 +349,35 @@ export async function executeRun(
       read: () => readTodo(db, run.session_id),
       write: (items) => writeTodo(db, run.session_id, items),
     },
-    // `research` (W4): run read-only research children in parallel, in-process. Given the parent's
-    // provider + a default-deny read-only tool subset (safe builtins + the operator's exact MCP
-    // allowlist, MCP only when an act-as token is present) + the run's token. `researchSeq` keeps
-    // each call's artifacts on distinct paths; the in-flight guard stops two concurrent `research`
-    // tool calls in one turn from each admitting N children and over-spending the shared budget (codex).
+    // `research` (W4): run parallel sub-agents in-process, each with the SAME rights as this run —
+    // the parent's provider + full tool registry minus the withheld set (one-level nesting cap) +
+    // the run's act-as token. Children are built from the same spine (identity + norms + self +
+    // policy) and start resident on the parent's pinned set, searching for the rest. `researchSeq`
+    // keeps each call's artifacts on distinct paths; the in-flight guard stops two concurrent
+    // `research` calls in one turn from each admitting N children and over-spending the budget (codex).
     research: async (tasks) => {
       if (researchInFlight)
         return "[tool error] a research batch is already running this turn — wait for it to finish";
       researchInFlight = true;
       try {
+        // Carry the parent's spine layers so children are built from the SAME buildSpine — same
+        // identity, engine safety norms, self, and policy (codex): a child with write/act-as tools
+        // is bound by the same norms + POLICY as the parent.
+        const wtn = [...allowedMap.keys()].find((n) => n.endsWith(vocab.writeVerbSuffix));
+        const childPolicy =
+          deps.policy && (deps.policy.fromFile || wtn)
+            ? renderPolicy(deps.policy.template, vocab, wtn ?? "your review-rail write tool")
+            : undefined;
         return await runResearch(
           tasks,
-          researchTools(allowedMap, deps.researchTools ?? [], !!ctx.authToken),
+          {
+            tools: childTools(allowedMap),
+            pinned: pinnedNames,
+            ...(deps.agentId ? { agentId: deps.agentId } : {}),
+            ...(self.text ? { self: self.text } : {}),
+            ...(childPolicy ? { policy: childPolicy } : {}),
+            ...(deps.contextStable ? { context: deps.contextStable } : {}),
+          },
           deps.chatUtility ?? deps.chat,
           ctx,
           run.id,

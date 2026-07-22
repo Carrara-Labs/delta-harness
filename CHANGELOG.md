@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-07-22
+
+### Changed
+- **Sub-agents (`research`) now have the same rights as the parent, not a read-only subset.** A
+  `research` child's callable tools are the parent's full registry minus a small *withheld* set
+  (the delegation tools `research`/`spawn_subagent`/`eval_n`, plus the run-scheduling tools), so
+  nesting stays exactly one level deep. A child can now read, write, run code, use `remember`, and
+  call MCP reads **and** writes — whatever the parent can. Children are built from the **same
+  system spine** as the parent (identity + safety norms + `DELTA.md` + `POLICY.md`), so they inherit
+  the parent's operating rules along with its rights — not powerful-but-unconstrained. Each child
+  starts resident on the parent's pinned tool set and can `search_tools` for the rest, so a large
+  MCP surface never blows the child's own token budget. Children run concurrently in one shared
+  workspace; the child prompt cautions against clobbering a sibling's writes (full worktree
+  isolation is a future option, not yet built).
+
+### Removed
+- **`DELTA_RESEARCH_TOOLS`.** The operator allowlist that gated which MCP read tools a `research`
+  child could use is gone — children inherit the parent's tools directly. The env var is now
+  ignored; remove it from any config.
+
 ## [0.1.2] — 2026-07-22
 
 ### Added

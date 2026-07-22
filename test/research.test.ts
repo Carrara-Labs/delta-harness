@@ -1,6 +1,7 @@
-// W4: in-process, read-only, parallel research sub-agents. Prove the default-deny tool subset,
-// the reserved-path read facade, the bounded parallel loop, parent-written artifacts, single
-// usage charge, and that the model can drive it end-to-end through the `research` builtin.
+// W4: in-process, parallel sub-agents with the SAME rights as the parent. Prove children get the
+// parent's full registry minus the delegation trio (one-level nesting cap), the pinned + search_tools
+// resident model, that a child can ACT (write) like its parent, the bounded parallel loop,
+// parent-written artifacts, a single usage charge, and model-driven end-to-end through `research`.
 
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
@@ -9,7 +10,7 @@ import { join } from "node:path";
 import { builtinTools } from "../src/builtins";
 import type { ChatMsg, ChatRequest, ModelResult, Usage } from "../src/provider";
 import { Queue } from "../src/queue";
-import { researchTools, runResearch } from "../src/research";
+import { childTools, runResearch } from "../src/research";
 import type { ToolCtx, ToolDef, Tools } from "../src/tools";
 import { makeDeps, textResult, toolCallResult } from "./helpers";
 
@@ -29,8 +30,8 @@ const fakeTool = (name: string, exec?: ToolDef["execute"]): ToolDef => ({
   execute: exec ?? (async () => "ok"),
 });
 
-describe("researchTools — default-deny read-only subset", () => {
-  test("keeps only safe builtins + the operator's exact MCP allowlist; excludes everything else", () => {
+describe("childTools — the parent's registry minus the withheld set", () => {
+  test("keeps read/write/code/remember/kb tools; drops delegation + scheduling tools", () => {
     const allowed: Tools = new Map();
     for (const n of [
       "web_search",
@@ -42,67 +43,46 @@ describe("researchTools — default-deny read-only subset", () => {
       "move_file",
       "code",
       "remember",
-      "research",
-      "spawn_subagent",
       "kb__search_text",
       "kb__delete_entity",
+      "research",
+      "spawn_subagent",
+      "eval_n",
+      "schedule_self",
+      "list_schedules",
+      "cancel_schedule",
     ])
       allowed.set(n, fakeTool(n));
 
-    const ro = researchTools(allowed, ["kb__search_text"], true);
-    // grep/list_dir are NOT in the safe set (root-scan exfil risk); only targeted read_file + web.
-    expect([...ro.keys()].sort()).toEqual(
-      ["kb__search_text", "read_file", "web_fetch", "web_search"].sort(),
-    );
+    const child = childTools(allowed);
+    // Same rights as the parent — every non-withheld tool rides along, guards intact.
     for (const n of [
+      "web_search",
+      "web_fetch",
+      "read_file",
       "grep",
       "list_dir",
       "write_file",
       "move_file",
       "code",
       "remember",
-      "research",
-      "spawn_subagent",
+      "kb__search_text",
       "kb__delete_entity",
     ])
-      expect(ro.has(n)).toBe(false);
-  });
-
-  test("operator allowlist can't re-enable a builtin, and MCP is dropped without an act-as token", () => {
-    const allowed: Tools = new Map();
-    for (const n of ["web_search", "write_file", "code", "kb__search_text"])
-      allowed.set(n, fakeTool(n));
-    // Trying to sneak write_file/code in via DELTA_RESEARCH_TOOLS is rejected (not __-namespaced /
-    // forbidden); the real MCP read tool is admitted.
-    const ro = researchTools(allowed, ["write_file", "code", "kb__search_text"], true);
-    expect(ro.has("write_file")).toBe(false);
-    expect(ro.has("code")).toBe(false);
-    expect(ro.has("kb__search_text")).toBe(true);
-    // No act-as token → MCP tools dropped entirely (no daemon-credential fallback).
-    const roNoAuth = researchTools(allowed, ["kb__search_text"], false);
-    expect(roNoAuth.has("kb__search_text")).toBe(false);
-    expect(roNoAuth.has("web_search")).toBe(true);
-  });
-
-  test("reserved-path facade blocks .env/.delta/operator files + traversal, allows normal reads", async () => {
-    const allowed: Tools = new Map();
-    allowed.set(
-      "read_file",
-      fakeTool("read_file", async (args) => `READ ${String(args.path)}`),
-    );
-    const rf = researchTools(allowed, [], true).get("read_file") as ToolDef;
-    const ctx = { workspace: "/ws", activate: () => {} } as unknown as ToolCtx;
-    for (const p of [
-      ".env",
-      ".env.local",
-      "delta.env",
-      ".delta/spill/x",
-      "POLICY.md",
-      "DELTA.md",
-      "sub/../.env",
+      expect(child.has(n)).toBe(true);
+    // Withheld: the delegation trio (in-process recursion) AND the scheduling tools (a child could
+    // queue a fresh ROOT run that re-delegates — escaping the one-level cap by a side door).
+    for (const n of [
+      "research",
+      "spawn_subagent",
+      "eval_n",
+      "schedule_self",
+      "list_schedules",
+      "cancel_schedule",
     ])
-      expect(await rf.execute({ path: p }, ctx)).toContain("off-limits");
-    expect(await rf.execute({ path: "docs/readme.md" }, ctx)).toBe("READ docs/readme.md");
+      expect(child.has(n)).toBe(false);
+    // The child def is the parent's exact def (same guards ride along).
+    expect(child.get("write_file")).toBe(allowed.get("write_file"));
   });
 });
 
@@ -159,19 +139,172 @@ describe("runResearch — bounded parallel loop", () => {
         remainingBudget: () => ({ maxTokens: 100_000, maxCostUsd: 10 }),
       } as unknown as ToolCtx;
 
-      const out = await runResearch(["what is the answer?"], tools, childChat, ctx, "run1", "0");
+      const out = await runResearch(
+        ["what is the answer?"],
+        { tools, pinned: ["web_search"] },
+        childChat,
+        ctx,
+        "run1",
+        "0",
+      );
       expect(out).toContain("what is the answer?");
       expect(out).toContain("the answer is 42");
       expect(out).toContain("research/"); // the artifact path
-      // The artifact exists on disk with the full findings.
       const files = readdirSync(join(dir, "research", "run1.0"));
       expect(files.length).toBe(1);
       expect(readFileSync(join(dir, "research", "run1.0", files[0] as string), "utf8")).toContain(
         "the answer is 42",
       );
-      // Usage charged exactly once (aggregated).
       expect(charged).not.toBeNull();
       expect((charged as unknown as Usage).total).toBeGreaterThan(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a child can ACT — write a file — with the parent's own write tool (same rights)", async () => {
+    const dir = ws();
+    try {
+      const written: Record<string, string> = {};
+      const tools: Tools = new Map();
+      tools.set(
+        "write_file",
+        fakeTool("write_file", async (args) => {
+          written[String(args.path)] = String(args.content);
+          return "wrote";
+        }),
+      );
+      // Child model: write once, then answer.
+      const writeChild = async (req: ChatRequest): Promise<ModelResult> => {
+        if (!req.messages.some((m) => m.role === "tool"))
+          return {
+            ok: true,
+            model: "t",
+            message: {
+              role: "assistant",
+              content: null,
+              tool_calls: [
+                {
+                  id: "w1",
+                  type: "function",
+                  function: {
+                    name: "write_file",
+                    arguments: JSON.stringify({ path: "note.md", content: "hi from a child" }),
+                  },
+                },
+              ],
+            },
+            usage: U(),
+            finishReason: "tool_calls",
+            latencyMs: 1,
+          } as ModelResult;
+        return {
+          ok: true,
+          model: "t",
+          message: { role: "assistant", content: "SUMMARY: wrote the note." },
+          usage: U(),
+          finishReason: "stop",
+          latencyMs: 1,
+        } as ModelResult;
+      };
+      const ctx = {
+        workspace: dir,
+        activate: () => {},
+        remainingBudget: () => ({ maxTokens: 100_000, maxCostUsd: 10 }),
+      } as unknown as ToolCtx;
+      const out = await runResearch(
+        ["write a note"],
+        { tools, pinned: ["write_file"] },
+        writeChild,
+        ctx,
+        "w",
+        "0",
+      );
+      expect(out).toContain("wrote the note");
+      expect(written["note.md"]).toBe("hi from a child");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a non-pinned tool is reachable via the child's own search_tools", async () => {
+    const dir = ws();
+    try {
+      let searched = false;
+      const tools: Tools = new Map();
+      tools.set(
+        "kb__search_text",
+        fakeTool("kb__search_text", async () => {
+          searched = true;
+          return "found: Oxygen";
+        }),
+      );
+      // Child model: search_tools (to activate the non-resident kb tool), then call it, then answer.
+      const searchChild = async (req: ChatRequest): Promise<ModelResult> => {
+        const calls = req.messages.filter((m) => m.role === "tool").length;
+        if (calls === 0)
+          return {
+            ok: true,
+            model: "t",
+            message: {
+              role: "assistant",
+              content: null,
+              tool_calls: [
+                {
+                  id: "s1",
+                  type: "function",
+                  function: { name: "search_tools", arguments: JSON.stringify({ query: "kb" }) },
+                },
+              ],
+            },
+            usage: U(),
+            finishReason: "tool_calls",
+            latencyMs: 1,
+          } as ModelResult;
+        if (calls === 1)
+          return {
+            ok: true,
+            model: "t",
+            message: {
+              role: "assistant",
+              content: null,
+              tool_calls: [
+                {
+                  id: "b1",
+                  type: "function",
+                  function: { name: "kb__search_text", arguments: "{}" },
+                },
+              ],
+            },
+            usage: U(),
+            finishReason: "tool_calls",
+            latencyMs: 1,
+          } as ModelResult;
+        return {
+          ok: true,
+          model: "t",
+          message: { role: "assistant", content: "SUMMARY: routed to Oxygen." },
+          usage: U(),
+          finishReason: "stop",
+          latencyMs: 1,
+        } as ModelResult;
+      };
+      const ctx = {
+        workspace: dir,
+        activate: () => {},
+        remainingBudget: () => ({ maxTokens: 100_000, maxCostUsd: 10 }),
+      } as unknown as ToolCtx;
+      // pinned = [] → the kb tool is NOT resident; the child must search_tools to reach it.
+      const out = await runResearch(
+        ["route it"],
+        { tools, pinned: [] },
+        searchChild,
+        ctx,
+        "s",
+        "0",
+      );
+      expect(searched).toBe(true);
+      expect(out).toContain("routed to Oxygen");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -190,8 +323,14 @@ describe("runResearch — bounded parallel loop", () => {
         activate: () => {},
         remainingBudget: () => ({ maxTokens: 100_000, maxCostUsd: 10 }),
       } as unknown as ToolCtx;
-      const out = await runResearch(["a", "b", "c", "d", "e"], tools, childChat, ctx, "run2", "0");
-      // Only 3 tasks run; each gets a block.
+      const out = await runResearch(
+        ["a", "b", "c", "d", "e"],
+        { tools, pinned: ["web_search"] },
+        childChat,
+        ctx,
+        "run2",
+        "0",
+      );
       expect((out.match(/^## /gm) ?? []).length).toBe(3);
       expect(readdirSync(join(dir, "research", "run2.0")).length).toBe(3);
     } finally {
@@ -199,14 +338,21 @@ describe("runResearch — bounded parallel loop", () => {
     }
   });
 
-  test("no read-only tools configured → a clear error, no crash", async () => {
+  test("no tools available → a clear error, no crash", async () => {
     const ctx = {
       workspace: "/tmp",
       activate: () => {},
       remainingBudget: () => ({ maxTokens: 100_000, maxCostUsd: 10 }),
     } as unknown as ToolCtx;
-    const out = await runResearch(["x"], new Map(), childChat, ctx, "r", "0");
-    expect(out).toContain("no read-only tools");
+    const out = await runResearch(
+      ["x"],
+      { tools: new Map(), pinned: [] },
+      childChat,
+      ctx,
+      "r",
+      "0",
+    );
+    expect(out).toContain("no tools");
   });
 });
 
@@ -218,9 +364,13 @@ describe("research builtin end-to-end (through the model + queue)", () => {
       let parentCall = 0;
       const deps = makeDeps(
         async (req: ChatRequest) => {
-          const sys = req.messages[0]?.content;
-          // A research child: answer directly (its own isolated context).
-          if (typeof sys === "string" && sys.includes("research sub-agent"))
+          // A research child: identity comes from the shared spine, so it's told apart by the
+          // sub-agent ROLE framing that rides its user message. Answer directly (isolated context).
+          const isChild = req.messages.some(
+            (m) =>
+              typeof m.content === "string" && m.content.includes("sub-agent working one task"),
+          );
+          if (isChild)
             return textResult("SUMMARY: found the widget spec. FINDINGS: it ships in Q3.");
           // The parent.
           seen.push(req.messages);
@@ -237,12 +387,9 @@ describe("research builtin end-to-end (through the model + queue)", () => {
       const done = await queue.wait(queue.enqueue({ input: "research the widget" }).id);
       expect(done.status).toBe("done");
 
-      // The parent's 2nd turn saw the research tool result: a summary + a path, NOT the child's
-      // own tool calls / transcript.
       const toolResult = (seen[1] ?? []).find((m) => m.role === "tool") as { content: string };
       expect(toolResult.content).toContain("found the widget spec");
       expect(toolResult.content).toContain("research/");
-      // The artifact is on disk.
       const runDirs = readdirSync(join(dir, "research"));
       expect(runDirs.length).toBeGreaterThan(0);
     } finally {

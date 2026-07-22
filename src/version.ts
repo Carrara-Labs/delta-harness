@@ -17,4 +17,4 @@
 // persistent volume, not in the binary. Downgrades that would open a newer-schema DB with
 // an older binary are refused, not silently corrupted (see db.ts). Full policy and the
 // upgrade/rollback runbook: the guide at https://deltaharness.dev.
-export const HARNESS_VERSION = "0.1.2";
+export const HARNESS_VERSION = "0.2.0";

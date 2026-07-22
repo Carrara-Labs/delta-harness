@@ -56,9 +56,6 @@ export type Config = {
    *     nothing, and sub-agents/spill keep the signal-to-token ratio high. */
   compactAtTokens: number;
   hydrateTools: string[];
-  /** Operator allowlist (exact ids) of MCP READ tools a `research` sub-agent may use (W4).
-   * Default-deny: empty = only the safe read-only builtins. From DELTA_RESEARCH_TOOLS. */
-  researchTools: string[];
   /** Knowledge-base search tool for task-keyed relevance hydration (§E / G3a). */
   hydrateSearchTool?: string;
   /** DELTA.md (the writable self-file) size budget: the verbatim cap for the spine AND
@@ -220,11 +217,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     // Task-start hydration (§E) — read tools called at task start. NEUTRAL by default
     // (a product names its own reads); empty = the agent hydrates nothing.
     hydrateTools: (env.DELTA_HYDRATE_TOOLS ?? "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-    // Exact MCP read-tool allowlist for research sub-agents (W4). Default-deny.
-    researchTools: (env.DELTA_RESEARCH_TOOLS ?? "")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),

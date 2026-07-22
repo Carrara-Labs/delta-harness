@@ -1,40 +1,35 @@
 // SPDX-License-Identifier: Apache-2.0
-// W4: in-process, read-only, parallel research sub-agents. A research child runs a BOUNDED agent
-// loop in memory — never a subprocess, never a DB row — reusing the parent's provider + a
-// DEFAULT-DENY read-only tool subset + the parent's act-as token for MCP reads. Its transcript
-// stays inside this function; the parent only ever absorbs a distilled summary + an artifact path
-// the PARENT writes. Ephemeral by design: nothing to resume, no reflection, no session.
+// W4: in-process, parallel sub-agents with the SAME rights as the parent. A child runs a BOUNDED
+// agent loop in memory — never a subprocess, never a DB row — reusing the parent's provider, tool
+// registry, and act-as token. It gets the parent's full tool set MINUS the delegation trio
+// (research/spawn_subagent/eval_n) so nesting stays exactly ONE level deep — the load-bearing
+// invariant: an in-process child that could re-spawn would fork-bomb the shared budget. Everything
+// else the parent can do — read, write, code, knowledge-base reads AND writes, remember — a child can do,
+// gated by the parent's OWN per-tool guards (guardWrite reserved files, MCP act-as token, etc.), not
+// a research-specific facade. Its transcript stays inside this function; the parent only ever absorbs
+// a distilled summary + an artifact path the PARENT writes. Ephemeral by design: nothing to resume,
+// no reflection, no session.
 //
-// Security posture (codex-reviewed twice): no mutation tools (default-deny; operator MCP allowlist
-// can ONLY add `__`-namespaced tools, never re-enable a builtin); MCP reads only when the run's
-// act-as token is present (else no daemon-credential fallback); a confine-canonicalized reserved
-// read facade (read_file only — grep/list_dir root-scans are excluded, a documented deferral);
-// bounded steps + per-turn/total tool calls + per-child token budget + maxTokens on every call;
-// parent writes the artifact under a realpath-verified in-workspace dir; N≤3 with one batch in
-// flight per turn. Residual/deferred: scoped server-validated child token, transport MCP proxy,
-// stdio-MCP act-as, per-session FS snapshot, research-safe grep/list_dir, durable/async handles.
+// Context management mirrors the parent: a child starts from the parent's pinned resident set and can
+// `search_tools` to activate anything else in its universe — so a 90-tool registry never blows the
+// child's own token budget on step one. N≤3, one batch in flight per turn, per-child token slice.
 
 import { mkdirSync, realpathSync, renameSync } from "node:fs";
-import { resolve } from "node:path";
-import { confine } from "./files";
 import type { ChatMsg, ChatRequest, ModelResult, Usage } from "./provider";
+import { buildSpine } from "./spine";
 import { elide, type ToolCtx, type ToolDef, type Tools, toolSpecs } from "./tools";
 
-const RESEARCH_SYSTEM =
-  "You are a research sub-agent working one question in isolation. Investigate using ONLY your read-only tools (web search/fetch, targeted file reads, and any provided data-read tools). You CANNOT write files, run code, schedule, or take any action — read and report only. Be thorough, then finish with a tight, outcome-first answer: a one-paragraph SUMMARY, then detailed FINDINGS (facts, numbers, sources, file paths).";
+// The sub-agent role framing — rides a USER message ahead of the task, exactly as the parent's
+// per-turn instructions do (the engine identity + safety norms + self + policy come from the shared
+// spine, so a child inherits the parent's operating rules, not just a claim of them — codex).
+const RESEARCH_ROLE =
+  "You are a sub-agent working one task in isolation for the agent that spawned you. Use whatever of your tools the task needs. You run CONCURRENTLY with sibling sub-agents in the SAME workspace: prefer reads, and if you must write, use a unique path so you don't clobber a sibling. Be thorough, then finish with a tight, outcome-first answer: a one-paragraph SUMMARY, then detailed FINDINGS (facts, numbers, sources, file paths). Your full answer is saved to a file but only the SUMMARY returns to your parent — put the signal in the summary.\n\nYour task:";
 
-// Default read-only builtins a research child may use. grep/list_dir are EXCLUDED — a root scan
-// (`grep .`) would read secrets/operator files, and making them reserved-aware is deferred; the
-// child reads targeted files via read_file (facade-guarded). MCP read tools are opt-in by EXACT
-// `__`-namespaced id via DELTA_RESEARCH_TOOLS — read-only is never inferred from a name.
-const RESEARCH_SAFE_BUILTINS = new Set(["web_search", "web_fetch", "read_file"]);
-// Never allowlistable, even by exact name — belt-and-suspenders against a mis-set operator env.
-const FORBIDDEN = new Set([
-  "write_file",
-  "move_file",
-  "delete_file",
-  "code",
-  "remember",
+// Withheld from children so the "one level of nesting" invariant actually holds: the delegation
+// trio would let an in-process child recurse; the scheduling tools would let a child queue a FRESH
+// ROOT run (depth 0) that can itself delegate — escaping the cap by a side door (codex). These are
+// the ONLY capabilities a child loses relative to the parent.
+const WITHHELD = new Set([
   "research",
   "spawn_subagent",
   "eval_n",
@@ -42,8 +37,19 @@ const FORBIDDEN = new Set([
   "list_schedules",
   "cancel_schedule",
 ]);
-const FILE_TOOLS = new Set(["read_file"]);
-const RESERVED_FILES = new Set(["POLICY.md", "vocab.json", "PROMPT_CONTEXT.md", "DELTA.md"]);
+
+/** A child's callable universe + its resident set + the parent's spine layers (self / rendered policy
+ * / boot-stable context). Passing the spine layers means a child is built from the SAME buildSpine as
+ * the parent — same identity, same engine safety norms, same policy — so it inherits the parent's
+ * OPERATING RULES along with its rights: same-rights AND same-rules, not powerful-but-unconstrained. */
+export type ChildConfig = {
+  tools: Tools;
+  pinned: string[];
+  agentId?: string;
+  self?: string;
+  policy?: string;
+  context?: string;
+};
 
 const MAX_TASKS = 3;
 const CHILD_MAX_STEPS = 8;
@@ -72,88 +78,110 @@ function addUsage(a: Usage, b: Usage) {
 }
 const billed = (u: Usage): number => Math.max(0, u.input - u.cacheRead) + u.output;
 
-/** True if `p` resolves (symlinks canonicalized via confine) to a secrets/state/operator file, or
- * escapes the workspace. confine does realpath so a `public/x -> ../.env` alias is caught; for a
- * not-yet-existent path confine throws, so we fall back to a lexical `..`-normalized resolve. */
-function reservedPath(workspace: string, p: string): boolean {
-  let abs: string;
-  try {
-    abs = confine(workspace, p);
-  } catch {
-    const lex = resolve(workspace, p);
-    if (lex !== workspace && !lex.startsWith(`${workspace}/`)) return true; // escapes
-    abs = lex;
-  }
-  if (abs !== workspace && !abs.startsWith(`${workspace}/`)) return true;
-  const rel = abs === workspace ? "" : abs.slice(workspace.length + 1);
-  return (
-    rel === ".env" ||
-    rel.startsWith(".env.") ||
-    rel === "delta.env" ||
-    rel === ".delta" ||
-    rel.startsWith(".delta/") ||
-    RESERVED_FILES.has(rel)
-  );
+/** A child's callable universe: the parent's full tool registry minus the withheld set (delegation +
+ * run-scheduling). Same rights as the parent — the parent's own per-tool guards ride along on each
+ * def — and exactly one level of nesting. `search_tools` is added per-child (not here); it is never
+ * in the parent registry. */
+export function childTools(allowed: Tools): Tools {
+  const out: Tools = new Map();
+  for (const [name, def] of allowed) if (!WITHHELD.has(name)) out.set(name, def);
+  return out;
 }
 
-/** Wrap read_file so a research child can't read secrets/state/operator files (symlinks included). */
-function withReadFacade(name: string, def: ToolDef): ToolDef {
-  if (!FILE_TOOLS.has(name)) return def;
+/** A child-scoped `search_tools`: activates matches into THIS child's active set (never the
+ * parent's), mirroring run.ts so a child manages its resident schemas exactly like the parent. */
+function childSearchTool(
+  universe: Tools,
+  active: Set<string>,
+  activate: (names: string[]) => void,
+): ToolDef {
   return {
-    ...def,
-    execute: async (args, ctx) => {
-      const p = String(args.path ?? args.file ?? ".");
-      if (reservedPath(ctx.workspace, p))
-        return "[tool error] that path is off-limits to research sub-agents (secrets/state/operator files)";
-      return def.execute(args, ctx);
+    name: "search_tools",
+    description: "Find and activate more tools by keyword; matches become callable next turn.",
+    parameters: {
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+    },
+    idempotent: true,
+    execute: async (args) => {
+      const words = String(args.query).toLowerCase().split(/\s+/).filter(Boolean);
+      const hits = [...universe.values()]
+        .filter((t) => !active.has(t.name))
+        .map((t) => {
+          const hay = `${t.name} ${t.description}`.toLowerCase();
+          return { t, score: words.filter((w) => hay.includes(w)).length };
+        })
+        .filter((h) => h.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 5);
+      if (hits.length === 0) return "no matching tools";
+      activate(hits.map((h) => h.t.name));
+      return `activated:\n${hits.map((h) => `- ${h.t.name} — ${h.t.description}`).join("\n")}`;
     },
   };
 }
 
-/** The read-only tool subset a research child gets: safe builtins + the operator's EXACT MCP
- * allowlist (`__`-namespaced only, never a builtin, never a forbidden name), each resolved from the
- * parent's live registry. MCP tools are included ONLY when the run has an act-as token (else an MCP
- * read would fall back to the broader daemon credential — codex). Default-deny everything else. */
-export function researchTools(
-  allowed: Tools,
-  operatorAllow: string[],
-  hasAuthToken: boolean,
-): Tools {
-  const allow = new Set<string>(RESEARCH_SAFE_BUILTINS);
-  if (hasAuthToken)
-    for (const n of operatorAllow) if (n.includes("__") && !FORBIDDEN.has(n)) allow.add(n); // MCP-only, never a builtin
-  const out: Tools = new Map();
-  for (const [name, def] of allowed)
-    if (allow.has(name) && !FORBIDDEN.has(name)) out.set(name, withReadFacade(name, def));
-  return out;
-}
-
 type Outcome = { task: string; ok: boolean; text: string; usage: Usage };
 
-/** One bounded read-only research loop (in-memory). Never throws — always returns an Outcome
- * carrying whatever usage was spent, so the parent charges every child exactly once. */
+/** One bounded sub-agent loop (in-memory), with the parent's tools. Never throws — always returns an
+ * Outcome carrying whatever usage was spent, so the parent charges every child exactly once. Starts
+ * resident on `pinned` and self-serves the rest via `search_tools`, like the parent's own loop. */
 async function researchOne(
   task: string,
-  tools: Tools,
+  child: ChildConfig,
   chat: (req: ChatRequest) => Promise<ModelResult>,
-  childCtx: ToolCtx,
+  baseCtx: ToolCtx,
   opts: { maxTokens: number; signal?: AbortSignal },
 ): Promise<Outcome> {
   const usage = zero();
+  const universe = child.tools;
+  // The child's resident set + its own activation — a mirror of run.ts's active/activate/search.
+  const active = new Set<string>(child.pinned.filter((n) => universe.has(n)));
+  const activate = (names: string[]) => {
+    for (const n of names) if (universe.has(n)) active.add(n);
+  };
+  const searchTool = childSearchTool(universe, active, activate);
+  const childCtx: ToolCtx = { ...baseCtx, activate };
+  const callable = (): Tools => {
+    const map: Tools = new Map();
+    for (const n of active) {
+      const def = universe.get(n);
+      if (def) map.set(n, def);
+    }
+    if (universe.size > active.size) map.set(searchTool.name, searchTool);
+    return map;
+  };
+
+  // Build the child's system message from the SAME spine as the parent — engine identity + safety
+  // norms (proposal-only shared writes, untrusted web/document content) + self + policy — over the
+  // child's OWN resident tool list. The role framing + task ride a user message, exactly as the
+  // parent's per-turn instructions do (codex — a child must inherit the parent's norms, not just its
+  // rights). Built once from the initial resident set; the API `tools` field is what actually gates
+  // each step, so a later search_tools activation isn't lost even if the index hint goes stale.
+  const initial = callable();
+  const system = buildSpine({
+    ...(child.agentId ? { agentId: child.agentId } : {}),
+    pinned: [...initial.values()].filter((t) => t.name !== searchTool.name),
+    searchable: universe.size - active.size,
+    ...(child.self ? { self: child.self } : {}),
+    ...(child.policy ? { policy: child.policy } : {}),
+    ...(child.context ? { context: child.context } : {}),
+  });
   const messages: ChatMsg[] = [
-    { role: "system", content: RESEARCH_SYSTEM },
-    { role: "user", content: task },
+    { role: "system", content: system },
+    { role: "user", content: `${RESEARCH_ROLE} ${task}` },
   ];
-  const specs = toolSpecs(tools);
   let toolCalls = 0;
   try {
     for (let step = 0; step < CHILD_MAX_STEPS; step++) {
       if (opts.signal?.aborted) return { task, ok: false, text: "[research cancelled]", usage };
+      const tools = callable();
       const remaining = opts.maxTokens - billed(usage);
       const overBudget = remaining <= 0 || toolCalls >= MAX_TOOLCALLS_TOTAL;
       const res = await chat({
         messages,
-        ...(overBudget ? {} : { tools: specs }), // out of budget → force a final answer, no tools
+        ...(overBudget ? {} : { tools: toolSpecs(tools) }), // out of budget → force a final answer
         maxTokens: Math.max(256, Math.min(OUTPUT_CAP, remaining)),
         ...(opts.signal ? { signal: opts.signal } : {}),
       });
@@ -175,7 +203,7 @@ async function researchOne(
           else {
             const def = tools.get(call.function.name);
             if (!def)
-              out = `[tool error] '${call.function.name}' is not available to research sub-agents (read-only)`;
+              out = `[tool error] '${call.function.name}' is not active — search_tools for it first`;
             else {
               try {
                 const args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
@@ -199,9 +227,10 @@ async function researchOne(
   }
 }
 
-/** Parent-owned artifact write (the child has no write tools): temp + atomic rename under a
- * realpath-verified in-workspace dir (a `research -> /outside` symlink can't escape), UTF-8
- * byte-bounded. Returns the workspace-relative path the agent can `read_file`. */
+/** Parent-owned artifact write: temp + atomic rename under a realpath-verified in-workspace dir (a
+ * `research -> /outside` symlink can't escape), UTF-8 byte-bounded. Returns the workspace-relative
+ * path the agent can `read_file`. Written by the parent so a child's full findings survive even
+ * though only its summary re-enters context. */
 async function writeArtifact(
   workspace: string,
   runId: string,
@@ -231,12 +260,14 @@ async function writeArtifact(
   return path.slice(workspace.length + 1);
 }
 
-/** Run 1–3 read-only research tasks in parallel, each in its own bounded context. Writes each
- * child's full findings to a file and returns only a per-task summary + path — the children's
- * transcripts never enter the parent's context. Charges ALL child usage to the parent ONCE. */
+/** Run 1–3 sub-agent tasks in parallel, each in its own bounded context with the parent's tools.
+ * Writes each child's full findings to a file and returns only a per-task summary + path — the
+ * children's transcripts never enter the parent's context. Charges ALL child usage to the parent
+ * ONCE. `child` bundles the callable universe (childTools(parent registry)), the parent's resident
+ * `pinned` set, and the parent's identity+policy `context`. */
 export async function runResearch(
   tasks: string[],
-  tools: Tools,
+  child: ChildConfig,
   chat: (req: ChatRequest) => Promise<ModelResult>,
   ctx: ToolCtx,
   runId: string,
@@ -247,29 +278,37 @@ export async function runResearch(
     .filter(Boolean)
     .slice(0, MAX_TASKS);
   if (!picked.length) return "[tool error] no valid research tasks";
-  if (tools.size === 0)
-    return "[tool error] no read-only tools are configured for research (enable web_search, or set DELTA_RESEARCH_TOOLS for MCP reads)";
+  if (child.tools.size === 0)
+    return "[tool error] no tools are available to sub-agents in this context";
 
-  // Admission ONCE: reserve a parent synthesis share (÷ N+1); reject if the slice is too small to
-  // do useful work rather than launching zero-budget children (codex).
+  // Admission ONCE: reserve a parent synthesis share (÷ N+1). Under the engine's soft-budget model
+  // (billed input+output is checked BETWEEN calls, not pre-reserved — the parent's own loop works the
+  // same way), each child targets ~remaining/(N+1), so the batch stays near the parent's remaining
+  // rather than N× over it. Reject a batch too small to do useful work — or with no dollar budget
+  // left — rather than launching zero-budget children (codex).
   const rem = ctx.remainingBudget?.() ?? { maxTokens: 200_000, maxCostUsd: 10 };
   const perChildTokens = Math.floor(rem.maxTokens / (picked.length + 1));
+  if (rem.maxCostUsd <= 0)
+    return "[tool error] no cost budget left for research — the run is at its dollar ceiling";
   if (perChildTokens < MIN_CHILD_TOKENS)
     return `[tool error] not enough token budget left for research (${rem.maxTokens} remaining) — narrow the task or run fewer`;
 
-  // The child tool context carries NO chat/write tools; the parent's act-as token rides along ONLY
-  // for the (already read-only) MCP tools that were allowlisted.
-  const childCtx: ToolCtx = {
+  // The child ctx carries the parent's capabilities MINUS delegation (no research/chat → no
+  // recursion) and MINUS the parent-thread-bound hands (history/todo → a child is isolated, no
+  // session). `activate` is replaced per-child in researchOne so a child's search_tools mutates its
+  // own resident set, never the parent's. writeSelf rides along for `remember` parity.
+  const baseCtx: ToolCtx = {
     workspace: ctx.workspace,
     activate: () => {},
     ...(ctx.authToken ? { authToken: ctx.authToken } : {}),
     ...(ctx.signal ? { signal: ctx.signal } : {}),
     ...(ctx.vision !== undefined ? { vision: ctx.vision } : {}),
+    ...(ctx.writeSelf ? { writeSelf: ctx.writeSelf } : {}),
   };
 
   const settled = await Promise.allSettled(
     picked.map((task) =>
-      researchOne(task, tools, chat, childCtx, {
+      researchOne(task, child, chat, baseCtx, {
         maxTokens: perChildTokens,
         ...(ctx.signal ? { signal: ctx.signal } : {}),
       }),
