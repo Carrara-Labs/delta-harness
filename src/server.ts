@@ -391,6 +391,13 @@ export function createServer(
         return json({ queue: queue.snapshot(caller) });
       }
 
+      // Lifecycle signal for a scale-to-zero host (the hosting contract): "is the agent
+      // safe to suspend?" → { busy, running, queued }, the durable queued-OR-running
+      // truth so a host never suspends with work owed. Behind the /v1/ gate below (the
+      // host already holds the control token) — deliberately NOT folded into /healthz,
+      // which stays open + data-free (busy is operational state, not liveness).
+      if (method === "GET" && pathname === "/v1/busy") return json(queue.activity());
+
       if (method === "POST" && (pathname === "/v1/responses" || pathname === "/v1/tasks")) {
         const parsed = await readRequest(request);
         if ("error" in parsed) return json({ error: { message: parsed.error } }, 400);

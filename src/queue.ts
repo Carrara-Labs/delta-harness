@@ -227,6 +227,29 @@ export class Queue {
     });
   }
 
+  /** Lifecycle signal for a host managing scale-to-zero (the hosting contract): is the
+   * agent safe to suspend? Reports the DURABLE truth from the runs table — queued OR
+   * running — not the in-memory busy set (which tracks only in-flight sessions). A
+   * queued-but-not-yet-dispatched run must also hold the machine awake, or the host
+   * would suspend with work owed and strand it until the next wake. `busy` is the
+   * one boolean a host needs; the counts are for observability.
+   *
+   * Covers task work only. Post-run background reflection (opt-in self-learning) is NOT
+   * counted — it is best-effort and expendable across a suspend (the run's result is
+   * already durably delivered before reflection starts). The `WHERE` keeps this cheap:
+   * it rides the runs(status, …) index and touches only active rows, so a host can poll
+   * it freely without scanning the whole run history. */
+  activity(): { busy: boolean; running: number; queued: number } {
+    const row = this.deps.db
+      .query(
+        `SELECT COALESCE(SUM(status = 'running'), 0) AS running,
+                COALESCE(SUM(status = 'queued'), 0) AS queued
+         FROM runs WHERE status IN ('queued', 'running')`,
+      )
+      .get() as { running: number; queued: number };
+    return { busy: row.running + row.queued > 0, running: row.running, queued: row.queued };
+  }
+
   /** Boot: resume crashed mid-flight runs, then drain queued ones. */
   recover(): void {
     const rows = this.deps.db

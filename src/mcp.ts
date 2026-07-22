@@ -349,14 +349,20 @@ export class McpRegistry {
    * one bad server must never stop the daemon from starting. */
   async add(config: McpServerConfig): Promise<{ ok: boolean; tools: number; error?: string }> {
     this.remove(config.name); // idempotent re-add / hot-reload
-    const conn = new McpConnection(config);
+    // Construct INSIDE the try: a stdio server spawns its child in the McpConnection
+    // constructor, and Bun.spawn throws SYNCHRONOUSLY on a bad argv (a non-existent
+    // binary, an empty string). That throw has to be caught here — otherwise it escapes
+    // the un-guarded startup loop and crashes boot, breaking the "one bad server never
+    // stops the daemon" contract stated at the call site (codex P1).
+    let conn: McpConnection | undefined;
     try {
+      conn = new McpConnection(config);
       const defs = await conn.connect();
       this.connections.set(config.name, conn);
       for (const def of defs) this.registry.set(def.name, def);
       return { ok: true, tools: defs.length };
     } catch (e) {
-      conn.close(); // reap the child/socket — it was never tracked for removal
+      conn?.close(); // reap the child/socket if it was constructed — never tracked for removal
       return { ok: false, tools: 0, error: String(e).slice(0, 500) };
     }
   }

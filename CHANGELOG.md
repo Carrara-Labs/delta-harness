@@ -6,6 +6,37 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-07-22
+
+### Added
+- **`GET /v1/busy` — the scale-to-zero lifecycle signal.** A host managing suspend/resume can
+  now ask the daemon "is it safe to suspend?" and get `{ busy, running, queued }`. `busy` is the
+  durable queued-**or**-running truth read from the run table, so a host never suspends a Machine
+  with work still owed (a queued-but-not-yet-dispatched run keeps `busy` true). Behind the `/v1/`
+  control-token gate, deliberately not folded into the open, data-free `/healthz`. Turns the
+  scale-to-zero pattern from "read the provisioner source" into a ten-line host integration.
+- **`docs/hosting.md` — the hosting lifecycle contract.** Documents control-plane-owned
+  suspend/resume (why not `fly-proxy` autostop), the three host hooks (wake before dispatch, busy
+  check before suspend, suspend after terminal), and the WAL suspend-safety guarantee that makes
+  aggressive suspend safe.
+
+### Changed
+- **`DELTA_MCP_SERVERS` parsing fails loud, never silent.** A malformed value used to return no
+  backends with zero trace — the agent booted tool-less and burned a full model run before anyone
+  noticed. Malformed JSON, a non-array, and each unusable entry (no `name`, an `http` entry with no
+  `url`, a `stdio` entry with no `command`) are now dropped with a specific boot-log warning. A
+  **missing `transport` is inferred** from the entry shape (`url` → `http`, `command` → `stdio`)
+  and stamped on the entry, so a common omission just works instead of crashing the stdio path on
+  `Bun.spawn(undefined)`.
+
+### Fixed
+- **A bad `stdio` MCP server no longer crashes boot.** A `stdio` entry whose command spawns and
+  throws synchronously (a non-existent binary, an empty argv element) used to escape the startup
+  loop and take the daemon down, despite the "one bad server is never fatal" contract. The
+  connection is now constructed inside the registry's catch boundary, so any spawn failure is
+  logged (`mcp: <name> failed — …`) and the daemon boots with the remaining backends. Non-string
+  or empty `command` elements are also rejected at config time with a clear skip.
+
 ## [0.2.0] — 2026-07-22
 
 ### Changed

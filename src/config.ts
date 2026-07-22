@@ -579,10 +579,81 @@ function brokerCredential(env: Record<string, string | undefined>): {
  * config is ignored, never fatal — a Delta must still boot without its MCP. */
 function parseMcpServers(raw: string | undefined): McpServerConfig[] {
   if (!raw) return [];
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as McpServerConfig[]) : [];
-  } catch {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    // Fail-open like the rest of config — but NEVER silently: a malformed value used to
+    // return [] with no trace, so the agent booted tool-less and burned a full model run
+    // before anyone noticed. Make it loud (codex/Aperture field report).
+    console.error(
+      `delta: DELTA_MCP_SERVERS is not valid JSON — IGNORED, booting with no MCP backends: ${String(e)}`,
+    );
     return [];
   }
+  if (!Array.isArray(parsed)) {
+    console.error(
+      "delta: DELTA_MCP_SERVERS must be a JSON array — IGNORED, booting with no MCP backends.",
+    );
+    return [];
+  }
+  const out: McpServerConfig[] = [];
+  parsed.forEach((entry, i) => {
+    const v = normalizeMcpEntry(entry, i);
+    if (v) out.push(v);
+  });
+  return out;
+}
+
+/** Validate + normalize one DELTA_MCP_SERVERS entry, returning null (with a loud boot
+ *  warning) for anything unusable. Two footguns this closes: a single bad entry silently
+ *  vanishing, and a MISSING `transport` — which used to fall through to the stdio branch
+ *  and crash on `Bun.spawn(undefined)` ("cmd must be an array"). A missing transport is
+ *  now inferred from the entry shape (url → http, command → stdio) so the common omission
+ *  just works, and is stamped onto the returned object so the downstream branch reads it. */
+function normalizeMcpEntry(entry: unknown, index: number): McpServerConfig | null {
+  const at = `DELTA_MCP_SERVERS[${index}]`;
+  if (!entry || typeof entry !== "object") {
+    console.error(`delta: ${at} is not an object — skipped.`);
+    return null;
+  }
+  const e = entry as Record<string, unknown>;
+  const name = typeof e.name === "string" && e.name ? e.name : undefined;
+  if (!name) {
+    console.error(`delta: ${at} has no "name" — skipped.`);
+    return null;
+  }
+  let transport = e.transport;
+  if (transport === undefined) {
+    transport = typeof e.url === "string" ? "http" : Array.isArray(e.command) ? "stdio" : undefined;
+    if (transport)
+      console.error(`delta: ${at} (${name}) has no "transport" — inferred "${transport}".`);
+  }
+  if (transport === "http") {
+    if (typeof e.url !== "string" || !e.url) {
+      console.error(`delta: ${at} (${name}) is transport:http but has no "url" — skipped.`);
+      return null;
+    }
+    return { ...e, transport: "http" } as McpServerConfig;
+  }
+  if (transport === "stdio") {
+    if (
+      !Array.isArray(e.command) ||
+      e.command.length === 0 ||
+      !e.command.every((c) => typeof c === "string" && c.length > 0)
+    ) {
+      // Reject non-string / empty elements too, not just a non-array: `[null]` or `[""]`
+      // would pass a length check and then throw synchronously inside Bun.spawn. Better a
+      // clear config-time skip than a spawn crash (the boot loop catches that too now).
+      console.error(
+        `delta: ${at} (${name}) is transport:stdio but "command" is not a non-empty array of strings — skipped.`,
+      );
+      return null;
+    }
+    return { ...e, transport: "stdio" } as McpServerConfig;
+  }
+  console.error(
+    `delta: ${at} (${name}) has an unknown transport ${JSON.stringify(e.transport)} — skipped.`,
+  );
+  return null;
 }
