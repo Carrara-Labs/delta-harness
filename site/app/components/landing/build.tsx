@@ -7,7 +7,7 @@ export function BuildSection() {
         <div className="develop-grid" id="develop">
           <div className="develop-copy">
             <p className="section-kicker">Build</p>
-            <h2 className="section-heading">Create and run in two commands. Shape four files.</h2>
+            <h2 className="section-heading">Create and run in two commands. Shape five files.</h2>
             <p className="section-intro">
               Install in one command, then scaffold and launch a versionable agent bundle.
             </p>
@@ -48,7 +48,7 @@ delta dev ./my-agent`}
             </article>
 
             <article className="step">
-              <h3 className="step-label">Shape four files. Add context if needed.</h3>
+              <h3 className="step-label">Shape five files, one optional.</h3>
               <p>
                 The bundle is deliberately plain. Version it, review it and change it without
                 learning a framework.

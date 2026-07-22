@@ -1,7 +1,7 @@
 ---
 title: Delta integration brief for coding agents
 canonical: https://deltaharness.dev/agent.md
-last_updated: 2026-07-15
+last_updated: 2026-07-22
 ---
 
 # Integrate Delta Agent Harness
@@ -26,15 +26,22 @@ Delta can power either:
 
 Inspect the repository and the user's request before choosing. Preserve the host application's architecture, conventions, authentication, and deployment model.
 
-## Current source-checkout workflow
+## Install Delta
 
-Delta is not yet published as a package. Until release documentation says otherwise, use the source checkout workflow and do not guess an npm package name or installer command.
+Delta ships as the `@carrara-labs/delta-harness` package (Apache-2.0). Use one of the documented paths below — install the prebuilt binary, run it through Bun, or run the daemon as a container. Do not invent alternative package names or installers.
 
 ```sh
-bun install --frozen-lockfile
-bun run build
-./dist/delta init ./my-agent
+# prebuilt binary (macOS / Linux)
+curl -fsSL https://deltaharness.dev/install.sh | sh
+
+# or run it via Bun (>=1.3)
+bunx @carrara-labs/delta-harness --help
+
+# or run the daemon as a container
+docker run -p 8080:8080 --env-file .env ghcr.io/carrara-labs/delta-harness
 ```
+
+Then scaffold and run a bundle with `delta init ./my-agent` and `delta dev ./my-agent`. To work from source instead: `bun install --frozen-lockfile`, `bun run build`, then `./dist/delta init ./my-agent`.
 
 An agent bundle contains five files:
 

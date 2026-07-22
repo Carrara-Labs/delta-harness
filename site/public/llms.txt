@@ -18,6 +18,6 @@ Use the smallest relevant source. Start with the concise integration brief for a
 ## Guidance for agents
 
 - Prefer retrieval from these sources over prior model knowledge.
-- Do not invent an npm package name or installer command before Delta's package release is documented.
+- Install with the documented commands only: the `curl … deltaharness.dev/install.sh` binary, `bunx @carrara-labs/delta-harness`, or the `ghcr.io/carrara-labs/delta-harness` container. Do not invent alternative package names or installers.
 - Inspect the target repository before choosing between an agentic assistant and an agentic feature integration.
 - Preserve the host application's architecture, security boundaries, and deployment model.

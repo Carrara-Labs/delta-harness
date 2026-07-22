@@ -81,6 +81,9 @@ export function DeploySection() {
                     <code>/v1/responses</code>
                   </li>
                   <li>
+                    <code>/v1/tasks</code>
+                  </li>
+                  <li>
                     <code>/healthz</code>
                   </li>
                   <li>
