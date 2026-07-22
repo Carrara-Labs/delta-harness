@@ -1,4 +1,5 @@
 import { BookOpenIcon } from "lucide-react";
+import { useLocation } from "react-router";
 
 import { MobileNavigation } from "~/components/mobile-navigation";
 import { ThemeToggle } from "~/components/theme-toggle";
@@ -15,6 +16,12 @@ function GitHubMark() {
 }
 
 export function SiteHeader() {
+  // On the home page the section links are in-page anchors; on any other route they must jump
+  // back to the home page first, so we prefix them with "/". Keeps a section link landing on the
+  // right page AND the right section from anywhere.
+  const onHome = useLocation().pathname === "/";
+  const to = (id: string) => (onHome ? `#${id}` : `/#${id}`);
+
   return (
     <header
       className="site-header"
@@ -24,7 +31,7 @@ export function SiteHeader() {
       }}
     >
       <nav className="nav page" aria-label="Main navigation">
-        <a className="brand" href="#top" aria-label="Delta home">
+        <a className="brand" href={onHome ? "#top" : "/"} aria-label="Delta home">
           <span className="brand-mark" aria-hidden="true">
             <img
               className="brand-logo brand-logo-light"
@@ -42,11 +49,11 @@ export function SiteHeader() {
 
         <div className="nav-links">
           <a href="/how-it-works">How it works</a>
-          <a href="#product">Product</a>
-          <a href="#why-delta">Why Delta</a>
-          <a href="#use-cases">Use cases</a>
-          <a href="#build">Build</a>
-          <a href="#observe">Operate</a>
+          <a href={to("product")}>Product</a>
+          <a href={to("why-delta")}>Why Delta</a>
+          <a href={to("use-cases")}>Use cases</a>
+          <a href={to("build")}>Build</a>
+          <a href={to("observe")}>Operate</a>
         </div>
 
         <div className="nav-tools">

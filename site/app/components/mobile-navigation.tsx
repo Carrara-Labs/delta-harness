@@ -1,5 +1,6 @@
 import { MenuIcon } from "lucide-react";
 import { useRef } from "react";
+import { useLocation } from "react-router";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -12,21 +13,29 @@ import {
   SheetTrigger,
 } from "~/components/ui/sheet";
 
-const navigation = [
+type NavItem = {
+  label: string;
+  description: string;
+  section?: string;
+  href?: string;
+  external?: boolean;
+};
+
+const navigation: NavItem[] = [
   {
     href: "/how-it-works",
     label: "How it works",
     description: "A visual crash course on the runtime",
   },
-  { href: "#product", label: "Product", description: "Walk through the inspectable runtime" },
-  { href: "#why-delta", label: "Why Delta", description: "Compare operating models" },
+  { section: "product", label: "Product", description: "Walk through the inspectable runtime" },
+  { section: "why-delta", label: "Why Delta", description: "Compare operating models" },
   {
-    href: "#use-cases",
+    section: "use-cases",
     label: "Use cases",
     description: "Assistants, features and shared runtime",
   },
-  { href: "#build", label: "Build", description: "Create and run an agent" },
-  { href: "#observe", label: "Operate", description: "Trace, deploy and recover" },
+  { section: "build", label: "Build", description: "Create and run an agent" },
+  { section: "observe", label: "Operate", description: "Trace, deploy and recover" },
   { href: "/docs/", label: "Documentation", description: "Read the canonical technical guide" },
   {
     href: "https://github.com/Carrara-Labs/delta-harness",
@@ -38,6 +47,10 @@ const navigation = [
 
 export function MobileNavigation() {
   const pendingSection = useRef<string | null>(null);
+  const onHome = useLocation().pathname === "/";
+  // Section links are in-page anchors on home, but must jump back to home first from any other route.
+  const hrefFor = (item: NavItem) =>
+    item.section ? (onHome ? `#${item.section}` : `/#${item.section}`) : (item.href ?? "#");
 
   return (
     <Sheet>
@@ -83,14 +96,14 @@ export function MobileNavigation() {
         </SheetHeader>
         <nav className="delta-mobile-nav" aria-label="Mobile navigation">
           {navigation.map((item) => (
-            <SheetClose asChild key={item.href}>
+            <SheetClose asChild key={item.section ?? item.href}>
               <a
-                href={item.href}
+                href={hrefFor(item)}
                 target={item.external ? "_blank" : undefined}
                 rel={item.external ? "noreferrer" : undefined}
                 onClick={() => {
-                  if (!item.href.startsWith("#")) return;
-                  pendingSection.current = item.href;
+                  // Only smooth-scroll when the target section is on THIS page (home).
+                  if (item.section && onHome) pendingSection.current = `#${item.section}`;
                 }}
               >
                 <strong>{item.label}</strong>

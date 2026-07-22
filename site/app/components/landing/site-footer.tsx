@@ -1,6 +1,10 @@
+import { useLocation } from "react-router";
+
 /** Generated from the approved static landing page for parity. */
 export function SiteFooter() {
   const year = new Date().getFullYear();
+  const onHome = useLocation().pathname === "/";
+  const to = (id: string) => (onHome ? `#${id}` : `/#${id}`);
 
   return (
     <footer className="site-footer">
@@ -23,9 +27,9 @@ export function SiteFooter() {
         </div>
         <div className="footer-links">
           <a href="/how-it-works">How it works</a>
-          <a href="#product">Product</a>
-          <a href="#build">Build</a>
-          <a href="#deploy">Deploy</a>
+          <a href={to("product")}>Product</a>
+          <a href={to("build")}>Build</a>
+          <a href={to("deploy")}>Deploy</a>
           <a href="/docs/">Docs</a>
         </div>
       </div>
