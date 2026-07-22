@@ -22,6 +22,7 @@ export function SiteFooter() {
           </span>
         </div>
         <div className="footer-links">
+          <a href="/how-it-works">How it works</a>
           <a href="#product">Product</a>
           <a href="#build">Build</a>
           <a href="#deploy">Deploy</a>

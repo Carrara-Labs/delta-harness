@@ -13,6 +13,7 @@
       "!**/*.html",
       "!app/legacy",
       "!app/styles/landing.css",
+      "!app/styles/how-it-works.css",
       "!public/docs",
       "!public/guide.md"
     ]

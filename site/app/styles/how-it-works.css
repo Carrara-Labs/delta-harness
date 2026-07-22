@@ -1,0 +1,659 @@
+/* How It Works — page-specific components. Scoped under .hiw so nothing leaks into the
+   shared landing chrome. Colours come from the semantic tokens (auto light/dark); only the
+   sage + clay accents are re-pointed per theme. */
+
+.hiw {
+  --sage: var(--delta-sage-deep);
+  --clay: var(--delta-clay-deep);
+  --hiw-mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, "Cascadia Code", monospace;
+  --hiw-panel-2: var(--muted);
+  --hiw-line: var(--border);
+  --hiw-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 6%, transparent),
+    0 10px 30px color-mix(in srgb, var(--foreground) 5%, transparent);
+}
+.dark .hiw {
+  --sage: var(--delta-sage);
+  --clay: #c39b7f;
+}
+
+.hiw code,
+.hiw .hiw-mono {
+  font-family: var(--hiw-mono);
+}
+
+/* ---- hero + body text ---- */
+.hiw .hiw-hero-sec {
+  padding-top: 40px;
+}
+.hiw .hiw-h1 {
+  font-size: clamp(34px, 6vw, 58px);
+  letter-spacing: -0.02em;
+  line-height: 1.08;
+  margin: 22px 0 12px;
+  text-wrap: balance;
+}
+.hiw .hiw-sub {
+  font-size: clamp(17px, 2.2vw, 21px);
+  color: var(--muted-foreground);
+  max-width: 62ch;
+  margin: 0;
+  line-height: 1.5;
+}
+.hiw .hiw-lede {
+  font-size: 17px;
+  color: var(--muted-foreground);
+  max-width: 74ch;
+  line-height: 1.6;
+  margin: 0 0 4px;
+}
+.hiw .hiw-p {
+  color: var(--muted-foreground);
+  font-size: 15px;
+  line-height: 1.65;
+  max-width: 74ch;
+  margin: 0 0 14px;
+}
+.hiw .hiw-p b,
+.hiw .hiw-lede b {
+  color: var(--foreground);
+  font-weight: 600;
+}
+.hiw .hiw-kbd {
+  font-family: var(--hiw-mono);
+  font-size: 0.82em;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  white-space: nowrap;
+}
+
+/* section rhythm inside the page */
+.hiw .hiw-block {
+  margin-top: 26px;
+}
+.hiw .hiw-note {
+  font-family: var(--hiw-mono);
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+  margin-top: 12px;
+}
+
+/* ---- hero equation ---- */
+.hiw .hiw-eq {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 26px;
+  font-family: var(--hiw-mono);
+}
+.hiw .hiw-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border-radius: 11px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  box-shadow: var(--hiw-shadow);
+  font-size: 14px;
+}
+.hiw .hiw-chip .k {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.hiw .hiw-chip.strong {
+  border-color: color-mix(in srgb, var(--sage) 50%, var(--border));
+}
+.hiw .hiw-plus {
+  color: var(--muted-foreground);
+  font-size: 19px;
+}
+.hiw .hiw-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-family: var(--hiw-mono);
+  font-size: 12.5px;
+  padding: 6px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted-foreground);
+  box-shadow: var(--hiw-shadow);
+}
+.hiw .hiw-badge b {
+  color: var(--foreground);
+  font-weight: 600;
+}
+.hiw .hiw-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--sage);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--sage) 26%, transparent);
+}
+
+/* ---- cards + grids ---- */
+.hiw .hiw-grid {
+  display: grid;
+  gap: 16px;
+}
+.hiw .hiw-g3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+.hiw .hiw-g2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+.hiw .hiw-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--hiw-shadow);
+}
+.hiw .hiw-card h3 {
+  font-size: 17px;
+  margin: 0 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  line-height: 1.25;
+}
+.hiw .hiw-card p {
+  font-size: 14.5px;
+  margin: 0;
+  color: var(--muted-foreground);
+  line-height: 1.6;
+}
+.hiw .hiw-tag {
+  font-family: var(--hiw-mono);
+  font-size: 11px;
+  color: var(--muted-foreground);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  display: block;
+  margin-bottom: 10px;
+}
+.hiw .hiw-ic {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: var(--sage);
+  background: color-mix(in srgb, var(--sage) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sage) 34%, transparent);
+}
+.hiw .hiw-ic.clay {
+  color: var(--clay);
+  background: color-mix(in srgb, var(--clay) 15%, transparent);
+  border-color: color-mix(in srgb, var(--clay) 34%, transparent);
+}
+.hiw .hiw-ic svg {
+  width: 17px;
+  height: 17px;
+}
+
+/* ---- schematic panels ---- */
+.hiw .hiw-panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--hiw-shadow);
+  padding: 22px;
+}
+.hiw .hiw-scroll {
+  overflow-x: auto;
+}
+.hiw .hiw-figcap {
+  font-family: var(--hiw-mono);
+  font-size: 12px;
+  color: var(--muted-foreground);
+  margin-top: 12px;
+}
+
+/* ---- spine stack ---- */
+.hiw .hiw-spine {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hiw .hiw-layer {
+  display: grid;
+  grid-template-columns: 128px 1fr auto;
+  gap: 14px;
+  align-items: center;
+  padding: 13px 16px;
+  border-radius: 11px;
+  border: 1px solid var(--border);
+  background: var(--muted);
+}
+.hiw .hiw-layer .lname {
+  font-family: var(--hiw-mono);
+  font-weight: 700;
+  font-size: 14px;
+}
+.hiw .hiw-layer .ldesc {
+  font-size: 13.5px;
+  color: var(--muted-foreground);
+}
+.hiw .hiw-layer .lmeta {
+  font-family: var(--hiw-mono);
+  font-size: 11px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.hiw .hiw-layer.you {
+  border-color: color-mix(in srgb, var(--clay) 50%, var(--border));
+  background: color-mix(in srgb, var(--clay) 9%, var(--muted));
+}
+.hiw .hiw-layer.you .lname {
+  color: var(--clay);
+}
+.hiw .hiw-layer.policy {
+  border-color: color-mix(in srgb, var(--sage) 48%, var(--border));
+}
+.hiw .hiw-layer.policy .lname {
+  color: var(--sage);
+}
+
+/* ---- tool pills ---- */
+.hiw .hiw-cat {
+  margin-bottom: 14px;
+}
+.hiw .hiw-cat h4 {
+  margin: 0 0 9px;
+  font-size: 12px;
+  font-family: var(--hiw-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.hiw .hiw-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.hiw .hiw-pill {
+  font-family: var(--hiw-mono);
+  font-size: 12.5px;
+  padding: 6px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--muted);
+  color: var(--foreground);
+}
+.hiw .hiw-pill.mcp {
+  border-style: dashed;
+  color: var(--muted-foreground);
+}
+.hiw .hiw-pill.new {
+  border-color: var(--sage);
+  color: color-mix(in srgb, var(--sage) 80%, var(--foreground));
+  background: color-mix(in srgb, var(--sage) 12%, var(--muted));
+}
+
+/* ---- seam endpoints ---- */
+.hiw .hiw-endpoint {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  align-items: start;
+  padding: 15px 16px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--muted);
+}
+.hiw .hiw-verb {
+  font-family: var(--hiw-mono);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 9px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--sage) 16%, transparent);
+  color: color-mix(in srgb, var(--sage) 82%, var(--foreground));
+  white-space: nowrap;
+}
+.hiw .hiw-endpoint .path {
+  font-family: var(--hiw-mono);
+  font-weight: 600;
+  font-size: 14.5px;
+}
+.hiw .hiw-endpoint p {
+  font-size: 13.5px;
+  margin: 4px 0 0;
+  color: var(--muted-foreground);
+}
+
+/* ---- callout ---- */
+.hiw .hiw-callout {
+  border: 1px solid color-mix(in srgb, var(--sage) 45%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--sage) 9%, var(--card));
+  padding: 18px 20px;
+  box-shadow: var(--hiw-shadow);
+}
+.hiw .hiw-callout.clay {
+  border-color: color-mix(in srgb, var(--clay) 45%, var(--border));
+  background: color-mix(in srgb, var(--clay) 10%, var(--card));
+}
+.hiw .hiw-callout .k {
+  font-family: var(--hiw-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--sage) 80%, var(--foreground));
+  font-weight: 700;
+}
+.hiw .hiw-callout.clay .k {
+  color: var(--clay);
+}
+.hiw .hiw-callout p {
+  margin: 8px 0 0;
+  color: var(--muted-foreground);
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+
+/* ---- budget meters ---- */
+.hiw .hiw-meters {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+.hiw .hiw-meter {
+  padding: 15px 16px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--muted);
+}
+.hiw .hiw-meter .lab {
+  font-family: var(--hiw-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.hiw .hiw-meter .val {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 4px 0 9px;
+  letter-spacing: -0.02em;
+}
+.hiw .hiw-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+.hiw .hiw-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--sage), color-mix(in srgb, var(--sage) 55%, var(--clay)));
+}
+
+/* ---- lists ---- */
+.hiw ul.hiw-clean {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--muted-foreground);
+  font-size: 14.5px;
+}
+.hiw ul.hiw-clean li {
+  margin: 5px 0;
+}
+.hiw ul.hiw-clean li b {
+  color: var(--foreground);
+}
+
+/* ---- split ---- */
+.hiw .hiw-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+  align-items: center;
+}
+.hiw .hiw-split .fig {
+  min-width: 0;
+}
+
+/* ---- expanded anatomy ---- */
+.hiw .hiw-detail {
+  margin-top: 34px;
+  padding-top: 30px;
+  border-top: 1px dashed var(--border);
+}
+.hiw .hiw-detail-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.hiw .hiw-detail-head .lbl {
+  font-family: var(--hiw-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--sage) 80%, var(--foreground));
+}
+.hiw .hiw-detail-head h3 {
+  font-size: clamp(20px, 2.4vw, 24px);
+  margin: 0;
+  line-height: 1.2;
+}
+.hiw .hiw-adapters {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-top: 16px;
+}
+.hiw .hiw-adapter {
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--muted);
+  padding: 14px 15px;
+}
+.hiw .hiw-adapter .from {
+  font-family: var(--hiw-mono);
+  font-size: 12.5px;
+  color: var(--foreground);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.hiw .hiw-adapter .from .a {
+  color: var(--sage);
+}
+.hiw .hiw-adapter .to {
+  font-size: 13px;
+  color: var(--muted-foreground);
+  margin-top: 6px;
+  line-height: 1.5;
+}
+.hiw .hiw-files {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+.hiw .hiw-file {
+  display: grid;
+  grid-template-columns: 190px 108px 1fr;
+  gap: 16px;
+  align-items: center;
+  padding: 15px 16px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--card);
+  box-shadow: var(--hiw-shadow);
+}
+.hiw .hiw-file .fn {
+  font-family: var(--hiw-mono);
+  font-weight: 700;
+  font-size: 14px;
+}
+.hiw .hiw-file .role {
+  font-size: 13.5px;
+  color: var(--muted-foreground);
+  line-height: 1.55;
+}
+.hiw .hiw-file .role b {
+  color: var(--foreground);
+  font-weight: 600;
+}
+.hiw .hiw-mut {
+  font-family: var(--hiw-mono);
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  padding: 5px 0;
+  border-radius: 999px;
+  text-align: center;
+  border: 1px solid var(--border);
+  color: var(--muted-foreground);
+}
+.hiw .hiw-mut.write {
+  color: var(--clay);
+  border-color: color-mix(in srgb, var(--clay) 48%, var(--border));
+  background: color-mix(in srgb, var(--clay) 10%, transparent);
+}
+.hiw .hiw-mut.fixed {
+  color: var(--sage);
+  border-color: color-mix(in srgb, var(--sage) 48%, var(--border));
+  background: color-mix(in srgb, var(--sage) 10%, transparent);
+}
+.hiw .hiw-state {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+.hiw .hiw-tree {
+  font-family: var(--hiw-mono);
+  font-size: 12.5px;
+  line-height: 1.95;
+  color: var(--muted-foreground);
+  white-space: pre;
+  margin: 6px 0 0;
+}
+.hiw .hiw-tree b {
+  color: var(--foreground);
+  font-weight: 600;
+}
+.hiw .hiw-tree .c {
+  color: color-mix(in srgb, var(--muted-foreground) 75%, transparent);
+}
+
+/* ---- shipped badge ---- */
+.hiw .hiw-shipped {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--hiw-mono);
+  font-size: 12px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--sage);
+  color: color-mix(in srgb, var(--sage) 80%, var(--foreground));
+  background: color-mix(in srgb, var(--sage) 12%, transparent);
+}
+
+/* ---- SVG diagram helpers ---- */
+.hiw svg.hiw-dia {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.hiw .svg-box {
+  fill: var(--muted);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+.hiw .svg-box-accent {
+  fill: color-mix(in srgb, var(--sage) 14%, var(--card));
+  stroke: var(--sage);
+  stroke-width: 1.5;
+}
+.hiw .svg-box-clay {
+  fill: color-mix(in srgb, var(--clay) 14%, var(--card));
+  stroke: var(--clay);
+  stroke-width: 1.5;
+}
+.hiw .svg-t {
+  fill: var(--foreground);
+  font-family: var(--hiw-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.hiw .svg-td {
+  fill: var(--muted-foreground);
+  font-family: var(--hiw-mono);
+  font-size: 11px;
+}
+.hiw .svg-line {
+  stroke: var(--border);
+  stroke-width: 2;
+  fill: none;
+}
+.hiw .svg-flow {
+  stroke: var(--sage);
+  stroke-width: 2.2;
+  fill: none;
+}
+.hiw .svg-flow-b {
+  stroke: var(--clay);
+  stroke-width: 2.2;
+  fill: none;
+}
+.hiw .svg-lab {
+  fill: var(--muted-foreground);
+  font-family: var(--hiw-mono);
+  font-size: 10.5px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .hiw .svg-dash {
+    stroke-dasharray: 6 6;
+    animation: hiw-march 1.1s linear infinite;
+  }
+  @keyframes hiw-march {
+    to {
+      stroke-dashoffset: -24;
+    }
+  }
+}
+
+/* ---- responsive ---- */
+@media (max-width: 860px) {
+  .hiw .hiw-g3,
+  .hiw .hiw-g2,
+  .hiw .hiw-split,
+  .hiw .hiw-meters,
+  .hiw .hiw-state {
+    grid-template-columns: 1fr;
+  }
+  .hiw .hiw-adapters {
+    grid-template-columns: 1fr 1fr;
+  }
+  .hiw .hiw-layer {
+    grid-template-columns: 96px 1fr;
+  }
+  .hiw .hiw-layer .lmeta {
+    display: none;
+  }
+  .hiw .hiw-file {
+    grid-template-columns: 1fr auto;
+  }
+  .hiw .hiw-file .role {
+    grid-column: 1 / -1;
+  }
+}

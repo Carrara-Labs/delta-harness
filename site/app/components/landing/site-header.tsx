@@ -41,6 +41,7 @@ export function SiteHeader() {
         </a>
 
         <div className="nav-links">
+          <a href="/how-it-works">How it works</a>
           <a href="#product">Product</a>
           <a href="#why-delta">Why Delta</a>
           <a href="#use-cases">Use cases</a>

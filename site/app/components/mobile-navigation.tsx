@@ -13,6 +13,11 @@ import {
 } from "~/components/ui/sheet";
 
 const navigation = [
+  {
+    href: "/how-it-works",
+    label: "How it works",
+    description: "A visual crash course on the runtime",
+  },
   { href: "#product", label: "Product", description: "Walk through the inspectable runtime" },
   { href: "#why-delta", label: "Why Delta", description: "Compare operating models" },
   {
