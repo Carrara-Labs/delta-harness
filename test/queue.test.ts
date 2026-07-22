@@ -53,6 +53,49 @@ describe("queue + run", () => {
     expect(n).toBe(1);
   });
 
+  test("idempotency_key: a re-dispatch returns the same non-terminal run (no duplicate)", async () => {
+    const deps = makeDeps(async () => textResult("filed"));
+    const queue = new Queue(deps);
+    // Two dispatches in the same tick — the first is still `queued` when the second arrives.
+    const a = queue.enqueue({ input: "process task t1", store: false, idempotency_key: "k:t1" });
+    const b = queue.enqueue({ input: "process task t1", store: false, idempotency_key: "k:t1" });
+    expect(b.id).toBe(a.id); // deduped onto the live run
+    const n = (deps.db.query("SELECT COUNT(*) AS n FROM runs").get() as { n: number }).n;
+    expect(n).toBe(1); // exactly one run for the key
+    await queue.wait(a.id);
+  });
+
+  test("idempotency_key: a terminal run frees the key — a later dispatch starts fresh", async () => {
+    const deps = makeDeps(async () => textResult("done"));
+    const queue = new Queue(deps);
+    const a = queue.enqueue({ input: "t", store: true, idempotency_key: "k1" });
+    await queue.wait(a.id); // terminal
+    const b = queue.enqueue({ input: "t", store: true, idempotency_key: "k1" });
+    expect(b.id).not.toBe(a.id); // key freed once the prior run finished
+    await queue.wait(b.id);
+  });
+
+  test("idempotency_key + store:false compose: deduped while live, purged at terminal", async () => {
+    const deps = makeDeps(async () => textResult("filed"));
+    const queue = new Queue(deps);
+    const a = queue.enqueue({ input: "t", store: false, idempotency_key: "k:t2" });
+    const b = queue.enqueue({ input: "t", store: false, idempotency_key: "k:t2" });
+    expect(b.id).toBe(a.id); // deduped while the run is live
+    const done = await queue.wait(a.id);
+    expect(done.status).toBe("done");
+    // store:false still purges the whole session transcript at terminal (ephemeral guarantee intact).
+    const n = (
+      deps.db.query("SELECT COUNT(*) AS n FROM runs WHERE session_id = ?").get(done.session_id) as {
+        n: number;
+      }
+    ).n;
+    expect(n).toBe(0);
+    // ...and the purged/terminal key is free — a later dispatch starts fresh, not a dedup ghost.
+    const c = queue.enqueue({ input: "t", store: false, idempotency_key: "k:t2" });
+    expect(c.id).not.toBe(a.id);
+    await queue.wait(c.id);
+  });
+
   test("previous_response_id threads history into the next model call", async () => {
     const seen: ChatMsg[][] = [];
     const deps = makeDeps(async (req: ChatRequest) => {

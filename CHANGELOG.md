@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-07-22
+
+### Added
+- **Dispatch idempotency for `POST /v1/tasks`.** A run request may now carry an `idempotency_key`;
+  `enqueue` returns any existing non-terminal run with the same key instead of starting a duplicate.
+  This makes fire-and-forget async dispatch safe to retry — a client retry, or a controller
+  re-driving a slow-but-alive task, dedupes onto the live run rather than spawning a second one. A
+  terminal run frees the key. Race-safe (single-writer, synchronous check-before-insert) with no
+  schema migration, and composes with `store: false` (the ephemeral transcript is still purged at
+  terminal).
+
 ## [0.1.1] — 2026-07-16
 
 ### Fixed

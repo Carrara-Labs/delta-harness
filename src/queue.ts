@@ -52,6 +52,21 @@ export class Queue {
   enqueue(req: RunRequest): RunRow {
     const { db, events } = this.deps;
     const now = Date.now();
+    // Dispatch idempotency (fire-and-forget callers): if a NON-terminal run already carries this
+    // key, return it instead of starting a second one. Single-writer (bun) + this synchronous
+    // check-before-insert make it race-safe without a schema migration — json_extract reads the
+    // key straight out of the stored request. A terminal run frees the key (re-run allowed later).
+    if (req.idempotency_key) {
+      const existing = db
+        .query(
+          `SELECT id FROM runs
+           WHERE status IN ('queued','running')
+             AND json_extract(request, '$.idempotency_key') = ?
+           ORDER BY seq LIMIT 1`,
+        )
+        .get(req.idempotency_key) as { id: string } | null;
+      if (existing) return getRun(db, existing.id) as RunRow;
+    }
     // Normalize BOTH metadata aliases (the chat vs task entry paths populate one or the other;
     // spineOf uses the same snake/camel tolerance). Reading only `user_id` here would stamp a
     // `{ userId }` run's session as NULL-owned → S0's null-owner path would then let anyone

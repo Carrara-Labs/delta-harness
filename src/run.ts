@@ -163,6 +163,11 @@ export type RunRequest = {
   previous_response_id?: string;
   store?: boolean;
   stream?: boolean; // server-only: stream the sync turn over SSE (§A)
+  /** Dispatch idempotency for fire-and-forget callers (e.g. an async POST /v1/tasks). When set,
+   *  enqueue returns any existing NON-terminal run carrying the same key instead of starting a second
+   *  one — so a re-dispatch (a client retry, or a controller re-driving a slow-but-alive task) can't
+   *  spawn a duplicate run. Distinct from the OpenAI `store` flag and from previous_response_id. */
+  idempotency_key?: string;
   metadata?: Record<string, unknown>;
 };
 
