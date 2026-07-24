@@ -791,6 +791,15 @@ curl -sS http://127.0.0.1:8080/v1/queue \
 
 The named caller sees its own queued and running rows with IDs and session IDs. Other users' rows remain opaque and show only status, position, and age. The header is an identity hint expected from a trusted control plane, not authentication by itself.
 
+### Suspend safety
+
+```sh
+curl -sS http://127.0.0.1:8080/v1/busy \
+  -H 'authorization: Bearer <DELTA_CONTROL_TOKEN>'
+```
+
+Returns `{"busy":true|false,"running":N,"queued":N}`. `busy` is the durable queued-or-running truth read from the run table, so a host managing suspend and resume never suspends a Machine with work still owed, including a queued run that has not started. It sits behind the `/v1/` control-token gate and is deliberately not folded into the open, data-free `/healthz`. A host polls it before suspend and after every terminal task; the [hosting contract](https://github.com/Carrara-Labs/delta-harness/blob/main/docs/hosting.md) covers the full lifecycle.
+
 ### Upload files
 
 ```sh
@@ -818,8 +827,11 @@ The `work` profile exposes the built-in tools below. Tool failures are returned 
 | `move_file` | Move or rename a workspace file. | Destination overwrite must be explicit. |
 | `delete_file` | Move a file or directory to recoverable trash. | Entries older than seven days are swept at daemon startup, not periodically while it runs. |
 | `remember` | Replace `DELTA.md`. | Full-file replacement, size-capped, revisioned, visible on the next run. |
+| `recall` | Search this conversation's earlier turns, including ones compacted out of the live window. | Returns the matching snippet plus the on-disk path of any spilled result; scoped to the current session; lexical search over the recent window, not a full-text index. |
+| `todo` | Read or replace the run's working plan. | Re-injected every turn and survives compaction; bounded, so offload large notes to a workspace file. Send the full item list to write; omit to read. |
 | `search_tools` | Find and activate non-resident allowed tools for the current run. | Activates up to five name or description matches per call; lexical matching only. |
 | `code` | Delegate a task to a configured coding CLI. | No harness timeout or Delta filesystem sandbox. The child has every path and capability available to the daemon's OS user, subject to any sandbox implemented by the selected CLI. |
+| `research` | Run 1 to 3 parallel in-process sub-agents that each explore in their own bounded context and return a short summary plus a findings-file path. | One nesting level; each child holds the parent's tools minus the delegation and scheduling tools; children share the workspace. |
 | `spawn_subagent` | Run one isolated side task through `delta run`. | One nesting level; fresh in-memory conversation and narrow environment. |
 | `eval_n` | Run 2 to 5 independent variants and judge the best. | Best for reasoning or drafting that does not mutate shared files. |
 | `schedule_self` | Ask a control plane to wake the agent later. | Registered only when control-plane URL and token are configured. |
@@ -914,7 +926,7 @@ Delta implements MCP Streamable HTTP and newline-framed stdio without an SDK dep
 
 ### HTTP server
 
-`DELTA_MCP_SERVERS` should be a JSON array. The `transport` field is required:
+`DELTA_MCP_SERVERS` should be a JSON array. Give each entry an explicit `transport`; if you omit it, Delta infers it from the entry shape (`url` implies `http`, `command` implies `stdio`) and logs that it did so:
 
 ```dotenv
 DELTA_MCP_SERVERS=[{"name":"crm","transport":"http","url":"https://crm.example/mcp","headers":{"authorization":"Bearer service-token"}}]
@@ -1170,7 +1182,7 @@ Two placement profiles ship:
 | Profile | Allowed tools | Initial schemas | Steps | Fresh tokens | Cost |
 |---|---|---|---:|---:|---:|
 | `work` | All registered tools | Lean core | 100 | 2,000,000 | $5.00 |
-| `chat` | `web_search`, `web_fetch`, `read_file`, `list_dir` | All four | 10 | 100,000 | $0.25 |
+| `chat` | `web_search`, `web_fetch`, `read_file`, `list_dir`, `recall`, `todo` | All six | 10 | 100,000 | $0.25 |
 
 Set the daemon ceiling:
 
@@ -1308,7 +1320,7 @@ An agent can also keep its own working plan with the `todo` tool. The plan is re
 
 ### Delegating heavy exploration
 
-For work that would bloat the primary window, the `research` tool runs one to three read-only sub-agents in parallel, in-process. Each explores in its own bounded context with web and file-read tools, writes its full findings to a file the parent owns, and returns only a short summary plus that path — so the primary conversation absorbs the signal, not the exploration. Research sub-agents cannot write, run code, or take actions; their tool set is an operator-controlled read-only allowlist, and they only reach MCP tools when an act-as token is present.
+For work that would bloat the primary window, the `research` tool runs one to three sub-agents in parallel, in-process. Each explores in its own bounded context, writes its full findings to a file the parent owns, and returns only a short summary plus that path — so the primary conversation absorbs the signal, not the exploration. A research child holds the parent's exact rights: its callable tools are the parent's full registry minus a small withheld set (the delegation tools `research`, `spawn_subagent`, and `eval_n`, plus the run-scheduling tools), so nesting stays exactly one level deep. A child can read, write, run code, `remember`, and call MCP reads and writes — whatever the parent can. It is forged from the same system spine as the parent, so it inherits the same norms and policy along with those rights, and it starts on the parent's pinned tool set with `search_tools` for the rest.
 
 ### Boundaries
 
@@ -1407,22 +1419,50 @@ The bundled browser UI does not store or attach bearer tokens. For remote use, p
 
 ## Telemetry and events
 
-Delta emits one correlated event stream and uses it in three ways:
+Delta emits one correlated event stream and gives you three ways to consume it. Two are free and built in; the third ships events off the box to a collector you run.
 
-1. every durable event is written to the local SQLite `events` table
-2. in-process subscribers drive task and Cockpit SSE
-3. an optional background exporter sends NDJSON envelopes from those records, with a privacy filter for model and tool attributes
+1. **Local, always on** — every durable event is written to the local SQLite `events` table.
+2. **Live tail** — in-process subscribers drive task SSE and the Cockpit's `GET /v1/dev/stream` (replay from a cursor, then follow).
+3. **Ship it out (optional)** — a background exporter pushes NDJSON envelopes to an HTTP endpoint you own.
 
-The schema is custom NDJSON and uses a subset of OpenTelemetry GenAI-inspired names. It is not semantic-convention complete: fields such as `gen_ai.provider`, `gen_ai.usage.cached_tokens`, `gen_ai.usage.cost_usd`, and `latency_ms` are Delta-specific or legacy-shaped. Delta does not embed an OpenTelemetry SDK and does not emit OTLP.
+The stream is a **correlated event log, not distributed tracing**: there are no spans or parent links, only a flat correlation spine — `user → agent → session → run → task → entity → turn`. Field names follow a subset of OpenTelemetry GenAI conventions (`gen_ai.request.model`, `gen_ai.usage.*`, `latency_ms`), but Delta embeds no OpenTelemetry SDK and emits no OTLP; the wire format is line-delimited JSON.
+
+### The fastest path: no collector at all
+
+Before wiring anything, note that (1) and (2) already exist with zero configuration. `delta dev` opens the Cockpit; `GET /v1/dev/stream?since=<event-id>&run=<run-id>&live=1` replays the persisted `events` table from a cursor and then follows live (gated by `DELTA_INSPECT_TOKEN`). For a single agent, that is your dashboard. The exporter below is for when you run many agents and want their events in one queryable place.
 
 ### Enable export
 
+Set two variables on the daemon and the exporter starts:
+
 ```dotenv
-TELEMETRY_URL=https://collector.example/delta/events
-TELEMETRY_TOKEN=collector-token
+TELEMETRY_URL=https://your-collector.example/telemetry/ingest
+TELEMETRY_TOKEN=a-dedicated-collector-token
 ```
 
-If `TELEMETRY_TOKEN` is absent, Delta falls back to `DELTA_CONTROL_TOKEN`. The exporter does not currently enforce HTTPS or an allowlist, so validate `TELEMETRY_URL` carefully. Never send a control token to an untrusted or plaintext endpoint.
+`TELEMETRY_URL` is the only thing that turns the exporter on. If `TELEMETRY_TOKEN` is absent, Delta falls back to `DELTA_CONTROL_TOKEN` as the bearer — convenient, but it sends a control credential off the box, so prefer a dedicated token. The exporter does not enforce HTTPS or an allowlist, so validate `TELEMETRY_URL` yourself and never post a control token to a plaintext or untrusted endpoint.
+
+### Capture the useful attributes
+
+This is the setting most people miss. By default the three highest-value event types — `model.call`, `tool.call`, `tool.result` — are exported with their `attributes` object **stripped entirely**. You get event counts but no per-call model, provider, latency, token/cost, or tool names. Turn them on:
+
+```dotenv
+DELTA_CAPTURE_PAYLOADS=1
+```
+
+Despite the name, this does **not** export prompts, tool arguments, or tool results — those are never placed in these events. It only lets the *operational* attributes survive the export filter: model, provider, token usage, cost, latency, and tool names. The privacy cost is low and the observability gain is large; enable it wherever you already trust the collector.
+
+A separate flag, `DELTA_CAPTURE_CALLS`, captures true-to-life full request/response bodies into a local `calls` table for the Cockpit. It is local-only, storage-heavy, and never exported — right for deep local debugging, wrong for the telemetry stream. Don't confuse the two.
+
+### A reference collector you can copy
+
+A complete, single-agent collector lives in the repo — a Postgres table and a ~60-line Bun handler, distilled from the multi-tenant one Carrara Labs runs in production:
+
+- [`docs/telemetry-collector/schema.sql`](https://github.com/Carrara-Labs/delta-harness/blob/main/docs/telemetry-collector/schema.sql) — the `agent_events` landing table
+- [`docs/telemetry-collector/server.ts`](https://github.com/Carrara-Labs/delta-harness/blob/main/docs/telemetry-collector/server.ts) — the NDJSON ingest handler
+- [`docs/telemetry-collector/README.md`](https://github.com/Carrara-Labs/delta-harness/blob/main/docs/telemetry-collector/README.md) — run it, point an agent at it, and the dashboard queries
+
+Apply the schema, run the server, set the three variables above, and rows appear in `agent_events` within a couple of seconds of the agent doing work.
 
 ### Delivery contract
 
@@ -1440,7 +1480,7 @@ The exporter:
 - deletes exported rows first on overflow
 - drops the oldest unexported records only when the unexported backlog alone exceeds the cap
 
-Retries are serial on a fixed two-second cadence with no exponential backoff or jitter. When telemetry is active, normal event retention is disabled; exported rows can remain until overflow, and visibility reports backlog count rather than oldest age. The collector should deduplicate on `event.id`, and operators should monitor collector health and backlog externally.
+Retries are serial on a fixed two-second cadence with no exponential backoff or jitter. When telemetry is active, normal event retention is disabled: the exporter owns `events` deletion up to the outbox cap, and visibility reports backlog count rather than oldest age. **Your collector must deduplicate on `event.id`** (the exporter is at-least-once), and you should monitor collector health and backlog externally — if the collector stays down, the oldest unexported rows are dropped once the outbox fills.
 
 ### Record shape
 
@@ -1460,24 +1500,73 @@ With `DELTA_CAPTURE_PAYLOADS=1`, an exported `model.call` record has this shape:
   "turn": 2,
   "attributes": {
     "gen_ai.request.model": "anthropic/claude-sonnet-5",
+    "gen_ai.provider": "openrouter",
+    "gen_ai.response.finish_reasons": ["tool_calls"],
     "gen_ai.usage.input_tokens": 1200,
     "gen_ai.usage.output_tokens": 300,
     "gen_ai.usage.cached_tokens": 900,
     "gen_ai.usage.cost_usd": 0.004,
-    "latency_ms": 1800
+    "latency_ms": 1800,
+    "tool_calls": ["read_file", "run_code"]
   }
 }
 ```
 
-Important event types include run enqueue, start, resume, cancel, and finish; turn start and end; model call; tool call and result; checkpoint; compaction; hydration; recall; capability retrieval; reflection; promotion failure; and structured errors.
+### Events and their attributes
 
-Local model and tool events carry operational attributes such as usage, provider, tool name, duration, and error state. They do not contain full prompts, responses, tool arguments, or tool results.
+The stream carries run lifecycle, turn boundaries, model and tool calls, context management, the learning loop, and errors. The attributes worth querying:
 
-By default, exported `model.call`, `tool.call`, and `tool.result` envelopes omit the `attributes` key entirely. Other event types keep their attributes. `DELTA_CAPTURE_PAYLOADS=1` lets the model and tool attributes shown above survive that export filter. It still does not add full prompt or tool payloads because those fields are never placed in these events. Normalized successful main-loop request and response capture belongs to the separate `DELTA_CAPTURE_CALLS` Cockpit feature.
+| Event | Key attributes | Notes |
+| --- | --- | --- |
+| `run.finished` | `status`; `gen_ai.usage.{input,output,cached,total}_tokens`; `gen_ai.usage.cost_usd` | Aggregate per run. Always present. No model id here. |
+| `model.call` | `gen_ai.request.model`, `gen_ai.provider`, `gen_ai.response.finish_reasons`, per-call usage + `gen_ai.usage.cost_usd`, `latency_ms`, `tool_calls` (names requested) | One per turn. **Attributes only with `DELTA_CAPTURE_PAYLOADS=1`.** |
+| `tool.call` / `tool.result` | `gen_ai.tool.name`, call id, error/interrupted state | **Attributes only with capture on.** |
+| `compaction` | `summary_tokens`, `summary_cost_usd`, `compacted_turns`, `kept`, `merged` | The cost of context management. |
+| `error` | `error.type` (e.g. `budget`, `context_irreducible`), `message` | Error-as-value; the daemon does not crash. |
+| `recall`, `hydrate`, `reflection`, `run.{enqueued,started,resumed,cancelled}` | lifecycle + learning-loop counters | — |
+
+Where the model comes from: the executing model is only on `model.call` (capture on). `run.finished` carries usage but not the model id, so for per-run model read it from `model.call` or from your own agent registry.
+
+### The dashboard is SQL
+
+Once events land, the dashboard is just queries — no UI required to start. A few starters (full set in the [collector README](https://github.com/Carrara-Labs/delta-harness/blob/main/docs/telemetry-collector/README.md)):
+
+```sql
+-- Spend and tokens per agent (dollar figures are token×price; notional under a flat subscription)
+SELECT agent_id, count(*) AS runs,
+       round(sum((attributes->>'gen_ai.usage.cost_usd')::numeric), 4) AS cost_usd
+FROM agent_events WHERE event_name = 'run.finished' GROUP BY 1 ORDER BY cost_usd DESC;
+
+-- Which model / provider is actually executing (needs DELTA_CAPTURE_PAYLOADS=1)
+SELECT attributes->>'gen_ai.request.model' AS model,
+       attributes->>'gen_ai.provider'      AS provider, count(*) AS calls
+FROM agent_events WHERE event_name = 'model.call' GROUP BY 1, 2 ORDER BY calls DESC;
+
+-- Errors, clustered by type
+SELECT attributes->>'error.type' AS error_type, count(*) AS n
+FROM agent_events WHERE event_name = 'error' GROUP BY 1 ORDER BY n DESC;
+```
+
+### Mistakes to avoid
+
+1. **Leaving `DELTA_CAPTURE_PAYLOADS` off.** You get event counts but no model, tool names, latency, or per-call cost. The most common gap.
+2. **Assuming that flag leaks prompts.** It doesn't — operational attributes only. Don't stay blind out of a misplaced privacy fear.
+3. **Returning `5xx` on a malformed line.** The daemon then retries the whole batch forever. Skip bad lines and answer `2xx` for accepted work; reserve `5xx` for a genuine storage failure — which *should* make the daemon retry.
+4. **Not deduping on `event.id`.** Delivery is at-least-once; without `ON CONFLICT DO NOTHING` you double-count everything.
+5. **No body cap.** Bound the batch (the reference collector caps at 8 MB → `413`) so an authed client can't OOM the collector.
+6. **Trusting identity from the payload.** Derive tenant/owner from the authed token, never from ids on the wire, or one caller can forge another's rows.
+7. **Posting a control token to a plaintext or untrusted collector.** Use a dedicated `TELEMETRY_TOKEN` over TLS.
+8. **Not monitoring backlog.** When telemetry is on, the daemon stops its own event retention; if the collector is down, unexported rows climb to the 50,000 cap and then the oldest are dropped. Watch it externally.
+9. **Expecting the model on `run.finished`.** It's on `model.call` (capture on) or your own registry.
+10. **Treating "capture off" as content-free.** Non-payload events (`recall`, `error`) can carry bounded excerpts or diagnostic strings. Give the collector a data-classification and retention policy regardless.
+
+### Privacy
 
 Payload filtering does not mean content-free telemetry. Other events retain attributes: recall can include a bounded memory excerpt, and errors or promotion events can include diagnostic strings. Credential-like patterns are scrubbed, but personal or business data can remain. Send telemetry only to a trusted collector with an explicit data-classification and retention policy.
 
-Send NDJSON directly to a collector that understands this contract, or add a translation layer before an OTLP-only collector.
+### OpenTelemetry
+
+The stream is NDJSON with OTel-GenAI-inspired names, but it is not OTLP and not semantic-convention complete: fields such as `gen_ai.provider`, `gen_ai.usage.cached_tokens`, `gen_ai.usage.cost_usd`, and `latency_ms` are Delta-specific or legacy-shaped. Send NDJSON to a collector that understands this contract (like the reference one above), or add a translation layer before an OTLP-only collector.
 
 ## Deploy Delta
 
@@ -1530,7 +1619,7 @@ curl -sS http://127.0.0.1:8080/healthz
 ```
 
 ```json
-{"ok":true,"version":"0.1.0","build":"optional-commit"}
+{"ok":true,"version":"0.2.1","build":"optional-commit"}
 ```
 
 `build` appears only when `DELTA_BUILD` is set. This endpoint does not test the model, MCP servers, telemetry, or other dependencies. It is liveness and version metadata, not readiness.
@@ -1699,7 +1788,7 @@ Create the Fly app and a persistent volume named `delta_state` in the configured
 
 Deploy with `fly.agent.toml` after adapting the provider, region, tools, telemetry, and exact source commit. This private topology intentionally declares neither `[[services]]` nor `[http_service]`, so it does not create a direct Fly Proxy URL. A `[[services]]` block requires at least one `[[services.ports]]` entry; do not add an incomplete service merely to attach a health check. The top-level check reaches port 8080, and Delta must listen on `0.0.0.0` inside the Machine. Route access through the trusted private control plane, or add a deliberate public gateway using Fly's current service-port syntax. The repository sample does not automate app, volume, secret, gateway, or lifecycle provisioning. Never put secret values in the TOML file.
 
-Because the sample has no Fly Proxy service, it has no proxy auto-start or auto-stop policy. Suspend and resume through an external lifecycle controller using the Machines API. That controller must gate new traffic and avoid stopping while `/v1/queue` reports queued or running work unless it deliberately accepts interruption and recovery. Enforce exactly one Machine for the volume, for example by deploying without high availability and asserting the invariant in the controller. A standalone deployment without that controller should keep the Machine running. Delta itself does not provision, suspend, or resume cloud infrastructure.
+Because the sample has no Fly Proxy service, it has no proxy auto-start or auto-stop policy. Suspend and resume through an external lifecycle controller using the Machines API. That controller must gate new traffic and avoid stopping while `/v1/busy` reports work in flight unless it deliberately accepts interruption and recovery. `/v1/busy` is the purpose-built suspend-safety signal; the [hosting contract](https://github.com/Carrara-Labs/delta-harness/blob/main/docs/hosting.md) documents the full wake-before-dispatch, busy-check-before-suspend, suspend-after-terminal lifecycle. Enforce exactly one Machine for the volume, for example by deploying without high availability and asserting the invariant in the controller. A standalone deployment without that controller should keep the Machine running. Delta itself does not provision, suspend, or resume cloud infrastructure.
 
 The 100 MB upload batch limit is not a streaming memory guarantee: multipart parsing buffers and copies request data. A 256 MB microVM can exhaust memory near the cap, especially with document extraction, coding CLIs, or subagents. Set a lower gateway upload limit or size and load-test the Machine for worst-case concurrent work.
 
@@ -2026,7 +2115,7 @@ Set `MODEL_BASE_URL` to the versioned base, such as `https://api.anthropic.com/v
 
 ### An MCP server or tool is missing
 
-Check that `DELTA_MCP_SERVERS` is valid JSON and every entry has an explicit `transport`. Malformed JSON silently behaves like an empty array. Restart the daemon after changes. Read boot logs for the server-specific connection failure. Confirm that the combined `<server>__<tool>` name uses only letters, numbers, underscores, and hyphens and fits within 128 characters.
+Check that `DELTA_MCP_SERVERS` is valid JSON. Malformed JSON, a non-array value, or an unusable entry (no `name`, an `http` entry with no `url`, or a `stdio` entry with no `command`) is dropped with a specific startup warning while the daemon boots with the remaining backends. A missing `transport` is inferred from the entry shape. Restart the daemon after changes. Read boot logs for the server-specific connection failure. Confirm that the combined `<server>__<tool>` name uses only letters, numbers, underscores, and hyphens and fits within 128 characters.
 
 If the tool is connected but not initially visible, ask the model to use `search_tools`, or add its exact suffix to `vocab.coreVerbs`.
 
