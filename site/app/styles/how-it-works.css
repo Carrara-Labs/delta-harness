@@ -10,12 +10,24 @@
   --wash-green: color-mix(in srgb, var(--delta-sage-deep) 7%, transparent);
   --wash-clay: color-mix(in srgb, var(--delta-clay-deep) 7%, transparent);
   --hiw-mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, "Cascadia Code", monospace;
+  /* Start-here CTA accents: pastel blue (docs), warm beige (GitHub), npm red. Card
+     tints are mixed into the card token so they stay soft and adapt to the theme. */
+  --cta-blue: var(--delta-slate-deep);
+  --cta-npm: #cb3837;
+  --cta-bg-blue: color-mix(in srgb, var(--delta-slate) 30%, var(--card));
+  --cta-bg-beige: color-mix(in srgb, var(--delta-sand) 34%, var(--card));
+  --cta-bg-npm: color-mix(in srgb, #cb3837 8%, var(--card));
 }
 .dark .hiw {
   --sage: var(--delta-sage);
   --clay: #c8a184;
   --wash-green: color-mix(in srgb, var(--delta-sage) 9%, transparent);
   --wash-clay: color-mix(in srgb, #c8a184 9%, transparent);
+  --cta-blue: #aeb6c6;
+  --cta-npm: #e0736a;
+  --cta-bg-blue: color-mix(in srgb, var(--delta-slate-deep) 26%, var(--card));
+  --cta-bg-beige: color-mix(in srgb, var(--delta-sand) 14%, var(--card));
+  --cta-bg-npm: color-mix(in srgb, #cb3837 18%, var(--card));
 }
 
 .hiw .mono {
@@ -1291,10 +1303,28 @@
   padding: 22px 24px;
   text-decoration: none;
   color: var(--foreground);
-  transition: border-color 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
 }
-.hiw .hiw-cta a:hover {
-  border-color: var(--sage);
+/* Each card carries a soft pastel identity matched to its destination. */
+.hiw .hiw-cta a.cta-docs {
+  background: var(--cta-bg-blue);
+}
+.hiw .hiw-cta a.cta-github {
+  background: var(--cta-bg-beige);
+}
+.hiw .hiw-cta a.cta-npm {
+  background: var(--cta-bg-npm);
+}
+.hiw .hiw-cta a.cta-docs:hover {
+  border-color: var(--cta-blue);
+}
+.hiw .hiw-cta a.cta-github:hover {
+  border-color: var(--clay);
+}
+.hiw .hiw-cta a.cta-npm:hover {
+  border-color: var(--cta-npm);
 }
 /* Brand chip: a small icon that names the destination at a glance. Each mark keeps its
    own recognizable colour — npm red, the GitHub octocat in the ink colour, docs in sage —
@@ -1311,13 +1341,13 @@
   display: block;
 }
 .hiw .hiw-cta a.cta-docs .ic {
-  color: var(--sage);
+  color: var(--cta-blue);
 }
 .hiw .hiw-cta a.cta-github .ic {
   color: var(--foreground);
 }
 .hiw .hiw-cta a.cta-npm .ic {
-  color: #cb3837;
+  color: var(--cta-npm);
 }
 .hiw .hiw-cta a .k {
   font-family: var(--hiw-mono);
@@ -1334,6 +1364,18 @@
 .hiw .hiw-cta a .d {
   font-size: 13px;
   color: var(--muted-foreground);
+}
+/* Per-card accents: docs gets the full blue treatment (kicker + title); GitHub's
+   kicker goes neutral to sit with the monochrome octocat; npm's kicker turns red. */
+.hiw .hiw-cta a.cta-docs .k,
+.hiw .hiw-cta a.cta-docs .t {
+  color: var(--cta-blue);
+}
+.hiw .hiw-cta a.cta-github .k {
+  color: var(--muted-foreground);
+}
+.hiw .hiw-cta a.cta-npm .k {
+  color: var(--cta-npm);
 }
 
 /* ============ motion ============ */
