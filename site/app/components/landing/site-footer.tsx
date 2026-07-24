@@ -30,6 +30,7 @@ export function SiteFooter() {
           <a href={to("product")}>Product</a>
           <a href={to("build")}>Build</a>
           <a href={to("deploy")}>Deploy</a>
+          <a href="/changelog">Changelog</a>
           <a href="/docs/">Docs</a>
         </div>
       </div>

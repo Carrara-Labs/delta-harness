@@ -163,6 +163,17 @@
   background: var(--surface-soft);
 }
 
+/* Active route: hold the hover wash and tint the label sage so the current page reads at a glance. */
+.delta-mobile-nav a.is-active {
+  background: var(--surface-soft);
+}
+.delta-mobile-nav a.is-active strong {
+  color: var(--delta-sage-deep);
+}
+.dark .delta-mobile-nav a.is-active strong {
+  color: var(--delta-sage);
+}
+
 .delta-mobile-nav strong {
   font-size: 15px;
   font-weight: 650;

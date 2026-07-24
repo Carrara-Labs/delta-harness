@@ -51,44 +51,49 @@ export default function HowItWorks() {
       <main id="main" className="hiw" tabIndex={-1}>
         {/* ===== HERO ===== */}
         <section className="hiw-hero" id="top">
-          <div className="page">
-            <span className="hiw-eyebrow">
-              <span className="hiw-dot" /> Open source runtime · v0.2.0
-            </span>
-            <h1 className="hiw-title">You keep the taste. Agents do the rest.</h1>
-            <p className="hiw-subline">
-              Delta is the open source runtime for long-running autonomous agents. You hold the
-              judgment and the last word. It systematizes the knowledge work beneath you.
-            </p>
-            <div className="hiw-strip">
-              {[
-                [
-                  "Self-learning",
-                  "Each run makes it sharper. It rewrites its own instruction file from what the work teaches it.",
-                ],
-                [
-                  "Token-lean",
-                  "A sub-2,000-token spine and a cache-friendly loop keep every turn cheap, across hours of work.",
-                ],
-                [
-                  "Open source",
-                  "The whole runtime is public and self-contained. No black box, no per-seat license, no lock-in.",
-                ],
-                [
-                  "Self-hosted",
-                  "One small binary runs on your own infrastructure, one agent per process. Your data never leaves.",
-                ],
-                [
-                  "Subscription-cheap",
-                  "Point it at a Codex subscription instead of metered tokens and run for a flat monthly cost.",
-                ],
-              ].map(([lab, txt]) => (
-                <div key={lab}>
-                  <div className="lab">{lab}</div>
-                  <div className="txt">{txt}</div>
-                </div>
-              ))}
+          <div className="page hiw-hero-grid">
+            <div className="hiw-hero-lede">
+              <span className="hiw-eyebrow">
+                <span className="hiw-dot" /> Open source runtime · v0.2.1
+              </span>
+              <h1 className="hiw-title">You keep the taste. Agents do the rest.</h1>
+              <p className="hiw-subline">
+                Delta is the open source runtime for long-running autonomous agents. You hold the
+                judgment and the last word. It systematizes the knowledge work beneath you.
+              </p>
             </div>
+            <aside className="hiw-hero-panel">
+              <p className="hiw-panel-cap">What you get</p>
+              <ul className="hiw-traits">
+                {[
+                  [
+                    "Self-learning",
+                    "Each run makes it sharper. It rewrites its own instruction file from what the work teaches it.",
+                  ],
+                  [
+                    "Token-lean",
+                    "A sub-2,000-token spine and a cache-friendly loop keep every turn cheap, across hours of work.",
+                  ],
+                  [
+                    "Open source",
+                    "The whole runtime is public and self-contained. No black box, no per-seat license, no lock-in.",
+                  ],
+                  [
+                    "Self-hosted",
+                    "One small binary runs on your own infrastructure, one agent per process. Your data never leaves.",
+                  ],
+                  [
+                    "Subscription-cheap",
+                    "Point it at a Codex subscription instead of metered tokens and run for a flat monthly cost.",
+                  ],
+                ].map(([lab, txt]) => (
+                  <li key={lab}>
+                    <span className="lab">{lab}</span>
+                    <span className="txt">{txt}</span>
+                  </li>
+                ))}
+              </ul>
+            </aside>
           </div>
         </section>
 
@@ -104,37 +109,53 @@ export default function HowItWorks() {
               </p>
             </div>
 
-            <div className="hiw-orch">
-              <p className="band-cap">Orchestrate</p>
-              <div className="hiw-you">
-                <span className="you-pill">YOU</span>
-                <span className="you-tag">taste</span>
-                <span className="you-tag">priorities</span>
-                <span className="you-tag">final say</span>
+            {/* The orchestrate/systematize model: two tiers with the human↔agent seam between. */}
+            <div className="hiw-model">
+              <div className="hiw-tier human">
+                <div className="tier-id">
+                  <span className="tier-name">YOU</span>
+                  <span className="tier-role">orchestrate</span>
+                </div>
+                <div className="tier-tags">
+                  <span className="hiw-chip">taste</span>
+                  <span className="hiw-chip">priorities</span>
+                  <span className="hiw-chip">the final say</span>
+                </div>
               </div>
 
               <div className="hiw-seam">
-                <div className="arm">
-                  <svg viewBox="0 0 18 60" aria-hidden="true">
-                    <line className="svg-flow" x1="9" y1="2" x2="9" y2="50" />
-                    <path className="svg-flow" d="M4 45 L9 52 L14 45" />
-                    <circle className="seam-dot" cx="9" cy="10" r="3" fill="var(--sage)" />
-                  </svg>
-                  <span>delegate</span>
-                </div>
-                <div className="arm">
-                  <svg viewBox="0 0 18 60" aria-hidden="true">
-                    <line className="svg-flow-b" x1="9" y1="58" x2="9" y2="10" />
-                    <path className="svg-flow-b" d="M4 15 L9 8 L14 15" />
-                  </svg>
-                  <span>propose, approve</span>
-                </div>
+                <span className="dir down">
+                  <span className="ar" aria-hidden="true">
+                    ↓
+                  </span>
+                  you delegate the work
+                </span>
+                <span className="dir up">
+                  agents propose, you approve
+                  <span className="ar" aria-hidden="true">
+                    ↑
+                  </span>
+                </span>
               </div>
 
-              <p className="band-cap">Systematize</p>
+              <div className="hiw-tier agent">
+                <div className="tier-id">
+                  <span className="tier-name">DELTA</span>
+                  <span className="tier-role">systematize</span>
+                </div>
+                <div className="tier-tags">
+                  <span className="hiw-chip">the repeatable work</span>
+                  <span className="hiw-chip">learns every run</span>
+                  <span className="hiw-chip">on your infra</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="hiw-ways">
+              <p className="hiw-mech">Two ways to run it</p>
               <div className="hiw-pillars">
                 <div className="hiw-pillar">
-                  <h3>Systematize your knowledge</h3>
+                  <h3>Run your own agents</h3>
                   <p>
                     Autonomous agents that learn as they work and live on your own infrastructure.
                   </p>
@@ -251,7 +272,7 @@ export default function HowItWorks() {
                   </div>
                   <div className="hiw-file">
                     <span className="fn">POLICY.md</span>
-                    <span className="hiw-mut fixed">operator-fixed</span>
+                    <span className="hiw-mut mut-fixed">operator-fixed</span>
                     <span className="role">
                       The fixed operating contract, rendered last so nothing overrides it.
                     </span>
@@ -491,7 +512,7 @@ export default function HowItWorks() {
         <section id="tools">
           <div className="page">
             <div className="hiw-head">
-              <p className="hiw-kicker">04 · Tools & context</p>
+              <p className="hiw-kicker">03 · Tools & context</p>
               <h2 className="hiw-h2">
                 Everything is a tool. Every request stays under the ceiling.
               </h2>
@@ -666,7 +687,7 @@ export default function HowItWorks() {
           <div className="page">
             <div className="hiw-head">
               <p className="hiw-kicker">
-                06 · Sub-agents <span className="hiw-newpill">△ new in v0.2.0</span>
+                04 · Sub-agents <span className="hiw-newpill">△ new in v0.2.0</span>
               </p>
               <h2 className="hiw-h2">The planner keeps the signal, not the noise</h2>
               <p className="hiw-intro">
@@ -785,7 +806,7 @@ export default function HowItWorks() {
         <section id="memory">
           <div className="page">
             <div className="hiw-head">
-              <p className="hiw-kicker">07 · Memory & learning</p>
+              <p className="hiw-kicker">05 · Memory & learning</p>
               <h2 className="hiw-h2">It learns, and it survives.</h2>
               <p className="hiw-intro">
                 The agent turns human corrections into durable lessons, then recovers from restarts,
@@ -793,98 +814,40 @@ export default function HowItWorks() {
               </p>
             </div>
 
-            <div className="hiw-figure">
-              <svg className="dia" viewBox="0 0 720 320" role="img" aria-label="The learning loop">
-                <title>The learning loop</title>
-                <defs>
-                  <marker
-                    id="la"
-                    markerWidth="9"
-                    markerHeight="9"
-                    refX="6.5"
-                    refY="3"
-                    orient="auto"
-                  >
-                    <path d="M0,0 L6.5,3 L0,6 Z" fill="var(--sage)" />
-                  </marker>
-                </defs>
-                {/* nodes */}
-                <rect className="svg-box" x={270} y={12} width={180} height={58} rx={12} />
-                <text className="svg-t" x={300} y={38}>
-                  PROPOSE
-                </text>
-                <text className="svg-td" x={300} y={54}>
-                  the agent drafts a write
-                </text>
-                <rect className="svg-box-clay" x={512} y={131} width={190} height={58} rx={12} />
-                <text className="svg-t" x={532} y={157}>
-                  DISPOSE
-                </text>
-                <text className="svg-td" x={532} y={173}>
-                  a human accepts or edits
-                </text>
-                <rect className="svg-box" x={270} y={250} width={180} height={58} rx={12} />
-                <text className="svg-t" x={300} y={276}>
-                  REFLECT
-                </text>
-                <text className="svg-td" x={300} y={292}>
-                  it distills into a lesson
-                </text>
-                <rect className="svg-box" x={18} y={131} width={190} height={58} rx={12} />
-                <text className="svg-t" x={38} y={157}>
-                  REMEMBER
-                </text>
-                <text className="svg-td" x={38} y={173}>
-                  writes ## Learned
-                </text>
-                {/* clockwise arcs */}
-                <path
-                  className="svg-flow"
-                  d="M450 44 C540 60, 600 95, 607 128"
-                  markerEnd="url(#la)"
-                />
-                <path
-                  className="svg-flow"
-                  d="M607 191 C600 235, 500 270, 452 278"
-                  markerEnd="url(#la)"
-                />
-                <path
-                  className="svg-flow"
-                  d="M270 278 C160 270, 120 235, 113 191"
-                  markerEnd="url(#la)"
-                />
-                <path
-                  className="svg-flow march"
-                  d="M113 128 C120 90, 200 55, 268 43"
-                  markerEnd="url(#la)"
-                />
-                <text className="svg-lab" x={150} y={92}>
-                  better next run
-                </text>
-                {/* center plate */}
-                <rect
-                  x={288}
-                  y={128}
-                  width={144}
-                  height={64}
-                  rx={10}
-                  fill="var(--wash-clay)"
-                  stroke="var(--clay)"
-                  strokeWidth={1.5}
-                />
-                <text className="svg-t" x={306} y={152} style={{ fill: "var(--clay)" }}>
-                  DELTA.md
-                </text>
-                <text className="svg-td" x={306} y={168}>
-                  ## Learned
-                </text>
-                <text className="svg-lab" x={306} y={182}>
-                  snapshotted · revertible
-                </text>
-              </svg>
-              <p className="hiw-cap">
-                {"// a run reads an immutable snapshot, so a self-edit lands on the next run."}
-              </p>
+            <div className="hiw-figure hiw-loopfig">
+              <div className="hiw-cycle">
+                {(
+                  [
+                    ["1", "PROPOSE", "the agent drafts a write", false],
+                    ["2", "DISPOSE", "a human accepts or edits", true],
+                    ["3", "REFLECT", "it distills into a lesson", false],
+                    ["4", "REMEMBER", "writes it to DELTA.md, under ## Learned", false],
+                  ] as const
+                ).map(([n, t, d, human], i) => (
+                  <Fragment key={t}>
+                    {i > 0 && (
+                      <span className="hiw-cyclearrow" aria-hidden="true">
+                        →
+                      </span>
+                    )}
+                    <div className={`hiw-cyclestep${human ? " human" : ""}`}>
+                      <span className="cn">{n}</span>
+                      <span className="ct">{t}</span>
+                      <span className="cd">{d}</span>
+                    </div>
+                  </Fragment>
+                ))}
+              </div>
+              <div className="hiw-cycleback">
+                <span className="ar" aria-hidden="true">
+                  ↺
+                </span>
+                <span>
+                  The next run reads the updated <b>DELTA.md</b>. It is snapshotted and revertible,
+                  so a self-edit lands cleanly on the next run and the agent gets sharper every
+                  time.
+                </span>
+              </div>
             </div>
 
             <div className="hiw-legend">
@@ -908,7 +871,7 @@ export default function HowItWorks() {
             </div>
 
             <div className="hiw-dur-head">
-              <p className="hiw-kicker">08 · Durability & resilience</p>
+              <p className="hiw-kicker">06 · Durability & resilience</p>
               <h2 className="hiw-h2">It survives the real world</h2>
               <p className="hiw-intro">
                 Restarts, dropped connections, and slow turns are recoverable events here, not
@@ -971,17 +934,38 @@ export default function HowItWorks() {
               <h2 className="hiw-h2">Read the code. Run an agent.</h2>
             </div>
             <div className="hiw-cta">
-              <a href="/docs/">
+              <a className="cta-docs" href="/docs/">
+                <span className="ic" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path
+                      d="M12 6.6C10.5 5.6 8.2 5 6.2 5H3.5v13.2h2.7c2 0 4.3.6 5.8 1.6M12 6.6c1.5-1 3.8-1.6 5.8-1.6h2.7v13.2h-2.7c-2 0-4.3.6-5.8 1.6M12 6.6v13.2"
+                      stroke="currentColor"
+                      strokeWidth={1.5}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </span>
                 <span className="k">docs</span>
                 <span className="t">The technical guide</span>
                 <span className="d">Install, configure, deploy, operate.</span>
               </a>
-              <a href={repoUrl} target="_blank" rel="noreferrer">
+              <a className="cta-github" href={repoUrl} target="_blank" rel="noreferrer">
+                <span className="ic" aria-hidden="true">
+                  <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                    <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
+                  </svg>
+                </span>
                 <span className="k">github</span>
                 <span className="t">Carrara-Labs/delta-harness</span>
                 <span className="d">The full runtime, open source.</span>
               </a>
-              <a href={npmUrl} target="_blank" rel="noreferrer">
+              <a className="cta-npm" href={npmUrl} target="_blank" rel="noreferrer">
+                <span className="ic" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M1.763 0C.786 0 0 .786 0 1.763v20.474C0 23.214.786 24 1.763 24h20.474c.977 0 1.763-.786 1.763-1.763V1.763C24 .786 23.214 0 22.237 0zM5.13 5.323l13.837.019-.009 13.836h-3.464l.01-10.382h-3.456L12.04 19.17H5.113z" />
+                  </svg>
+                </span>
                 <span className="k">npm</span>
                 <span className="t">@carrara-labs/delta-harness</span>
                 <span className="d">Install the published package.</span>

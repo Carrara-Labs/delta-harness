@@ -14,8 +14,8 @@ export function TopSection() {
           and self-improvement in one lean runtime.
         </p>
         <div className="hero-actions">
-          <a className="button" href="#product">
-            Explore the walkthrough
+          <a className="button" href="#build">
+            Start building
             <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
               <path
                 d="M4 10h11M11 6l4 4-4 4"
@@ -26,8 +26,8 @@ export function TopSection() {
               />
             </svg>
           </a>
-          <a className="button button-secondary" href="#build">
-            Start building
+          <a className="button button-secondary" href="/how-it-works">
+            Learn how it works
           </a>
         </div>
 

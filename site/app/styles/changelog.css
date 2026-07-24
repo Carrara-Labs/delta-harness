@@ -1,0 +1,329 @@
+/* Changelog. Page-specific components, scoped under .chg. Same premium + minimalist
+   language as How It Works: hairline borders and whitespace, never a drop shadow.
+   Colours come from the site's semantic tokens (auto light/dark); sage + clay are the
+   only accents, mapped per change category. */
+
+.chg {
+  --sage: var(--delta-sage-deep);
+  --clay: var(--delta-clay-deep);
+  --line: var(--border);
+  --faint: color-mix(in srgb, var(--muted-foreground) 55%, transparent);
+  --wash-green: color-mix(in srgb, var(--delta-sage-deep) 8%, transparent);
+  --wash-clay: color-mix(in srgb, var(--delta-clay-deep) 8%, transparent);
+  --chg-mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, "Cascadia Code", monospace;
+}
+.dark .chg {
+  --sage: var(--delta-sage);
+  --clay: #c8a184;
+  --wash-green: color-mix(in srgb, var(--delta-sage) 11%, transparent);
+  --wash-clay: color-mix(in srgb, #c8a184 11%, transparent);
+}
+
+.chg code {
+  font-family: var(--chg-mono);
+  font-size: 0.85em;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--muted);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+/* `.page` is the shared full-width site column (centered, with the standard gutter, so it
+   aligns to the header and footer). Content max-widths live on the inner wrappers below,
+   which sit left-aligned inside `.page` — that keeps the hero, the version rail, and the
+   footnote all on one left edge. */
+
+/* ============ HERO ============ */
+.chg .chg-hero {
+  padding: clamp(56px, 8vw, 92px) 0 clamp(28px, 4vw, 40px);
+}
+.chg .chg-hero-inner {
+  max-width: 720px;
+}
+.chg .chg-eyebrow {
+  font-family: var(--chg-mono);
+  font-size: 12.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.chg .chg-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--sage);
+}
+.chg .chg-title {
+  font-size: clamp(34px, 5.4vw, 58px);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  margin: 22px 0 0;
+  max-width: 15ch;
+  text-wrap: balance;
+}
+.chg .chg-subline {
+  font-size: clamp(16px, 1.7vw, 19px);
+  line-height: 1.55;
+  color: var(--muted-foreground);
+  margin: 20px 0 0;
+  max-width: 60ch;
+}
+.chg .chg-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  margin-top: 28px;
+}
+.chg .chg-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--wash-green);
+}
+.chg .chg-current-label {
+  font-family: var(--chg-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sage);
+  background: color-mix(in srgb, var(--sage) 16%, transparent);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.chg .chg-current-ver {
+  font-family: var(--chg-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.chg .chg-link {
+  font-size: 14px;
+  color: var(--muted-foreground);
+  text-decoration: none;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 1px;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+.chg .chg-link:hover {
+  color: var(--foreground);
+  border-color: var(--sage);
+}
+
+/* ============ TIMELINE ============ */
+.chg .chg-body-section {
+  padding: 0 0 clamp(40px, 6vw, 72px);
+}
+.chg .chg-timeline {
+  max-width: 940px;
+}
+.chg .chg-release {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  gap: clamp(20px, 4vw, 52px);
+  padding: clamp(30px, 4vw, 46px) 0;
+  border-top: 1px solid var(--line);
+}
+.chg .chg-release:first-child {
+  border-top: none;
+}
+
+/* meta column: sticky so the version anchors the release while its notes scroll */
+.chg .chg-meta {
+  position: sticky;
+  top: 92px;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.chg .chg-version {
+  font-family: var(--chg-mono);
+  font-size: clamp(20px, 2.4vw, 24px);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--foreground);
+  margin: 0;
+}
+.chg .chg-latest {
+  font-family: var(--chg-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sage);
+  border: 1px solid color-mix(in srgb, var(--sage) 40%, var(--line));
+  background: var(--wash-green);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+.chg .chg-date {
+  font-size: 13px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* content column: a hairline timeline rail with a node at each release */
+.chg .chg-content {
+  position: relative;
+  padding-left: clamp(22px, 3vw, 38px);
+  border-left: 1px solid var(--line);
+}
+.chg .chg-content::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: 4px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--background);
+  border: 2px solid var(--sage);
+}
+.chg .chg-release:not(:has(.chg-latest)) .chg-content::before {
+  border-color: var(--faint);
+}
+
+.chg .chg-tagline {
+  font-size: clamp(18px, 2vw, 22px);
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  color: var(--foreground);
+  margin: 0;
+  text-wrap: balance;
+}
+.chg .chg-note {
+  font-size: 14px;
+  color: var(--muted-foreground);
+  margin: 8px 0 0;
+}
+
+.chg .chg-group {
+  margin-top: clamp(20px, 2.4vw, 26px);
+}
+.chg .chg-group-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--chg-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.chg .chg-group-label::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--faint);
+}
+.chg .chg-group[data-kind="added"] .chg-group-label {
+  color: var(--sage);
+}
+.chg .chg-group[data-kind="added"] .chg-group-label::before {
+  background: var(--sage);
+}
+.chg .chg-group[data-kind="changed"] .chg-group-label,
+.chg .chg-group[data-kind="removed"] .chg-group-label {
+  color: var(--clay);
+}
+.chg .chg-group[data-kind="changed"] .chg-group-label::before,
+.chg .chg-group[data-kind="removed"] .chg-group-label::before {
+  background: var(--clay);
+}
+.chg .chg-group[data-kind="removed"] .chg-group-label::before {
+  border-radius: 50%;
+  background: transparent;
+  border: 1.5px solid var(--clay);
+  width: 8px;
+  height: 8px;
+}
+
+.chg .chg-items {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.chg .chg-items li {
+  position: relative;
+  padding-left: 18px;
+  color: var(--muted-foreground);
+  font-size: 15px;
+  line-height: 1.6;
+  max-width: 68ch;
+}
+.chg .chg-items li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.72em;
+  width: 8px;
+  height: 1px;
+  background: var(--faint);
+}
+.chg .chg-items li code {
+  color: var(--foreground);
+}
+
+/* ============ FOOTNOTE ============ */
+.chg .chg-foot {
+  border-top: 1px solid var(--line);
+  padding: clamp(36px, 5vw, 56px) 0 clamp(48px, 6vw, 72px);
+}
+.chg .chg-foot-inner {
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.chg .chg-foot p {
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+  margin: 0;
+}
+.chg .chg-foot a {
+  color: var(--foreground);
+  text-decoration: none;
+  border-bottom: 1px solid var(--line);
+}
+.chg .chg-foot a:hover {
+  border-color: var(--sage);
+}
+
+/* ============ RESPONSIVE ============ */
+@media (max-width: 720px) {
+  .chg .chg-release {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .chg .chg-meta {
+    position: static;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .chg .chg-content {
+    padding-left: 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chg .chg-link {
+    transition: none;
+  }
+}

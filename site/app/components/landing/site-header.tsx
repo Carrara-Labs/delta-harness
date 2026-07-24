@@ -19,8 +19,12 @@ export function SiteHeader() {
   // On the home page the section links are in-page anchors; on any other route they must jump
   // back to the home page first, so we prefix them with "/". Keeps a section link landing on the
   // right page AND the right section from anywhere.
-  const onHome = useLocation().pathname === "/";
+  const pathname = useLocation().pathname;
+  const onHome = pathname === "/";
   const to = (id: string) => (onHome ? `#${id}` : `/#${id}`);
+  // Full-page nav links (not in-page anchors) get an active state when their route is open.
+  const active = (path: string) => (pathname === path ? "is-active" : undefined);
+  const current = (path: string) => (pathname === path ? ("page" as const) : undefined);
 
   return (
     <header
@@ -48,12 +52,25 @@ export function SiteHeader() {
         </a>
 
         <div className="nav-links">
-          <a href="/how-it-works">How it works</a>
+          <a
+            href="/how-it-works"
+            className={active("/how-it-works")}
+            aria-current={current("/how-it-works")}
+          >
+            How it works
+          </a>
           <a href={to("product")}>Product</a>
           <a href={to("why-delta")}>Why Delta</a>
           <a href={to("use-cases")}>Use cases</a>
           <a href={to("build")}>Build</a>
           <a href={to("observe")}>Operate</a>
+          <a
+            href="/changelog"
+            className={active("/changelog")}
+            aria-current={current("/changelog")}
+          >
+            Changelog
+          </a>
         </div>
 
         <div className="nav-tools">

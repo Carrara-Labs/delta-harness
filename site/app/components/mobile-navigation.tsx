@@ -36,6 +36,7 @@ const navigation: NavItem[] = [
   },
   { section: "build", label: "Build", description: "Create and run an agent" },
   { section: "observe", label: "Operate", description: "Trace, deploy and recover" },
+  { href: "/changelog", label: "Changelog", description: "Every release since 0.1.0" },
   { href: "/docs/", label: "Documentation", description: "Read the canonical technical guide" },
   {
     href: "https://github.com/Carrara-Labs/delta-harness",
@@ -47,7 +48,10 @@ const navigation: NavItem[] = [
 
 export function MobileNavigation() {
   const pendingSection = useRef<string | null>(null);
-  const onHome = useLocation().pathname === "/";
+  const pathname = useLocation().pathname;
+  const onHome = pathname === "/";
+  // A route-page item (not an in-page anchor) is active when its href matches the current path.
+  const isActive = (item: NavItem) => !item.section && !item.external && item.href === pathname;
   // Section links are in-page anchors on home, but must jump back to home first from any other route.
   const hrefFor = (item: NavItem) =>
     item.section ? (onHome ? `#${item.section}` : `/#${item.section}`) : (item.href ?? "#");
@@ -99,6 +103,8 @@ export function MobileNavigation() {
             <SheetClose asChild key={item.section ?? item.href}>
               <a
                 href={hrefFor(item)}
+                className={isActive(item) ? "is-active" : undefined}
+                aria-current={isActive(item) ? "page" : undefined}
                 target={item.external ? "_blank" : undefined}
                 rel={item.external ? "noreferrer" : undefined}
                 onClick={() => {

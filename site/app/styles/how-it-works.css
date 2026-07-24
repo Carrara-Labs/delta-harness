@@ -117,98 +117,151 @@
   line-height: 1.5;
   color: var(--muted-foreground);
   margin: 20px 0 0;
-  max-width: 54ch;
+  max-width: 46ch;
 }
-.hiw .hiw-strip {
+/* hero: lede on the left, an anchored capability panel on the right so the
+   headline no longer trails into dead space and the traits stop floating. */
+.hiw .hiw-hero-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  margin-top: clamp(44px, 6vw, 72px);
+  grid-template-columns: minmax(0, 1.08fr) minmax(300px, 0.92fr);
+  gap: clamp(32px, 5vw, 76px);
+  align-items: center;
+}
+.hiw .hiw-hero-lede .hiw-title {
+  max-width: 15ch;
+}
+.hiw .hiw-hero-panel {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--card);
+  padding: 4px clamp(20px, 2vw, 26px) 8px;
+}
+.hiw .hiw-panel-cap {
+  font-family: var(--hiw-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: 0;
+  padding: 18px 0 4px;
+}
+.hiw .hiw-traits {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.hiw .hiw-traits li {
+  padding: 15px 0;
   border-top: 1px solid var(--line);
 }
-.hiw .hiw-strip > div {
-  padding: 22px 22px 22px 0;
-  border-right: 1px solid var(--line);
-}
-.hiw .hiw-strip > div:last-child {
-  border-right: none;
-  padding-right: 0;
-}
-.hiw .hiw-strip .lab {
+.hiw .hiw-traits .lab {
+  display: block;
   font-family: var(--hiw-mono);
-  font-size: 12px;
-  letter-spacing: 0.04em;
+  font-size: 12.5px;
+  letter-spacing: 0.03em;
   color: var(--foreground);
   font-weight: 600;
 }
-.hiw .hiw-strip .txt {
+.hiw .hiw-traits .txt {
+  display: block;
   font-size: 13.5px;
   line-height: 1.5;
   color: var(--muted-foreground);
-  margin-top: 8px;
+  margin-top: 5px;
 }
 
-/* ============ PHILOSOPHY schematic ============ */
-.hiw .hiw-orch {
+/* ============ PHILOSOPHY: the orchestrate/systematize model ============ */
+.hiw .hiw-model {
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 16px;
   background: var(--wash-green);
-  padding: clamp(26px, 4vw, 44px);
-}
-.hiw .hiw-orch .band-cap {
-  font-family: var(--hiw-mono);
-  font-size: 11px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--faint);
-  margin: 0 0 14px;
-}
-.hiw .hiw-you {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
-}
-.hiw .hiw-you .you-pill {
-  font-family: var(--hiw-mono);
-  font-weight: 700;
-  font-size: 14px;
-  letter-spacing: 0.04em;
-  padding: 10px 20px;
-  border-radius: 10px;
-  border: 1px solid var(--foreground);
-  background: var(--card);
-  color: var(--foreground);
-}
-.hiw .hiw-you .you-tag {
-  font-family: var(--hiw-mono);
-  font-size: 13px;
-  color: var(--muted-foreground);
-}
-.hiw .hiw-seam {
-  display: flex;
-  justify-content: center;
-  gap: 46px;
-  padding: 22px 0;
-}
-.hiw .hiw-seam .arm {
+  padding: clamp(20px, 3vw, 30px);
   display: flex;
   flex-direction: column;
+}
+.hiw .hiw-tier {
+  position: relative;
+  display: grid;
+  grid-template-columns: 168px 1fr;
+  gap: clamp(16px, 2.5vw, 32px);
   align-items: center;
-  gap: 8px;
+  padding: 22px 24px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  overflow: hidden;
+}
+.hiw .hiw-tier::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+}
+.hiw .hiw-tier.human::before {
+  background: var(--foreground);
+}
+.hiw .hiw-tier.agent::before {
+  background: var(--sage);
+}
+.hiw .hiw-tier .tier-name {
+  font-family: var(--hiw-mono);
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.02em;
+  display: block;
+}
+.hiw .hiw-tier .tier-role {
   font-family: var(--hiw-mono);
   font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
   color: var(--faint);
+  margin-top: 5px;
+  display: block;
 }
-.hiw .hiw-seam svg {
-  width: 18px;
-  height: 60px;
-  overflow: visible;
+.hiw .hiw-tier .tier-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* the seam: the human↔agent boundary, read as down = delegate, up = approve */
+.hiw .hiw-seam {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 14px clamp(4px, 1vw, 12px);
+}
+.hiw .hiw-seam .dir {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--hiw-mono);
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+}
+.hiw .hiw-seam .dir.up {
+  justify-content: flex-end;
+  text-align: right;
+}
+.hiw .hiw-seam .dir .ar {
+  font-size: 16px;
+  line-height: 1;
+}
+.hiw .hiw-seam .dir.down .ar {
+  color: var(--foreground);
+}
+.hiw .hiw-seam .dir.up .ar {
+  color: var(--sage);
+}
+.hiw .hiw-ways {
+  margin-top: clamp(32px, 4vw, 48px);
 }
 .hiw .hiw-pillars {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
-  margin-top: 6px;
 }
 .hiw .hiw-pillar {
   position: relative;
@@ -440,7 +493,9 @@
   border-color: color-mix(in srgb, var(--clay) 48%, var(--line));
   background: color-mix(in srgb, var(--clay) 9%, transparent);
 }
-.hiw .hiw-mut.fixed {
+/* NB: not `.fixed` — that collides with Tailwind's position:fixed utility and
+   rips the pill out of the grid. Keep this modifier namespaced. */
+.hiw .hiw-mut.mut-fixed {
   color: var(--sage);
   border-color: color-mix(in srgb, var(--sage) 48%, var(--line));
   background: color-mix(in srgb, var(--sage) 9%, transparent);
@@ -1033,6 +1088,86 @@
 }
 
 /* ============ MEMORY + DURABILITY ============ */
+/* learning cycle: an HTML stepper, so descriptions wrap instead of overflowing
+   a fixed SVG box. Reads left-to-right as a process, loops back at the end. */
+.hiw .hiw-loopfig {
+  overflow: visible;
+}
+.hiw .hiw-cycle {
+  display: flex;
+  align-items: stretch;
+}
+.hiw .hiw-cyclestep {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--card);
+}
+.hiw .hiw-cyclestep.human {
+  border-color: color-mix(in srgb, var(--clay) 42%, var(--line));
+  background: var(--wash-clay);
+}
+.hiw .hiw-cyclestep .cn {
+  font-family: var(--hiw-mono);
+  font-size: 11px;
+  font-weight: 700;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--sage) 14%, transparent);
+  color: color-mix(in srgb, var(--sage) 82%, var(--foreground));
+}
+.hiw .hiw-cyclestep.human .cn {
+  background: color-mix(in srgb, var(--clay) 16%, transparent);
+  color: color-mix(in srgb, var(--clay) 82%, var(--foreground));
+}
+.hiw .hiw-cyclestep .ct {
+  font-family: var(--hiw-mono);
+  font-weight: 700;
+  font-size: 13.5px;
+  letter-spacing: 0.02em;
+}
+.hiw .hiw-cyclestep .cd {
+  font-size: 13px;
+  color: var(--muted-foreground);
+  line-height: 1.45;
+}
+.hiw .hiw-cyclearrow {
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 0 clamp(6px, 1vw, 14px);
+  color: var(--faint);
+  font-family: var(--hiw-mono);
+}
+.hiw .hiw-cycleback {
+  display: flex;
+  align-items: baseline;
+  gap: 11px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--line);
+  font-size: 13.5px;
+  color: var(--muted-foreground);
+  line-height: 1.55;
+  max-width: 82ch;
+}
+.hiw .hiw-cycleback b {
+  color: var(--foreground);
+  font-weight: 600;
+  font-family: var(--hiw-mono);
+}
+.hiw .hiw-cycleback .ar {
+  color: var(--sage);
+  font-size: 17px;
+  line-height: 1;
+}
 .hiw .hiw-legend {
   display: flex;
   flex-wrap: wrap;
@@ -1161,6 +1296,29 @@
 .hiw .hiw-cta a:hover {
   border-color: var(--sage);
 }
+/* Brand chip: a small icon that names the destination at a glance. Each mark keeps its
+   own recognizable colour — npm red, the GitHub octocat in the ink colour, docs in sage —
+   so the row reads as "code / package / guide" without leaning on the labels. */
+.hiw .hiw-cta a .ic {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  margin-bottom: 8px;
+}
+.hiw .hiw-cta a .ic svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.hiw .hiw-cta a.cta-docs .ic {
+  color: var(--sage);
+}
+.hiw .hiw-cta a.cta-github .ic {
+  color: var(--foreground);
+}
+.hiw .hiw-cta a.cta-npm .ic {
+  color: #cb3837;
+}
 .hiw .hiw-cta a .k {
   font-family: var(--hiw-mono);
   font-size: 11px;
@@ -1189,31 +1347,16 @@
       stroke-dashoffset: -24;
     }
   }
-  .hiw .seam-dot {
-    animation: hiw-seam 5s ease-in-out infinite;
-  }
-  @keyframes hiw-seam {
-    0%,
-    100% {
-      opacity: 0;
-    }
-    10%,
-    40% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0;
-    }
-  }
 }
 
 /* ============ responsive ============ */
 @media (max-width: 900px) {
-  .hiw .hiw-strip {
-    grid-template-columns: 1fr 1fr;
+  .hiw .hiw-hero-grid {
+    grid-template-columns: 1fr;
+    gap: clamp(28px, 5vw, 40px);
   }
-  .hiw .hiw-strip > div:nth-child(2n) {
-    border-right: none;
+  .hiw .hiw-hero-lede .hiw-title {
+    max-width: 18ch;
   }
   .hiw .hiw-split,
   .hiw .hiw-pillars,
@@ -1235,16 +1378,23 @@
   .hiw .hiw-arrow {
     transform: rotate(90deg);
   }
+  .hiw .hiw-tier {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .hiw .hiw-cycle {
+    flex-direction: column;
+  }
+  .hiw .hiw-cyclearrow {
+    transform: rotate(90deg);
+    padding: 8px 0;
+  }
+  .hiw .hiw-seam .dir.up {
+    justify-content: flex-start;
+    text-align: left;
+  }
 }
 @media (max-width: 560px) {
-  .hiw .hiw-strip {
-    grid-template-columns: 1fr;
-  }
-  .hiw .hiw-strip > div {
-    border-right: none;
-    border-bottom: 1px solid var(--line);
-    padding-right: 0;
-  }
   .hiw .hiw-meters {
     grid-template-columns: 1fr;
   }

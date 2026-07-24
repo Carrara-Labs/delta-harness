@@ -230,6 +230,26 @@
         color: var(--text);
       }
 
+      /* Active route: full-strength label plus a sage underline. Positioned absolutely
+         so the indicator never shifts the nav row's vertical rhythm. */
+      .nav-links a.is-active {
+        position: relative;
+        color: var(--text);
+      }
+      .nav-links a.is-active::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: -6px;
+        height: 1.5px;
+        border-radius: 1px;
+        background: var(--delta-sage-deep);
+      }
+      .dark .nav-links a.is-active::after {
+        background: var(--delta-sage);
+      }
+
       .nav-tools {
         display: flex;
         align-items: center;
