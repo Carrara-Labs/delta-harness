@@ -145,7 +145,6 @@
         position: sticky;
         z-index: 50;
         top: 0;
-        border-bottom: 1px solid transparent;
         background: var(--header);
         backdrop-filter: blur(18px) saturate(130%);
         -webkit-backdrop-filter: blur(18px) saturate(130%);
