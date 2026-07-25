@@ -45,7 +45,25 @@ POST  http://<machine>:<port>/v1/tasks   { input: ... }  # only now dispatch
 
 `/healthz` is the wake probe: open, data-free, and it returns the running binary version so
 your fleet manager knows which release answered. Poll it until `200` before you send the
-task; a cold resume is typically about a second.
+task. A cold resume is about a second of machine boot; with `DELTA_MCP_SERVERS` configured,
+add ~2s of MCP discovery before the daemon binds its port (an engine follow-up will move
+discovery after bind).
+
+**Probe through a routing proxy with one long timeout, not many short ones.** Platform
+proxies (Fly's edge, Cloud Run's frontend) HOLD a pending request until the machine becomes
+routable and answer it the moment the daemon binds. A probe loop with a short per-request
+timeout and a long sleep kills every request just before the proxy could complete it, then
+waits out the sleep - measured on a production Fly machine, that pattern took 13.3s to see
+the first `200` where a single 10s-timeout probe fired right after the start call took 4.7s.
+The fast shape:
+
+```
+start machine
+loop until deadline (~45s):
+  GET /healthz, timeout 10s     # the proxy holds it until routable
+  200 → dispatch
+  refused/dropped → sleep 250ms, retry
+```
 
 ### 2. Busy check before suspend
 
