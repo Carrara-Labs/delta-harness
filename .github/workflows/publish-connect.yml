@@ -1,0 +1,32 @@
+name: Publish delta-connect
+
+# One-off / on-demand publish of the companion package. The main release.yml also
+# publishes it on a version tag; this dispatch lets us (re)publish it independently.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # npm provenance attestation via OIDC
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - run: npm install -g npm@latest # provenance needs a recent npm
+      - name: Publish @carrara-labs/delta-connect
+        working-directory: connect
+        run: |
+          V="$(node -p "require('./package.json').version")"
+          if npm view "@carrara-labs/delta-connect@$V" version >/dev/null 2>&1; then
+            echo "connect@$V already published — skipping"
+          else
+            npm publish --provenance --access public
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

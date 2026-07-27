@@ -7,7 +7,7 @@
   "homepage": "https://deltaharness.dev",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/carrara-labs/delta-harness.git",
+    "url": "git+https://github.com/Carrara-Labs/delta-harness.git",
     "directory": "connect"
   },
   "bin": {
