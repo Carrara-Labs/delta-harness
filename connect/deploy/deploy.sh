@@ -47,5 +47,5 @@ elif [ "$NEW" -eq 1 ]; then
 fi
 
 echo "[deploy] deploying"
-flyctl deploy --app "$APP" --region "$REGION" --ha=false
+flyctl deploy --app "$APP" --ha=false
 echo "[deploy] done. logs: flyctl logs --app $APP"
