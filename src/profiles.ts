@@ -53,6 +53,19 @@ export function isSubset(a: Profile, b: Profile): boolean {
   return toolsOk && budgetOk;
 }
 
+/** Trusted-gateway self-write: grant (and pin) `remember` to a restricted profile
+ * when the operator vouches (DELTA_ALLOW_SELF_WRITE) that an authenticated gateway
+ * fronts the daemon. A "*"-tools profile already has it; only a finite profile that
+ * lacks it changes. Pinned so the model actually sees the tool. */
+export function grantSelfWrite(profile: Profile, allow: boolean): Profile {
+  if (!allow || profile.allowed === "*" || profile.allowed.includes("remember")) return profile;
+  return {
+    ...profile,
+    allowed: [...profile.allowed, "remember"],
+    pinned: Array.isArray(profile.pinned) ? [...profile.pinned, "remember"] : profile.pinned,
+  };
+}
+
 /** The daemon's placement sets the ceiling (DELTA_PROFILE); request metadata may
  * only narrow it, never escalate — callers are untrusted (spec §J). The ENV values
  * are different: they are the operator's own knobs on their own daemon, so they

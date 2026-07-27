@@ -17,7 +17,7 @@ import { expandImageMarkers } from "./files";
 import { hydrate, type RecalledMemory, recallAgentMemory } from "./hydrate";
 import type { Policy } from "./policy";
 import { renderPolicy } from "./policy";
-import { getProfile } from "./profiles";
+import { getProfile, grantSelfWrite } from "./profiles";
 import { renderTemplate, turnVars } from "./promptcontext";
 import type {
   AssistantMsg,
@@ -104,6 +104,8 @@ export type Deps = {
   agentId?: string;
   /** Placement profile ceiling; requests may narrow, never escalate. */
   profile?: string;
+  /** Grant `remember` self-write to a chat placement (trusted-gateway deployments). */
+  allowSelfWrite?: boolean;
   /** Compact older turns once a call's prompt exceeds this many input tokens. */
   compactAtTokens: number;
   /** Registry tools to call at task start for knowledge-base context hydration (§E). */
@@ -257,7 +259,9 @@ export async function executeRun(
   const reasoningEffort: ReasoningEffort | undefined =
     normalizeEffort(metaStr(req.metadata ?? {}, "reasoning_effort", "reasoningEffort")) ??
     deps.reasoningEffort;
-  const profile = getProfile(req.metadata?.profile, deps.profile);
+  // Placement ceiling (untrusted metadata may only narrow it), then the
+  // trusted-gateway self-write grant (off by default). See grantSelfWrite.
+  const profile = grantSelfWrite(getProfile(req.metadata?.profile, deps.profile), deps.allowSelfWrite ?? false);
   const vocab = deps.vocab ?? NEUTRAL_VOCAB;
   // Run-local snapshot of the writable self-file (codex #9/#10): DELTA.md is read ONCE
   // here and used for every turn of this run. A self-edit during the run lands on disk

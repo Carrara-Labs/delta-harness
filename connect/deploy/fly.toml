@@ -1,0 +1,44 @@
+# Ferni - a self-learning Delta agent on Telegram, one always-on Fly machine.
+# No [http_service]: Telegram long-poll is outbound-only, so the machine needs no
+# public port or IP. It runs continuously (the connector must never miss a message).
+app = "ferni-delta-connect"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8321"
+  # loopback-only: the daemon's HTTP seam must NOT be reachable on Fly's org
+  # private network - only the connector (same machine) talks to it.
+  DELTA_BIND = "127.0.0.1"
+  DELTA_BASE_URL = "http://127.0.0.1:8321"
+  # all durable state on the volume
+  DELTA_DB = "/data/delta.db"
+  DELTA_WORKSPACE = "/data/bundle"
+  CONNECT_DB = "/data/connect.sqlite"
+  # provider: Opus 5 direct on Anthropic (MODEL_API_KEY is a Fly secret), OpenRouter failover
+  MODEL_BASE_URL = "https://api.anthropic.com/v1"
+  MODEL_API = "anthropic"
+  DELTA_MODEL_PRIMARY = "claude-opus-5"
+  DELTA_MODEL_PRICES = '{"claude-opus-5":{"in":5,"out":25,"cacheRead":0.5},"claude-opus-4-8":{"in":5,"out":25,"cacheRead":0.5}}'
+  DELTA_PROVIDERS = '[{"label":"openrouter","baseUrl":"https://openrouter.ai/api/v1","models":["anthropic/claude-opus-5","anthropic/claude-opus-4.8"],"apiKeyEnv":"OPENROUTER_API_KEY"}]'
+  # identity + the safe-learning trio
+  DELTA_AGENT_ID = "ferni"
+  DELTA_AGENT_NAME = "Ferni"
+  DELTA_PROFILE = "chat"
+  DELTA_ALLOW_SELF_WRITE = "1"
+  DELTA_REFLECT = "1"
+  # only Nic may talk to the bot
+  ALLOWED_TELEGRAM_USER_IDS = "5499639944"
+
+[mounts]
+  source = "ferni_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+# Secrets set out-of-band (never in this file):
+#   flyctl secrets set OPENROUTER_API_KEY=... TELEGRAM_BOT_TOKEN=...

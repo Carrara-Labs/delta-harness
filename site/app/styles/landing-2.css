@@ -668,3 +668,9 @@
   color: var(--tcol);
   border: 1px solid color-mix(in srgb, var(--tcol) 22%, transparent);
 }
+
+/* Delta Connect band — left-align the learn-more CTA within the intro column. */
+.v3 .cta-actions-start {
+  justify-content: flex-start;
+  margin-top: 1.25rem;
+}
