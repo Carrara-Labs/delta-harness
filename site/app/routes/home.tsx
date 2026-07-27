@@ -585,38 +585,50 @@ export default function Home() {
         />
 
         {/* ============ Delta Connect ============ */}
-        <section className="section" id="connect">
-          <div className="page">
-            <header className="section-head">
-              <div>
-                <p className="section-kicker">New · Delta Connect</p>
-                <h2 className="section-heading">Put your agent in your chat.</h2>
+        <section className="section connect-band" id="connect">
+          <div className="page connect-band-grid">
+            <div className="connect-band-copy">
+              <p className="section-kicker">New · Delta Connect</p>
+              <h2 className="section-heading">Put your agent in your chat.</h2>
+              <p>
+                A thin, always-on edge that plugs a Delta agent into a chat channel. The edge holds
+                the conversation; the agent scales to zero between messages.
+              </p>
+              <ul className="l2-points">
+                <li>
+                  <strong>Any channel</strong>, behind one small connector - Telegram today
+                </li>
+                <li>
+                  <strong>Scales to zero</strong>, full capability, near-zero cost at rest
+                </li>
+                <li>
+                  <strong>Learns from you</strong>, safely behind a trusted gateway
+                </li>
+              </ul>
+              <div className="cta-actions cta-actions-start">
+                <a className="button" href="/connect">
+                  Explore Delta Connect
+                </a>
               </div>
-              <div className="section-intro l2-lead">
-                <p>
-                  Delta Connect is a thin, always-on edge that plugs a Delta agent into a chat
-                  channel - Telegram first. The edge holds the conversation; the agent stays a lean,
-                  product-neutral engine that scales to zero between messages. Full capability,
-                  near-zero cost at rest.
-                </p>
-                <ul className="l2-points">
-                  <li>
-                    <strong>Any channel</strong>, behind one small connector - Telegram today
-                  </li>
-                  <li>
-                    <strong>Scales to zero</strong>, the agent sleeps between messages, the edge stays up
-                  </li>
-                  <li>
-                    <strong>Learns from you</strong>, tell it something and it remembers, safely behind a trusted gateway
-                  </li>
-                </ul>
-                <div className="cta-actions cta-actions-start">
-                  <a className="button" href="/connect">
-                    Explore Delta Connect
-                  </a>
+            </div>
+            <div className="connect-band-visual" aria-hidden="true">
+              <div className="cflow">
+                <div className="cflow-node">
+                  <span className="cflow-label">Telegram</span>
+                  <span className="cflow-sub">your chat</span>
+                </div>
+                <span className="cflow-link" />
+                <div className="cflow-node is-edge">
+                  <span className="cflow-label">Delta Connect</span>
+                  <span className="cflow-sub">always on · holds the socket</span>
+                </div>
+                <span className="cflow-link" />
+                <div className="cflow-node is-sleep">
+                  <span className="cflow-label">Delta agent</span>
+                  <span className="cflow-sub">scales to zero · wakes on message</span>
                 </div>
               </div>
-            </header>
+            </div>
           </div>
         </section>
 

@@ -195,6 +195,82 @@
   color: var(--foreground);
 }
 
+/* ============ Delta Connect band (two columns: copy + flow visual) ============ */
+.l2.l2 .connect-band-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: clamp(32px, 6vw, 88px);
+  align-items: center;
+}
+.l2.l2 .connect-band-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 18px;
+  max-width: 34rem;
+}
+.l2.l2 .connect-band-copy .section-heading {
+  max-width: 14ch;
+  margin: 0;
+}
+.l2.l2 .connect-band-copy > p {
+  margin: 0;
+  font-size: 16.5px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  max-width: 42ch;
+}
+/* Vertical flow: chat -> always-on edge -> sleeping agent */
+.l2.l2 .cflow {
+  display: flex;
+  flex-direction: column;
+  padding: clamp(20px, 3vw, 32px);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--card);
+}
+.l2.l2 .cflow-node {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 15px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--background);
+}
+.l2.l2 .cflow-label {
+  font-weight: 640;
+  font-size: 15px;
+  color: var(--foreground);
+}
+.l2.l2 .cflow-sub {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.l2.l2 .cflow-node.is-edge {
+  background: color-mix(in srgb, var(--l2-accent) 10%, var(--card));
+  border-color: color-mix(in srgb, var(--l2-accent) 30%, var(--border));
+}
+.l2.l2 .cflow-node.is-edge .cflow-label {
+  color: var(--l2-accent);
+}
+.l2.l2 .cflow-node.is-sleep {
+  border-style: dashed;
+}
+.l2.l2 .cflow-link {
+  align-self: center;
+  width: 2px;
+  height: 26px;
+  background: var(--border);
+}
+@media (max-width: 860px) {
+  .l2.l2 .connect-band-grid {
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+}
+
 /* ============ Numeric proof strip (under hero) ============ */
 /* Full-bleed horizontal rules on the band; the cells form a connected grid
    inside .page, split by 1px hairline dividers (gap shows the border color

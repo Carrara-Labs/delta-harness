@@ -126,14 +126,22 @@ export default function Connect() {
             </header>
             <ol className="connect-steps">
               <li>
-                <h3>Scaffold an agent</h3>
-                <p>Create a bundle, then give it a persona and a model.</p>
+                <h3>Scaffold and configure the agent</h3>
+                <p>Create a bundle, give it a persona, then set the model and the safe chat profile.</p>
                 <pre className="connect-code">{`delta init myagent
-# edit myagent/DELTA.md (persona) and myagent/delta.env (model + key)`}</pre>
+# edit myagent/DELTA.md (persona), then in myagent/delta.env:
+DELTA_MODEL_PRIMARY=anthropic/claude-sonnet-5   # + your provider key
+DELTA_PROFILE=chat              # chat mode: read-only tools, no code/delegation
+DELTA_REFLECT=1                 # turn on the learning loop
+DELTA_ALLOW_SELF_WRITE=1        # let it "remember" behind the trusted gateway
+DELTA_WORKSPACE=/abs/path/to/myagent   # read the persona, persist memory here`}</pre>
               </li>
               <li>
                 <h3>Run the daemon</h3>
-                <p>Point the workspace at the bundle and start the agent.</p>
+                <p>
+                  Source the bundle env, then start the agent (bare <code>delta</code> does not read{" "}
+                  <code>delta.env</code> on its own).
+                </p>
                 <pre className="connect-code">{`cd myagent && set -a && . ./delta.env && set +a && delta`}</pre>
               </li>
               <li>
@@ -152,9 +160,11 @@ bun start`}</pre>
               </li>
             </ol>
             <p className="connect-foot">
-              To let the agent learn from you ("remember that ..."), set{" "}
-              <code>DELTA_ALLOW_SELF_WRITE=1</code> on the daemon. It is off by default, and safe to
-              enable because the connector authenticates the caller before anything reaches the agent.
+              A channel agent runs on the <code>chat</code> profile - read-only tools, no code or
+              delegation - because raw inbound chat is untrusted. <code>DELTA_ALLOW_SELF_WRITE=1</code>{" "}
+              (off by default) is what grants the <code>remember</code> tool on that profile, and it is
+              safe here because the connector authenticates and allowlists the caller before anything
+              reaches the agent.
             </p>
           </div>
         </section>
