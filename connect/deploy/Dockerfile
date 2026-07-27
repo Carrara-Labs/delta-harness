@@ -8,6 +8,7 @@ WORKDIR /app
 # The engine (zero runtime deps) and the connector, both run from source.
 COPY package.json tsconfig.json ./
 COPY src ./src
+COPY assets ./assets
 COPY connect ./connect
 
 # Bundle seed (persona/policy/vocab - NO secrets; keys arrive as Fly secrets).
