@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { Connector } from "./core";
 import { DeltaAgent } from "./agent";
 import { Store } from "./store";

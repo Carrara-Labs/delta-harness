@@ -135,7 +135,7 @@ export class Store {
 
   nextQueuedOutbox(): OutboxRow | null {
     return (this.db
-      .query(`SELECT * FROM outbox WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1`)
+      .query(`SELECT * FROM outbox WHERE status = 'queued' ORDER BY created_at ASC, rowid ASC LIMIT 1`)
       .get() as OutboxRow) ?? null;
   }
 
