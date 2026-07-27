@@ -1,114 +1,197 @@
-/* Delta Connect page - reuses the landing tokens so it adapts to light/dark. */
-.v3 .connect .connect-hero {
-  padding-top: clamp(48px, 8vw, 96px);
-}
-.v3 .connect-h1 {
-  font-size: clamp(2.4rem, 5vw, 3.6rem);
-  line-height: 1.05;
-  letter-spacing: -0.02em;
-  margin: 0.35em 0 0;
-  color: inherit;
-}
-.v3 .connect-lede {
-  font-size: clamp(1.05rem, 1.6vw, 1.25rem);
-  color: var(--text-soft);
-  max-width: 60ch;
-  margin-top: 1rem;
-}
-/* left-align the hero CTAs under the lede (landing-2 isn't imported here) */
-.v3 .connect .cta-actions-start {
-  justify-content: flex-start;
-  margin-top: 1.5rem;
+/* Delta Connect page. Reuses the How-It-Works design system (imported alongside),
+   so the page shares the same tokens, rhythm, sage/clay accents, and auto light/dark.
+   Only the connect-specific devices live here: the hero chat mock, the 4-up capability
+   grid, the numbered quickstart, and the code blocks. All scoped under .hiw so the
+   semantic tokens resolve the same way. */
+
+/* ============ HERO: CTAs under the lede, chat mock on the right ============ */
+.hiw .connect-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: clamp(26px, 3vw, 34px);
 }
 
-.v3 .connect-flow {
+/* A tiny, recognizable Telegram-style thread: the product in one glance. */
+.hiw .connect-chat {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--card);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hiw .connect-chat-top {
   display: flex;
   align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-top: 34px;
+  gap: 10px;
+  padding: 4px 6px 12px;
+  border-bottom: 1px solid var(--line);
 }
-.v3 .connect-node {
-  font-family: var(--mono);
-  font-size: 0.85rem;
-  padding: 10px 14px;
-  border-radius: 10px;
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
-  color: inherit;
+.hiw .connect-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-family: var(--hiw-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--card);
+  background: var(--sage);
 }
-.v3 .connect-node.is-edge {
-  background: color-mix(in srgb, var(--delta-sage) 12%, var(--surface));
-  border-color: color-mix(in srgb, var(--delta-sage) 35%, var(--line));
-  color: var(--delta-sage-deep);
+.hiw .connect-chat-name {
   font-weight: 600;
+  font-size: 14px;
 }
-.v3 .connect-arrow {
-  color: var(--text-faint);
-  font-family: var(--mono);
+.hiw .connect-chat-sub {
+  font-family: var(--hiw-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-top: 1px;
+}
+.hiw .connect-msgs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 4px 4px;
+}
+.hiw .cbubble {
+  max-width: 82%;
+  padding: 9px 13px;
+  border-radius: 15px;
+  font-size: 13.5px;
+  line-height: 1.4;
+}
+.hiw .cbubble.me {
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--sage) 16%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--sage) 30%, var(--line));
+  border-bottom-right-radius: 5px;
+}
+.hiw .cbubble.bot {
+  align-self: flex-start;
+  background: var(--muted);
+  border: 1px solid var(--line);
+  border-bottom-left-radius: 5px;
+}
+.hiw .cbubble .who {
+  display: block;
+  font-family: var(--hiw-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-bottom: 3px;
 }
 
-.v3 .connect-steps {
+/* ============ 4-up capability cards (reuses hiw-dbeat styling) ============ */
+.hiw .connect-beats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-top: clamp(28px, 4vw, 44px);
+}
+
+/* ============ Numbered quickstart ============ */
+.hiw .connect-steps {
   list-style: none;
   counter-reset: cstep;
-  margin: 34px 0 0;
+  margin: clamp(28px, 4vw, 44px) 0 0;
   padding: 0;
   display: grid;
-  gap: 22px;
+  gap: 16px;
 }
-.v3 .connect-steps > li {
+.hiw .connect-steps > li {
   counter-increment: cstep;
   position: relative;
-  padding-left: 56px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  padding: 22px 24px 22px 68px;
 }
-.v3 .connect-steps > li::before {
+.hiw .connect-steps > li::before {
   content: counter(cstep);
   position: absolute;
-  left: 0;
-  top: 0;
-  width: 40px;
-  height: 40px;
-  border-radius: 11px;
-  background: color-mix(in srgb, var(--delta-sage) 12%, var(--surface));
-  color: var(--delta-sage-deep);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--mono);
+  left: 22px;
+  top: 22px;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  font-family: var(--hiw-mono);
+  font-size: 14px;
   font-weight: 700;
+  color: var(--sage);
+  background: color-mix(in srgb, var(--sage) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sage) 32%, var(--line));
 }
-.v3 .connect-steps h3 {
+.hiw .connect-steps h3 {
+  font-size: 17px;
+  letter-spacing: -0.01em;
   margin: 4px 0 4px;
-  font-size: 1.1rem;
-  color: inherit;
 }
-.v3 .connect-steps p {
-  color: var(--text-soft);
-  margin: 0 0 10px;
+.hiw .connect-steps > li > p {
+  font-size: 13.5px;
+  color: var(--muted-foreground);
+  line-height: 1.55;
+  margin: 0;
 }
-.v3 .connect-code {
-  font-family: var(--mono);
-  font-size: 0.82rem;
-  line-height: 1.6;
-  background: var(--surface-soft);
+.hiw .connect-steps > li > p code,
+.hiw .connect-foot code {
+  font-family: var(--hiw-mono);
+  font-size: 0.86em;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--muted);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.hiw .connect-code {
+  font-family: var(--hiw-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--foreground);
+  background: var(--muted);
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 14px 16px;
+  margin: 14px 0 0;
   overflow-x: auto;
   white-space: pre;
-  margin: 0;
-  color: inherit;
 }
-.v3 .connect-foot {
-  margin-top: 30px;
-  color: var(--text-soft);
-  font-size: 0.95rem;
-  max-width: 66ch;
+.hiw .connect-foot {
+  margin-top: 20px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--sage);
+  border-radius: 10px;
+  background: var(--wash-green);
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+  max-width: 78ch;
 }
-.v3 .connect-foot code {
-  font-family: var(--mono);
-  background: var(--surface-soft);
-  padding: 1px 6px;
-  border-radius: 5px;
-  color: var(--delta-sage-deep);
+
+/* ============ responsive ============ */
+@media (max-width: 900px) {
+  .hiw .connect-beats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 560px) {
+  .hiw .connect-beats {
+    grid-template-columns: 1fr;
+  }
+  .hiw .connect-steps > li {
+    padding: 20px 18px 20px 18px;
+  }
+  .hiw .connect-steps > li::before {
+    position: static;
+    margin-bottom: 12px;
+  }
 }
