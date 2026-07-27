@@ -81,6 +81,7 @@ function buildDeps(cfg: Config, dbPath: string): Deps {
     tools,
     workspace: cfg.workspace,
     profile: cfg.profile,
+    allowSelfWrite: cfg.allowSelfWrite,
     compactAtTokens: cfg.compactAtTokens,
     toolTimeoutMs: cfg.toolTimeoutMs,
     toolResultCap: cfg.toolResultCap,

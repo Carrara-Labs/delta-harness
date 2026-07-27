@@ -67,6 +67,10 @@ export type Config = {
   /** The primary model reads images (Sprint 8) — gates image-marker expansion. */
   vision: boolean;
   reflect: boolean;
+  /** When set (DELTA_ALLOW_SELF_WRITE=1), grant the otherwise-withheld `remember` self-write
+   * even to a chat placement — for a daemon fronted by a trusted, authenticated gateway
+   * (e.g. Delta Connect). Off by default (spec §J trust model). */
+  allowSelfWrite: boolean;
   /** Product vocabulary for the review loop (portability seam). a knowledge base by default;
    * DELTA_VOCAB overrides fields for another product. */
   vocab: Vocab;
@@ -231,6 +235,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     policyMaxTokens: positiveInt(env.DELTA_POLICY_MAX_TOKENS, 800),
     vision,
     reflect: env.DELTA_REFLECT === "1",
+    allowSelfWrite: env.DELTA_ALLOW_SELF_WRITE === "1",
     // Review-loop vocabulary: neutral by default, one JSON env to serve another product.
     vocab,
     memoryNamespace:
