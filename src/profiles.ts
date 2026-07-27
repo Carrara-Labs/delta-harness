@@ -54,7 +54,11 @@ export function isSubset(a: Profile, b: Profile): boolean {
 }
 
 /** The daemon's placement sets the ceiling (DELTA_PROFILE); request metadata may
- * only narrow it, never escalate — callers are untrusted (spec §J). */
+ * only narrow it, never escalate — callers are untrusted (spec §J). The ENV values
+ * are different: they are the operator's own knobs on their own daemon, so they
+ * OVERRIDE the profile's budget in either direction (a $5-per-run default is right
+ * for a chat sidekick and wrong for a deep-research agent; before this, a raised
+ * DELTA_MAX_COST_USD was silently clamped back down and operators never knew). */
 export function getProfile(requested: unknown, ceiling = "work"): Profile {
   const max = PROFILES[ceiling] ?? (PROFILES.work as Profile);
   const req = typeof requested === "string" ? PROFILES[requested] : undefined;
@@ -65,12 +69,8 @@ export function getProfile(requested: unknown, ceiling = "work"): Profile {
     ...selected,
     budget: {
       ...selected.budget,
-      ...(Number.isFinite(envTokens) && envTokens >= 0
-        ? { maxTokens: Math.min(selected.budget.maxTokens, envTokens) }
-        : {}),
-      ...(Number.isFinite(envCost) && envCost >= 0
-        ? { maxCostUsd: Math.min(selected.budget.maxCostUsd, envCost) }
-        : {}),
+      ...(Number.isFinite(envTokens) && envTokens >= 0 ? { maxTokens: envTokens } : {}),
+      ...(Number.isFinite(envCost) && envCost >= 0 ? { maxCostUsd: envCost } : {}),
     },
   };
 }
