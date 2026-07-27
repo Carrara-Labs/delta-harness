@@ -7,13 +7,18 @@
   line-height: 1.05;
   letter-spacing: -0.02em;
   margin: 0.35em 0 0;
-  color: var(--oat-900);
+  color: inherit;
 }
 .v3 .connect-lede {
   font-size: clamp(1.05rem, 1.6vw, 1.25rem);
   color: var(--text-soft);
   max-width: 60ch;
   margin-top: 1rem;
+}
+/* left-align the hero CTAs under the lede (landing-2 isn't imported here) */
+.v3 .connect .cta-actions-start {
+  justify-content: flex-start;
+  margin-top: 1.5rem;
 }
 
 .v3 .connect-flow {
@@ -30,7 +35,7 @@
   border-radius: 10px;
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  color: var(--oat-900);
+  color: inherit;
 }
 .v3 .connect-node.is-edge {
   background: color-mix(in srgb, var(--delta-sage) 12%, var(--surface));
@@ -75,7 +80,7 @@
 .v3 .connect-steps h3 {
   margin: 4px 0 4px;
   font-size: 1.1rem;
-  color: var(--oat-900);
+  color: inherit;
 }
 .v3 .connect-steps p {
   color: var(--text-soft);
@@ -92,7 +97,7 @@
   overflow-x: auto;
   white-space: pre;
   margin: 0;
-  color: var(--oat-900);
+  color: inherit;
 }
 .v3 .connect-foot {
   margin-top: 30px;
