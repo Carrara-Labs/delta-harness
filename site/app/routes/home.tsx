@@ -584,6 +584,42 @@ export default function Home() {
           intro="Install the binary, scaffold a versionable agent bundle, and open the Cockpit locally - then ship the same binary to your cloud."
         />
 
+        {/* ============ Delta Connect ============ */}
+        <section className="section" id="connect">
+          <div className="page">
+            <header className="section-head">
+              <div>
+                <p className="section-kicker">New · Delta Connect</p>
+                <h2 className="section-heading">Put your agent in your chat.</h2>
+              </div>
+              <div className="section-intro l2-lead">
+                <p>
+                  Delta Connect is a thin, always-on edge that plugs a Delta agent into a chat
+                  channel - Telegram first. The edge holds the conversation; the agent stays a lean,
+                  product-neutral engine that scales to zero between messages. Full capability,
+                  near-zero cost at rest.
+                </p>
+                <ul className="l2-points">
+                  <li>
+                    <strong>Any channel</strong>, behind one small connector - Telegram today
+                  </li>
+                  <li>
+                    <strong>Scales to zero</strong>, the agent sleeps between messages, the edge stays up
+                  </li>
+                  <li>
+                    <strong>Learns from you</strong>, tell it something and it remembers, safely behind a trusted gateway
+                  </li>
+                </ul>
+                <div className="cta-actions cta-actions-start">
+                  <a className="button" href="/connect">
+                    Explore Delta Connect
+                  </a>
+                </div>
+              </div>
+            </header>
+          </div>
+        </section>
+
         {/* ============ Final CTA ============ */}
         <section className="final-cta" id="cta">
           <div className="page cta-panel">
