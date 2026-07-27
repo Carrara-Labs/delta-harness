@@ -17,9 +17,12 @@ primary_region = "iad"
   DELTA_DB = "/data/delta.db"
   DELTA_WORKSPACE = "/data/bundle"
   CONNECT_DB = "/data/connect.sqlite"
-  # provider (key is a Fly secret)
-  MODEL_BASE_URL = "https://openrouter.ai/api/v1"
-  DELTA_MODEL_PRIMARY = "anthropic/claude-sonnet-5"
+  # provider: Opus 5 direct on Anthropic (MODEL_API_KEY is a Fly secret), OpenRouter failover
+  MODEL_BASE_URL = "https://api.anthropic.com/v1"
+  MODEL_API = "anthropic"
+  DELTA_MODEL_PRIMARY = "claude-opus-5"
+  DELTA_MODEL_PRICES = '{"claude-opus-5":{"in":5,"out":25,"cacheRead":0.5},"claude-opus-4-8":{"in":5,"out":25,"cacheRead":0.5}}'
+  DELTA_PROVIDERS = '[{"label":"openrouter","baseUrl":"https://openrouter.ai/api/v1","models":["anthropic/claude-opus-5","anthropic/claude-opus-4.8"],"apiKeyEnv":"OPENROUTER_API_KEY"}]'
   # identity + the safe-learning trio
   DELTA_AGENT_ID = "ferni"
   DELTA_AGENT_NAME = "Ferni"

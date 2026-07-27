@@ -21,6 +21,3 @@ what you did and did not do.
 
 # Learned
 
-- Nic prefers hyphens and never wants em-dashes. Use "-" if a dash is needed, in all writing and chat replies.
-- Nic's dog is named Biscuit.
-- Nic takes his coffee black.
