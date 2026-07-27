@@ -36,8 +36,10 @@ const docsDescription =
 const socialImageUrl = "https://deltaharness.dev/delta-og-image.png";
 const socialImageAlt = "Delta triangular logo and wordmark on a warm off-white background";
 const seo = `
+    <meta name="description" content="${docsDescription}" />
     <meta name="robots" content="index, follow, max-image-preview:large" />
     <link rel="canonical" href="https://deltaharness.dev/docs/" />
+    <link rel="alternate" type="text/markdown" href="https://deltaharness.dev/guide.md" title="Delta guide in Markdown" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Delta" />
     <meta property="og:locale" content="en_US" />
@@ -407,7 +409,29 @@ async function build(): Promise<string> {
     .replaceAll('href="../llms-full.txt"', 'href="/llms-full.txt"');
 }
 
+// The sitemap is generated rather than hand-maintained: it silently rotted to two of the
+// four live routes once already. Add new routes here and `bun run build:docs` keeps
+// public/sitemap.xml honest; `--check` fails CI when it drifts.
+const siteRoutes: Array<{ path: string; changefreq: string; priority: string }> = [
+  { path: "/", changefreq: "weekly", priority: "1.0" },
+  { path: "/docs/", changefreq: "weekly", priority: "0.9" },
+  { path: "/how-it-works", changefreq: "weekly", priority: "0.8" },
+  { path: "/changelog", changefreq: "weekly", priority: "0.7" },
+];
+
+function buildSitemap(): string {
+  const entries = siteRoutes
+    .map(
+      (route) =>
+        `  <url>\n    <loc>https://deltaharness.dev${route.path}</loc>\n    <changefreq>${route.changefreq}</changefreq>\n    <priority>${route.priority}</priority>\n  </url>`,
+    )
+    .join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${entries}\n</urlset>\n`;
+}
+
 const output = await build();
+const sitemap = buildSitemap();
+const sitemapPath = resolve(root, "public/sitemap.xml");
 // llms-full.txt is the full-Markdown-for-LLMs mirror of the guide (the old
 // pipeline emitted both from the same source), so keep it tracking guide.md.
 const llmsFullPath = resolve(root, "public/llms-full.txt");
@@ -415,15 +439,22 @@ const guideText = readFileSync(resolve(root, "public/guide.md"), "utf8");
 const checkOnly = Bun.argv.includes("--check");
 
 if (checkOnly) {
-  const [currentDocs, currentLlms] = await Promise.all([
+  const [currentDocs, currentLlms, currentSitemap] = await Promise.all([
     Bun.file(outputPath).text(),
     Bun.file(llmsFullPath).text(),
+    Bun.file(sitemapPath).text(),
   ]);
-  if (currentDocs !== output || currentLlms !== guideText) {
+  if (currentDocs !== output || currentLlms !== guideText || currentSitemap !== sitemap) {
     throw new Error("Generated docs are stale. Run `bun run build:docs`.");
   }
   console.log("Generated docs are up to date");
 } else {
-  await Promise.all([Bun.write(outputPath, output), Bun.write(llmsFullPath, guideText)]);
-  console.log(`Generated ${relative(root, outputPath)} and llms-full.txt from public/guide.md`);
+  await Promise.all([
+    Bun.write(outputPath, output),
+    Bun.write(llmsFullPath, guideText),
+    Bun.write(sitemapPath, sitemap),
+  ]);
+  console.log(
+    `Generated ${relative(root, outputPath)}, llms-full.txt and sitemap.xml from public/guide.md`,
+  );
 }

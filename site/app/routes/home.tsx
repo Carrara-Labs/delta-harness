@@ -67,15 +67,68 @@ export function meta() {
   ];
 }
 
+const repositoryUrl = "https://github.com/Carrara-Labs/delta-harness";
+
+// A @graph rather than a bare WebSite: search and answer engines resolve Delta as a
+// software entity (not just a page) from SoftwareApplication + SoftwareSourceCode, which
+// is what earns rich results and citation in AI answers.
 const structuredData = {
   "@context": "https://schema.org",
-  "@type": "WebSite",
-  "@id": `${canonicalUrl}#website`,
-  name: "Delta",
-  alternateName: "Delta Harness",
-  url: canonicalUrl,
-  description,
-  inLanguage: "en",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": `${canonicalUrl}#website`,
+      name: "Delta",
+      alternateName: "Delta Harness",
+      url: canonicalUrl,
+      description,
+      inLanguage: "en",
+      publisher: { "@id": `${canonicalUrl}#organization` },
+    },
+    {
+      "@type": "Organization",
+      "@id": `${canonicalUrl}#organization`,
+      name: "Carrara Labs",
+      url: canonicalUrl,
+      logo: `${canonicalUrl}delta-logo-light-background.svg`,
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": `${canonicalUrl}#software`,
+      name: "Delta Harness",
+      alternateName: "Delta",
+      applicationCategory: "DeveloperApplication",
+      applicationSubCategory: "AI agent runtime",
+      operatingSystem: "macOS, Linux",
+      url: canonicalUrl,
+      downloadUrl: `${canonicalUrl}install.sh`,
+      softwareVersion: "0.2.1",
+      description,
+      license: "https://www.apache.org/licenses/LICENSE-2.0",
+      isAccessibleForFree: true,
+      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+      author: { "@type": "Person", name: "Nicolas Touron" },
+      publisher: { "@id": `${canonicalUrl}#organization` },
+      featureList: [
+        "Durable run queue with checkpoint-per-turn crash and redeploy recovery",
+        "MCP client over streamable HTTP and stdio with progressive tool disclosure",
+        "Usage-aware context compaction for long-running tasks",
+        "Scoped memory and a review-to-reflect self-improvement loop",
+        "Model-agnostic OpenAI-compatible provider with failover and cost capture",
+        "Single self-contained binary with zero runtime dependencies",
+      ],
+    },
+    {
+      "@type": "SoftwareSourceCode",
+      "@id": `${canonicalUrl}#sourcecode`,
+      name: "Delta Harness",
+      codeRepository: repositoryUrl,
+      programmingLanguage: "TypeScript",
+      runtimePlatform: "Bun",
+      license: "https://www.apache.org/licenses/LICENSE-2.0",
+      about: { "@id": `${canonicalUrl}#software` },
+    },
+  ],
 };
 
 const STATS = [
