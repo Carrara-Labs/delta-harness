@@ -1,0 +1,10 @@
+{
+  "coreVerbs": [],
+  "writeVerbSuffix": "propose_change",
+  "writeNoun": "the record",
+  "runRefKey": "run_ref",
+  "learningTargetKind": "note",
+  "taskNoun": "task",
+  "itemNoun": "review item",
+  "subjectKeys": []
+}
