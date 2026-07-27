@@ -17,7 +17,7 @@ import { expandImageMarkers } from "./files";
 import { hydrate, type RecalledMemory, recallAgentMemory } from "./hydrate";
 import type { Policy } from "./policy";
 import { renderPolicy } from "./policy";
-import { getProfile } from "./profiles";
+import { getProfile, grantSelfWrite } from "./profiles";
 import { renderTemplate, turnVars } from "./promptcontext";
 import type {
   AssistantMsg,
@@ -259,18 +259,9 @@ export async function executeRun(
   const reasoningEffort: ReasoningEffort | undefined =
     normalizeEffort(metaStr(req.metadata ?? {}, "reasoning_effort", "reasoningEffort")) ??
     deps.reasoningEffort;
-  let profile = getProfile(req.metadata?.profile, deps.profile);
-  // Trusted-gateway self-write (Delta Connect): the `chat` profile withholds `remember`
-  // because raw inbound is untrusted. When the operator sets DELTA_ALLOW_SELF_WRITE=1 they
-  // vouch that an authenticated gateway fronts this daemon, so grant AND pin the self-write
-  // (pin so the model actually sees the tool instead of confabulating a save).
-  if (deps.allowSelfWrite && profile.allowed !== "*" && !profile.allowed.includes("remember")) {
-    profile = {
-      ...profile,
-      allowed: [...profile.allowed, "remember"],
-      pinned: Array.isArray(profile.pinned) ? [...profile.pinned, "remember"] : profile.pinned,
-    };
-  }
+  // Placement ceiling (untrusted metadata may only narrow it), then the
+  // trusted-gateway self-write grant (off by default). See grantSelfWrite.
+  const profile = grantSelfWrite(getProfile(req.metadata?.profile, deps.profile), deps.allowSelfWrite ?? false);
   const vocab = deps.vocab ?? NEUTRAL_VOCAB;
   // Run-local snapshot of the writable self-file (codex #9/#10): DELTA.md is read ONCE
   // here and used for every turn of this run. A self-edit during the run lands on disk

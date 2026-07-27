@@ -52,7 +52,10 @@ export class TelegramCodec implements ChannelCodec {
 }
 
 /** Validate one untrusted update into a normalized Inbound, or null to skip it. */
-function parseUpdate(u: unknown, opts: { allowed: Set<string> }): { updateId: number; event: Inbound | null } | null {
+export function parseUpdate(
+  u: unknown,
+  opts: { allowed: Set<string> },
+): { updateId: number; event: Inbound | null } | null {
   if (typeof u !== "object" || u === null) return null;
   const upd = u as Record<string, unknown>;
   const updateId = upd.update_id;

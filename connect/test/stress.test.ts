@@ -46,6 +46,14 @@ const evt = (id: string, text: string): Inbound => ({
   text,
 });
 
+const evtC = (id: string, text: string, chat: string): Inbound => ({
+  eventId: id,
+  conversationId: `tg:${chat}`,
+  actorId: "tg:7",
+  chatId: chat,
+  text,
+});
+
 const paths: string[] = [];
 function tmpDb(): string {
   const p = join(tmpdir(), `dc-stress-${Date.now()}-${Math.floor(Math.random() * 1e9)}.sqlite`);
@@ -203,5 +211,51 @@ describe("crash resume", () => {
     b.insertInbox(evt("tg:1", "hi")); // platform redelivers -> dedup, no double
     await drain(c);
     expect(codec.sent.length).toBe(1);
+  });
+});
+
+// --- every feature ----------------------------------------------------
+
+describe("features", () => {
+  test("/id, /help, /start are answered locally without spending an agent turn", async () => {
+    const store = new Store(tmpDb());
+    const codec = new RecCodec();
+    const agent = new FakeAgent();
+    const c = new Connector(store, codec, agent, noopSup);
+    store.insertInbox(evt("tg:1", "/id"));
+    store.insertInbox(evt("tg:2", "/help"));
+    store.insertInbox(evt("tg:3", "/start"));
+    await drain(c);
+    expect(agent.calls).toBe(0); // intercepts never hit the agent
+    expect(codec.sent[0]).toContain("Telegram id: 7");
+    expect(codec.sent[1]).toContain("built-in commands");
+    expect(codec.sent[2]).toContain("built-in commands");
+  });
+
+  test("two conversations interleave and thread independently", async () => {
+    const store = new Store(tmpDb());
+    const codec = new RecCodec();
+    const c = new Connector(store, codec, new FakeAgent((_i, n) => `r${n}`), noopSup);
+    store.insertInbox(evtC("tg:1", "a1", "100"));
+    store.insertInbox(evtC("tg:2", "b1", "200"));
+    store.insertInbox(evtC("tg:3", "a2", "100"));
+    await drain(c);
+    const a = store.getSession("tg:100");
+    const b = store.getSession("tg:200");
+    expect(a?.prev_response_id).toBe("resp_3"); // A advanced twice
+    expect(b?.prev_response_id).toBe("resp_2"); // B advanced once, independently
+  });
+
+  test("high-volume burst: 200 messages deliver in order, once each, despite redelivery", async () => {
+    const store = new Store(tmpDb());
+    const codec = new RecCodec();
+    const c = new Connector(store, codec, new FakeAgent((_i, n) => `#${n}`), noopSup);
+    for (let i = 1; i <= 200; i++) store.insertInbox(evt(`tg:${i}`, `m${i}`));
+    store.insertInbox(evt("tg:50", "m50")); // platform redelivery
+    store.insertInbox(evt("tg:150", "m150"));
+    await drain(c);
+    expect(codec.sent.length).toBe(200); // dedup absorbed the redeliveries
+    expect(codec.sent[0]).toBe("#1");
+    expect(codec.sent[199]).toBe("#200");
   });
 });
