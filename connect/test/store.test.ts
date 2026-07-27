@@ -69,11 +69,13 @@ describe("outbox delivery (at-least-once, ordered, grouped)", () => {
     expect(s.nextQueuedOutbox()).toBeNull();
   });
 
-  test("retry_after schedules the row into the future", () => {
+  test("retry_after backs the head off; it stays the head so the caller waits, not skips", () => {
     const s = new Store(":memory:");
     commit(s, "tg:1", ["x"]);
     s.markOutboxRetry("out:tg:1:0", 60_000); // 60s backoff
-    expect(s.nextQueuedOutbox()).toBeNull(); // not due yet
+    const row = s.nextQueuedOutbox();
+    expect(row?.dedup_key).toBe("out:tg:1:0"); // still the head, not skipped
+    expect(row!.next_attempt_at).toBeGreaterThan(Date.now()); // flush will wait on it
   });
 
   test("retry dead-letters the WHOLE reply after the cap (no partial/out-of-order send)", () => {

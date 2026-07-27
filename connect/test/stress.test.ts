@@ -132,6 +132,28 @@ describe("dispatch loop", () => {
     expect(codec.sent).toEqual(["answer"]);
   });
 
+  test("a backed-off first chunk never lets a later chunk overtake it", async () => {
+    const store = new Store(tmpDb());
+    const sent: string[] = [];
+    let failFirst = true;
+    const codec: ChannelCodec = {
+      name: "f",
+      async send(_c: string, text: string) {
+        if (failFirst) {
+          failFirst = false;
+          return { ok: false, retryable: true, retryAfterMs: 60_000 };
+        }
+        sent.push(text);
+        return { ok: true, retryable: false };
+      },
+    };
+    const big = "A".repeat(5000); // one long line -> hard-split into 2 chunks
+    const c = new Connector(store, codec, new FakeAgent(() => big), noopSup);
+    store.insertInbox(evt("tg:1", "go"));
+    await drain(c);
+    expect(sent).toEqual([]); // chunk 1 backed off 60s -> nothing delivered; chunk 2 did NOT overtake
+  });
+
   test("a failed agent turn surfaces a friendly reply, not a loop", async () => {
     const store = new Store(tmpDb());
     const codec = new RecCodec();

@@ -94,6 +94,9 @@ export class Store {
         // column already present on a fresh table - fine
       }
     }
+    // Backfill legacy rows so each is its OWN group (group_key = dedup_key), never
+    // the shared empty group - otherwise one failure would dead-letter them all.
+    this.db.exec(`UPDATE outbox SET group_key = dedup_key WHERE group_key = ''`);
   }
 
   // --- inbox -------------------------------------------------------------
@@ -173,14 +176,14 @@ export class Store {
 
   // --- outbox delivery ---------------------------------------------------
 
-  /** Next deliverable row: queued, past its backoff, oldest first. */
+  /** The oldest queued row - which the caller must deliver strictly in order.
+   *  It may be backing off (next_attempt_at in the future); the caller checks and
+   *  waits rather than skipping ahead, so a backed-off chunk never lets a later
+   *  chunk of the same reply overtake it. */
   nextQueuedOutbox(): OutboxRow | null {
     return (this.db
-      .query(
-        `SELECT * FROM outbox WHERE status = 'queued' AND next_attempt_at <= ?
-         ORDER BY created_at ASC, rowid ASC LIMIT 1`,
-      )
-      .get(Date.now()) as OutboxRow) ?? null;
+      .query(`SELECT * FROM outbox WHERE status = 'queued' ORDER BY created_at ASC, rowid ASC LIMIT 1`)
+      .get() as OutboxRow) ?? null;
   }
 
   markOutboxSent(dedupKey: string): void {

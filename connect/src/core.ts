@@ -116,6 +116,8 @@ export class Connector {
   async flushOutbox(): Promise<void> {
     let row = this.store.nextQueuedOutbox();
     while (row) {
+      // Strict order: if the head is still backing off, wait - never skip to a later chunk.
+      if (row.next_attempt_at > Date.now()) break;
       const r = await this.codec.send(row.chat_id, row.text);
       if (r.ok) {
         this.store.markOutboxSent(row.dedup_key);
