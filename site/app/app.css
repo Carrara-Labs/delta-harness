@@ -51,34 +51,62 @@
 }
 
 :root {
-  /* Delta primitives: keep the full palette available, use it semantically and sparingly. */
-  --delta-ink: #1d1b16;
-  --delta-cream: #edece5;
-  --delta-canvas: #f7f7f4;
-  --delta-mist: #f0efeb;
-  --delta-sand: #d6cdaf;
-  --delta-olive: #8a7f55;
-  --delta-slate: #c8ccd4;
-  --delta-slate-deep: #6c7587;
-  --delta-sage: #c0d1c2;
-  --delta-sage-deep: #607e64;
-  --delta-stone: #d9d4ce;
-  --delta-stone-deep: #8a8074;
-  --delta-clay: #ddc7b7;
-  --delta-clay-deep: #9d755a;
+  /* Delta = Oat: a warm oatmeal grayscale is the whole brand. There is NO
+     primary accent. Colour appears only as a soft functional layer below
+     (shape signifiers + status), tuned to sit quietly on the Oat ground. */
+
+  /* Oat neutral ramp - the single source of truth for every surface & text. */
+  --oat-50: #faf8f2;
+  --oat-100: #f4efe6;
+  --oat-200: #e9e1d1;
+  --oat-300: #d8ceb7;
+  --oat-400: #c1b69c;
+  --oat-500: #a49a82;
+  --oat-600: #7f7663;
+  --oat-700: #5c5647;
+  --oat-800: #3a352a;
+  --oat-900: #211d14;
+  --oat-950: #14110b;
+
+  /* Legacy primitive names remapped onto Oat so the full cascade follows.
+     sand/olive/clay are warm-neutral tint sources (no colour of their own);
+     clay-deep is the old "accent" slot, now just Oat-muted so kickers etc.
+     lose their muddy brown. */
+  --delta-ink: #14110b;
+  --delta-cream: #f4efe6;
+  --delta-canvas: #f4efe6;
+  --delta-mist: #ece4d4;
+  --delta-sand: #ded2bb;
+  --delta-olive: #7f7663;
+  --delta-stone: #e4dbc8;
+  --delta-stone-deep: #8b8168;
+  --delta-clay: #ded2bb;
+  --delta-clay-deep: #665d4d;
+
+  /* Soft functional layer. `-deep` = ink/text/dot (light mode); the base is a
+     mid tone that doubles as a light-mode tint source and dark-mode text.
+     sage = autonomous agent, slate = agentic feature; the rest are reserves. */
+  --delta-sage: #b8ccb2;
+  --delta-sage-deep: #4f6b4a;
+  --delta-slate: #bcc6d4;
+  --delta-slate-deep: #47576e;
+  --delta-mauve: #d8bcc2;
+  --delta-mauve-deep: #7d4f5b;
+  --delta-wheat: #d9c79a;
+  --delta-wheat-deep: #7a6320;
 
   --background: var(--delta-canvas);
   --foreground: var(--delta-ink);
-  --card: #ffffff;
+  --card: var(--oat-50);
   --card-foreground: var(--delta-ink);
-  --popover: #ffffff;
+  --popover: var(--oat-50);
   --popover-foreground: var(--delta-ink);
   --primary: var(--delta-ink);
   --primary-foreground: var(--delta-cream);
   --secondary: var(--delta-mist);
   --secondary-foreground: var(--delta-ink);
   --muted: var(--delta-mist);
-  --muted-foreground: #5f5b53;
+  --muted-foreground: #665d4d;
   --accent: var(--delta-cream);
   --accent-foreground: var(--delta-ink);
   --destructive: oklch(0.577 0.245 27.325);
@@ -102,19 +130,19 @@
 }
 
 .dark {
-  --background: var(--delta-ink);
+  --background: #100c05;
   --foreground: var(--delta-cream);
-  --card: #25231e;
+  --card: var(--oat-900);
   --card-foreground: var(--delta-cream);
-  --popover: #25231e;
+  --popover: var(--oat-900);
   --popover-foreground: var(--delta-cream);
   --primary: var(--delta-cream);
   --primary-foreground: var(--delta-ink);
-  --secondary: #2d2a24;
+  --secondary: #2a2519;
   --secondary-foreground: var(--delta-cream);
-  --muted: #2d2a24;
-  --muted-foreground: #b8b2aa;
-  --accent: #2d2a24;
+  --muted: #2a2519;
+  --muted-foreground: #a29a85;
+  --accent: #2a2519;
   --accent-foreground: var(--delta-cream);
   --destructive: oklch(0.704 0.191 22.216);
   --border: color-mix(in srgb, var(--delta-cream) 13%, transparent);

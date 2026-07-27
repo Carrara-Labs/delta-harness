@@ -1365,10 +1365,10 @@
   font-size: 13px;
   color: var(--muted-foreground);
 }
-/* Per-card accents: docs gets the full blue treatment (kicker + title); GitHub's
-   kicker goes neutral to sit with the monochrome octocat; npm's kicker turns red. */
-.hiw .hiw-cta a.cta-docs .k,
-.hiw .hiw-cta a.cta-docs .t {
+/* Per-card accents: docs kicker + icon go blue, but the title stays default
+   foreground to match the GitHub/npm titles; GitHub's kicker goes neutral to sit
+   with the monochrome octocat; npm's kicker turns red. */
+.hiw .hiw-cta a.cta-docs .k {
   color: var(--cta-blue);
 }
 .hiw .hiw-cta a.cta-github .k {

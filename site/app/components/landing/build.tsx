@@ -1,16 +1,24 @@
 import { CopyButton } from "~/components/copy-button";
 
-export function BuildSection() {
+type BuildSectionProps = {
+  kicker?: string;
+  heading?: string;
+  intro?: string;
+};
+
+export function BuildSection({
+  kicker = "Build",
+  heading = "Create and run in two commands. Shape five files.",
+  intro = "Install in one command, then scaffold and launch a versionable agent bundle.",
+}: BuildSectionProps = {}) {
   return (
     <section className="section v3-build-section" id="build">
       <div className="page">
         <div className="develop-grid" id="develop">
           <div className="develop-copy">
-            <p className="section-kicker">Build</p>
-            <h2 className="section-heading">Create and run in two commands. Shape five files.</h2>
-            <p className="section-intro">
-              Install in one command, then scaffold and launch a versionable agent bundle.
-            </p>
+            <p className="section-kicker">{kicker}</p>
+            <h2 className="section-heading">{heading}</h2>
+            <p className="section-intro">{intro}</p>
           </div>
 
           <div className="steps">

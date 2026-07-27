@@ -1,12 +1,17 @@
+type ModelsSectionProps = { kicker?: string; heading?: string };
+
 /** Generated from the approved static landing page for parity. */
-export function ModelsSection() {
+export function ModelsSection({
+  kicker = "Provider neutral",
+  heading = "Switch providers. Keep the same agent contract.",
+}: ModelsSectionProps = {}) {
   return (
     <section className="section section-wash section-wash-blue" id="models">
       <div className="page">
         <div className="providers-head">
           <div>
-            <p className="section-kicker">Provider neutral</p>
-            <h2 className="section-heading">Switch providers. Keep the same agent contract.</h2>
+            <p className="section-kicker">{kicker}</p>
+            <h2 className="section-heading">{heading}</h2>
           </div>
           <p className="section-intro">
             Use compatible Chat Completions, native Anthropic Messages or OpenAI Responses while

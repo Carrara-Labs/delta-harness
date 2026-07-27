@@ -576,6 +576,15 @@ export default function HowItWorks() {
                 <div className="hiw-endpoint">
                   <span className="hiw-verb">GET</span>
                   <div>
+                    <span className="path">/v1/busy</span>
+                    <div className="desc">
+                      safe-to-suspend gate for scale-to-zero hosts. queued or running.
+                    </div>
+                  </div>
+                </div>
+                <div className="hiw-endpoint">
+                  <span className="hiw-verb">GET</span>
+                  <div>
                     <span className="path">/healthz</span>
                     <div className="desc">liveness</div>
                   </div>

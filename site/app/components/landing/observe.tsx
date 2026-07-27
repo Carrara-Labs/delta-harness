@@ -1,14 +1,17 @@
-import { CopyButton } from "~/components/copy-button";
+type ObserveSectionProps = { kicker?: string; heading?: string };
 
-export function ObserveSection() {
+export function ObserveSection({
+  kicker = "Runtime telemetry",
+  heading = "Trace runs, tools, tokens and cost.",
+}: ObserveSectionProps = {}) {
   return (
     <section className="section v3-observe-section" id="observe">
       <div className="page">
         <div className="telemetry-block" id="telemetry">
           <div className="telemetry-head">
             <div className="telemetry-copy">
-              <p className="section-kicker">Runtime telemetry</p>
-              <h2 id="telemetry-title">Trace runs, tools, tokens and cost.</h2>
+              <p className="section-kicker">{kicker}</p>
+              <h2 id="telemetry-title">{heading}</h2>
             </div>
             <div className="telemetry-summary">
               <p>
@@ -120,28 +123,7 @@ export function ObserveSection() {
                 </li>
               </ol>
             </div>
-
-            <div className="signal-config">
-              <code>
-                <span>TELEMETRY_URL=https://collector.example/ingest</span>
-                <span>TELEMETRY_TOKEN=your_bearer_token</span>
-              </code>
-              <CopyButton
-                className="signal-copy"
-                text={`TELEMETRY_URL=https://collector.example/ingest
-TELEMETRY_TOKEN=your_bearer_token`}
-                label="Copy telemetry config"
-              />
-            </div>
           </figure>
-
-          <div className="telemetry-contract" role="note">
-            <strong>Export contract</strong>
-            <span>
-              <code>DELTA_CAPTURE_PAYLOADS=1</code> preserves per-call model and tool attributes. It
-              never exports prompt or result bodies; exact call capture stays local to Cockpit.
-            </span>
-          </div>
         </div>
       </div>
     </section>

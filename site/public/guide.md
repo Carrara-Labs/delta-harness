@@ -35,7 +35,7 @@ Delta is designed for work that crosses files, tools, systems, and people. It is
 - Optional: the host `grep` command for the `grep` tool
 - Optional: the host `unzip` command for lightweight DOCX and XLSX extraction
 
-Repository access and an existing checkout are prerequisites until Delta is published. All commands in this guide run from that repository root unless stated otherwise.
+Delta installs three ways: `curl -fsSL https://deltaharness.dev/install.sh | sh`, `bunx @carrara-labs/delta-harness`, or a prebuilt binary from GitHub Releases. To build from source, clone the repository. Commands in this guide use `./dist/delta ...` from a source checkout; if you installed the binary, substitute `delta ...`. All commands run from the repository root unless stated otherwise.
 
 ### Build the binary
 
@@ -170,11 +170,11 @@ The documentation exposes three layers so Claude Code, Cursor, Codex, and simila
 
 1. **Immediate handoff:** use **Copy agent context** from the documentation header menu, then paste it into the coding agent with your task. The copied brief explains Delta's integration shapes, current source-checkout workflow, bundle contract, safety rules, and authoritative URLs.
 2. **Focused retrieval:** point an agent to [`/llms.txt`](/llms.txt) for a concise index, [`/guide.md`](/guide.md) for the canonical guide, or [`/llms-full.txt`](/llms-full.txt) when a tool explicitly needs the complete corpus.
-3. **Persistent project context:** place a short, relevant Delta section in the target repository's root `AGENTS.md`, or install the official Delta Skill when package distribution is available. A hosted `AGENTS.md` is a source to copy from; coding agents only load it automatically after it is present in the repository they are working in.
+3. **Persistent project context:** place a short, relevant Delta section in the target repository's root `AGENTS.md`, or install the official Delta Skill once it ships. A hosted `AGENTS.md` is a source to copy from; coding agents only load it automatically after it is present in the repository they are working in.
 
 The header's **Copy .md** action copies the complete current guide. Use that for a full page handoff. Prefer the smaller agent context for routine implementation work so the coding agent can retrieve only the relevant guide sections instead of carrying the entire manual in every turn.
 
-Until Delta's package release is documented, the brief deliberately uses the source-checkout commands in this guide and tells agents not to invent a package name. The planned package should ship version-matched agent context, a portable `SKILL.md`, and a small installer that can add or update a bounded Delta section in the target repository's `AGENTS.md`. MCP is only necessary later if agents need live registry search or operational actions; static product knowledge does not require it.
+Delta ships as the npm package `@carrara-labs/delta-harness`, installable via `install.sh`, `bunx`, or a prebuilt release binary; the brief points agents at these alongside the source-checkout commands in this guide. Still planned: a portable `SKILL.md` and a small installer that can add or update a bounded Delta section in the target repository's `AGENTS.md`. MCP is only necessary later if agents need live registry search or operational actions; static product knowledge does not require it.
 
 ## Mental model
 
@@ -766,7 +766,7 @@ Useful metadata:
 
 | Metadata | Meaning |
 |---|---|
-| `user_id` | Bind the session user, scope private memory, and correlate events. Use this snake-case form for durable session binding. `userId` is accepted by some per-run readers but is not persisted on a newly created session. |
+| `user_id` | Bind the session user, scope private memory, and correlate events. Prefer this snake-case form for consistency; the `userId` alias is also recognized and durably binds the session owner at creation. |
 | `agent_id` or `agentId` | Override the per-run event identity. The daemon's stable memory identity still comes from `DELTA_AGENT_ID`; a gateway should normally replace this value. |
 | `task_id` or `taskId` | Correlate the run with external work. |
 | `entity_id`, `entityId`, or `entity` | Correlate and optionally scope product hydration. |
@@ -949,7 +949,7 @@ The expanded JSON is:
 
 An MCP tool named `get_account` becomes `crm__get_account`. Names that cannot fit the model API's tool-name rules are dropped.
 
-Malformed JSON is treated as no configured servers. Delta does not structurally validate the array before connection setup, so validate it in deployment tooling and inspect boot logs plus `/v1/dev/config` rather than assuming a non-empty variable produced tools.
+Malformed JSON is treated as no configured servers. Delta validates each entry's shape at boot and skips any malformed entry (with a warning), but it does not verify a server is reachable. Inspect boot logs plus `/v1/dev/config` rather than assuming a non-empty variable produced tools.
 
 ### Stdio server
 
@@ -1227,7 +1227,7 @@ Environment overrides use JavaScript number conversion. An exported empty `DELTA
 
 ### Compaction
 
-Delta compacts when the previous model request exceeded `DELTA_COMPACT_AT_TOKENS`, default 120,000, and there are more than five active messages. It preserves the last four active messages, not four complete turns, and asks the utility model for a summary under 350 words from at most 60,000 characters of older history. A failed compaction is a no-op. The compaction call is charged to run usage but not the step count.
+Delta compacts when the previous model request exceeded `DELTA_COMPACT_AT_TOKENS`, default 120,000, and there is more than a minimal tail of active messages to shed. It preserves a recent tail sized by a token budget (default 24,000 tokens) snapped to a turn boundary, so an assistant tool call always travels with its result, rather than a fixed message count. It asks the utility model for a summary under 350 words from at most 60,000 characters of older history. A failed compaction is a no-op. The compaction call is charged to run usage but not the step count.
 
 If a provider reports a context-window overflow earlier, Delta forces one compaction and retries the same model turn once. Forced overflow handling may also elide an oversized tool message. If compaction cannot reduce the context, the run fails cleanly.
 
@@ -1799,7 +1799,7 @@ The entrypoint uses Litestream when either of these is configured:
 - a mounted `LITESTREAM_CONFIG`, default path `/etc/litestream.yml`
 - a direct `LITESTREAM_REPLICA_URL`
 
-Use this S3-compatible configuration. It gives the checked-in template's one-second replication, hourly snapshots, and seven-day retention:
+Use this S3-compatible configuration. It provides one-second replication, hourly snapshots, and seven-day retention:
 
 ```yaml
 dbs:
@@ -2173,7 +2173,6 @@ The database schema is newer than the binary's migrations. Do not force it open.
 
 These are deliberate truths of the current codebase:
 
-- The repository builds `dist/delta`; it does not yet publish a package installer or shell install command.
 - Human-review rails are prewired through policy, vocabulary, MCP, and reflection. Delta does not include a universal approval backend or UI.
 - `delta send` and `delta watch` are localhost-only clients; `delta dev` is a local launcher, not remote attachment.
 - MCP configuration, policy, vocabulary, and all prompt context do not hot-reload.

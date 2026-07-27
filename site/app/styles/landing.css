@@ -1,23 +1,25 @@
 :root {
         color-scheme: light;
         --bg: var(--delta-canvas);
-        --surface: #ffffff;
+        --surface: var(--oat-50);
         --surface-soft: var(--delta-mist);
         --wash-green: color-mix(in srgb, var(--delta-sage) 48%, var(--delta-canvas));
         --wash-blue: color-mix(in srgb, var(--delta-slate) 42%, var(--delta-canvas));
         --wash-warm: color-mix(in srgb, var(--delta-sand) 36%, var(--delta-canvas));
         --wash-clay: color-mix(in srgb, var(--delta-clay) 32%, var(--delta-canvas));
         --text: var(--delta-ink);
-        --text-soft: #5f5b53;
-        --text-faint: #706c65;
+        --text-soft: #665d4d;
+        --text-faint: #6f6553;
+        --nav-link: #4f473a;
+        --band: #ece5d3;
         --line: var(--delta-stone);
-        --line-strong: #b7b0a7;
+        --line-strong: #d0c6b1;
         --inverse: var(--delta-cream);
         --inverse-bg: var(--delta-ink);
-        --success: #58765c;
+        --success: #4f6b4a;
         --code: var(--delta-ink);
-        --header: rgba(247, 247, 244, 0.92);
-        --shadow: 0 24px 64px rgba(29, 27, 22, 0.09);
+        --header: rgba(250, 248, 242, 0.88);
+        --shadow: 0 24px 64px rgba(20, 17, 11, 0.10);
         --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         --mono: ui-monospace, "SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, Consolas,
           monospace;
@@ -28,46 +30,50 @@
 
       html[data-theme="dark"] {
         color-scheme: dark;
-        --bg: var(--delta-ink);
-        --surface: #25231e;
-        --surface-soft: #2d2a24;
+        --bg: #100c05;
+        --surface: var(--oat-900);
+        --surface-soft: #2a2519;
         --wash-green: color-mix(in srgb, var(--delta-sage-deep) 18%, var(--delta-ink));
         --wash-blue: color-mix(in srgb, var(--delta-slate-deep) 18%, var(--delta-ink));
         --wash-warm: color-mix(in srgb, var(--delta-olive) 16%, var(--delta-ink));
         --wash-clay: color-mix(in srgb, var(--delta-clay-deep) 15%, var(--delta-ink));
         --text: var(--delta-cream);
-        --text-soft: #b8b2aa;
-        --text-faint: #9b958c;
+        --text-soft: #b8b0a0;
+        --text-faint: #a29a85;
+        --nav-link: #cfc7b8;
+        --band: #1a160e;
         --line: color-mix(in srgb, var(--delta-cream) 13%, var(--delta-ink));
         --line-strong: color-mix(in srgb, var(--delta-cream) 25%, var(--delta-ink));
         --inverse: var(--delta-ink);
         --inverse-bg: var(--delta-cream);
         --success: var(--delta-sage);
         --code: var(--delta-cream);
-        --header: rgba(29, 27, 22, 0.92);
+        --header: rgba(20, 17, 11, 0.92);
         --shadow: 0 28px 72px rgba(0, 0, 0, 0.28);
       }
 
       @media (prefers-color-scheme: dark) {
         html:not([data-theme]) {
           color-scheme: dark;
-          --bg: var(--delta-ink);
-          --surface: #25231e;
-          --surface-soft: #2d2a24;
+          --bg: #100c05;
+          --surface: var(--oat-900);
+          --surface-soft: #2a2519;
           --wash-green: color-mix(in srgb, var(--delta-sage-deep) 18%, var(--delta-ink));
           --wash-blue: color-mix(in srgb, var(--delta-slate-deep) 18%, var(--delta-ink));
           --wash-warm: color-mix(in srgb, var(--delta-olive) 16%, var(--delta-ink));
           --wash-clay: color-mix(in srgb, var(--delta-clay-deep) 15%, var(--delta-ink));
           --text: var(--delta-cream);
-          --text-soft: #b8b2aa;
-          --text-faint: #9b958c;
+          --text-soft: #b8b0a0;
+          --text-faint: #a29a85;
+          --nav-link: #cfc7b8;
+          --band: #1a160e;
           --line: color-mix(in srgb, var(--delta-cream) 13%, var(--delta-ink));
           --line-strong: color-mix(in srgb, var(--delta-cream) 25%, var(--delta-ink));
           --inverse: var(--delta-ink);
           --inverse-bg: var(--delta-cream);
           --success: var(--delta-sage);
           --code: var(--delta-cream);
-          --header: rgba(29, 27, 22, 0.92);
+          --header: rgba(20, 17, 11, 0.92);
           --shadow: 0 28px 72px rgba(0, 0, 0, 0.28);
         }
       }
@@ -95,8 +101,8 @@
       }
 
       ::selection {
-        background: var(--text);
-        color: var(--bg);
+        background: color-mix(in srgb, var(--delta-clay-deep) 24%, transparent);
+        color: var(--text);
       }
 
       a {
@@ -215,7 +221,7 @@
         align-items: center;
         gap: 28px;
         margin-left: auto;
-        color: var(--text-soft);
+        color: var(--nav-link);
         font-size: 14px;
       }
 
@@ -610,6 +616,16 @@
 
       .section {
         padding: 124px 0;
+      }
+
+      /* Tonal rhythm: gently band alternating plain sections so the page is not
+         one flat colour top to bottom. --band is a hair deeper than the canvas
+         in light, a hair lighter than the ground in dark - cards still lift. */
+      #why,
+      #modes,
+      #built-on,
+      #deploy {
+        background: var(--band);
       }
 
       .section-wash {
@@ -2550,6 +2566,20 @@
         border-bottom: 1px solid var(--line);
       }
 
+      .deploy-lifecycle {
+        margin-top: 22px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        border-radius: 22px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .deploy-topology .topology-map:last-child {
+        border-bottom: 0;
+      }
+
       .lifecycle-head {
         display: flex;
         min-height: 52px;
@@ -4262,9 +4292,9 @@
       /* V3: one alignment system, quieter surfaces and clearer reading order */
       .v3 {
         --page: min(100% - 48px, 1240px);
-        --text-faint: #706c65;
+        --text-faint: #6f6553;
         --line: var(--delta-stone);
-        --line-strong: #b7b0a7;
+        --line-strong: #cfc4ad;
         --control-line: var(--delta-stone-deep);
         --section-y: clamp(92px, 9vw, 132px);
         --section-head-gap: clamp(48px, 5vw, 72px);
@@ -4275,7 +4305,7 @@
       }
 
       html[data-theme="dark"] .v3 {
-        --text-faint: #9b958c;
+        --text-faint: #a29a85;
         --line: color-mix(in srgb, var(--delta-cream) 13%, var(--delta-ink));
         --line-strong: color-mix(in srgb, var(--delta-cream) 25%, var(--delta-ink));
         --control-line: var(--delta-stone-deep);
@@ -4398,6 +4428,35 @@
         box-shadow: var(--soft-shadow);
       }
 
+      /* Large screens: lede on the left, install card parked on the right. */
+      @media (min-width: 1080px) {
+        .v3 .hero-inner {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(380px, 480px);
+          column-gap: clamp(44px, 4.5vw, 96px);
+          align-items: center;
+        }
+
+        .v3 .hero-lede {
+          min-width: 0;
+        }
+
+        .v3 h1 {
+          font-size: clamp(3.7rem, 5.4vw, 6rem);
+        }
+
+        .v3 .install-tabs {
+          width: 100%;
+          margin-top: 0;
+        }
+
+        /* Narrower card here - shrink the note so the longest (coding agents)
+           one-liner stays on a single line. */
+        .v3 .install-note {
+          font-size: 11.5px;
+        }
+      }
+
       .v3 .proof {
         padding: 0 0 clamp(88px, 9vw, 128px);
       }
@@ -4493,7 +4552,7 @@
       }
 
       .v3 .v3-product-section {
-        background: color-mix(in srgb, var(--wash-blue) 38%, var(--bg));
+        background: color-mix(in srgb, var(--wash-warm) 55%, var(--bg));
       }
 
       .v3 .cockpit-wrap,
@@ -4503,8 +4562,8 @@
       }
 
       .v3 .run-receipt {
-        margin-bottom: 20px;
-        background: color-mix(in srgb, var(--surface) 38%, transparent);
+        margin-bottom: 24px;
+        background: transparent;
       }
 
       .v3 .product-cockpit {
@@ -4721,7 +4780,7 @@
       }
 
       .v3 .v3-observe-section {
-        background: color-mix(in srgb, var(--wash-blue) 46%, var(--bg));
+        background: color-mix(in srgb, var(--wash-warm) 55%, var(--bg));
       }
 
       .v3 .telemetry-block {
@@ -4813,8 +4872,8 @@
         --coding-bg: var(--delta-ink);
         --coding-panel: color-mix(in srgb, var(--delta-cream) 3%, var(--delta-ink));
         --coding-text: var(--delta-cream);
-        --coding-muted: #b8b2aa;
-        --coding-faint: #9b958c;
+        --coding-muted: #a89f8c;
+        --coding-faint: #a29a85;
         --coding-line: color-mix(in srgb, var(--delta-cream) 32%, var(--delta-ink));
         padding-block: clamp(92px, 8vw, 120px);
         background: var(--coding-bg);

@@ -1,5 +1,10 @@
+type CodingAgentsSectionProps = { kicker?: string; heading?: string };
+
 /** Generated from the approved static landing page for parity. */
-export function CodingAgentsSection() {
+export function CodingAgentsSection({
+  kicker = "Coding agent integrations",
+  heading = "Codex and Claude Code native.",
+}: CodingAgentsSectionProps = {}) {
   return (
     <section
       className="section v3-coding-section"
@@ -8,9 +13,9 @@ export function CodingAgentsSection() {
     >
       <div className="page coding-agent-grid">
         <header className="coding-agent-copy">
-          <p className="section-kicker">Coding agent integrations</p>
+          <p className="section-kicker">{kicker}</p>
           <h2 className="section-heading" id="coding-agent-title">
-            Codex and Claude Code native.
+            {heading}
           </h2>
           <p>
             At launch, Delta will hand advanced coding tasks to either CLI with the agent workspace

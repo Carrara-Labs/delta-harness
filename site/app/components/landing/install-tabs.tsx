@@ -18,7 +18,14 @@ const TABS: InstallTab[] = [
     label: "curl",
     command: "curl -fsSL https://deltaharness.dev/install.sh | sh",
     prompt: "$",
-    note: "Prebuilt binary for macOS and Linux — no runtime required.",
+    note: "Prebuilt binary for macOS and Linux - no runtime required.",
+  },
+  {
+    id: "npm",
+    label: "npm",
+    command: "npm i @carrara-labs/delta-harness",
+    prompt: "$",
+    note: "Install the package into a Node or Bun project.",
   },
   {
     id: "bun",
@@ -38,7 +45,7 @@ const TABS: InstallTab[] = [
     id: "agents",
     label: "Coding agents",
     command: "Read https://deltaharness.dev/llms.txt, then install Delta and scaffold an agent.",
-    note: "Paste into a fresh session — llms.txt links the install, guide, and integration brief.",
+    note: "Paste into a fresh session - llms.txt links the install, guide, and integration brief.",
   },
 ];
 

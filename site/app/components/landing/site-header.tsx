@@ -1,4 +1,3 @@
-import { BookOpenIcon } from "lucide-react";
 import { useLocation } from "react-router";
 
 import { MobileNavigation } from "~/components/mobile-navigation";
@@ -59,11 +58,7 @@ export function SiteHeader() {
           >
             How it works
           </a>
-          <a href={to("product")}>Product</a>
-          <a href={to("why-delta")}>Why Delta</a>
-          <a href={to("use-cases")}>Use cases</a>
-          <a href={to("build")}>Build</a>
-          <a href={to("observe")}>Operate</a>
+          <a href="/docs/">Documentation</a>
           <a
             href="/changelog"
             className={active("/changelog")}
@@ -83,12 +78,6 @@ export function SiteHeader() {
               title="View Delta on GitHub"
             >
               <GitHubMark />
-            </a>
-          </Button>
-          <Button asChild className="nav-docs-button" variant="outline">
-            <a href="/docs/" aria-label="Documentation">
-              <BookOpenIcon data-icon="inline-start" aria-hidden="true" />
-              <span>Docs</span>
             </a>
           </Button>
           <MobileNavigation />

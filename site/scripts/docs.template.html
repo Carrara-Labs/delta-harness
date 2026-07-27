@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="application-name" content="Delta" />
     <meta name="color-scheme" content="light dark" />
-    <meta name="theme-color" content="#f7f7f4" id="theme-color" />
+    <meta name="theme-color" content="#f4efe6" id="theme-color" />
     <meta
       name="description"
       content="From first local run to secure production: configure models, MCP tools, memory, subagents, observability and durable execution."
@@ -40,7 +40,7 @@
         const theme = stored === "light" || stored === "dark" ? stored : systemDark ? "dark" : "light";
         document.documentElement.dataset.theme = theme;
         const color = document.querySelector('meta[name="theme-color"]');
-        if (color) color.content = theme === "dark" ? "#1d1b16" : "#f7f7f4";
+        if (color) color.content = theme === "dark" ? "#14110b" : "#f4efe6";
         const favicon = document.getElementById("theme-favicon");
         if (favicon) {
           favicon.href =
@@ -54,39 +54,45 @@
     <style>
       :root {
         color-scheme: light;
-        --delta-ink: #1d1b16;
-        --delta-cream: #edece5;
-        --delta-canvas: #f7f7f4;
-        --delta-mist: #f0efeb;
-        --delta-sand: #d6cdaf;
-        --delta-olive: #8a7f55;
-        --delta-slate: #c8ccd4;
-        --delta-slate-deep: #6c7587;
-        --delta-sage: #c0d1c2;
-        --delta-sage-deep: #607e64;
-        --delta-stone: #d9d4ce;
-        --delta-stone-deep: #8a8074;
-        --delta-clay: #ddc7b7;
-        --delta-clay-deep: #9d755a;
+        /* Oat: a warm oatmeal grayscale, no primary accent. sage/slate are the
+           soft functional signifiers; everything else is warm-neutral. */
+        --oat-50: #faf8f2;
+        --oat-900: #211d14;
+        --oat-950: #14110b;
+        --delta-ink: #14110b;
+        --delta-cream: #f4efe6;
+        --delta-canvas: #f4efe6;
+        --delta-mist: #ece4d4;
+        --delta-sand: #ded2bb;
+        --delta-olive: #7f7663;
+        --delta-slate: #bcc6d4;
+        --delta-slate-deep: #47576e;
+        --delta-sage: #b8ccb2;
+        --delta-sage-deep: #4f6b4a;
+        --delta-stone: #e4dbc8;
+        --delta-stone-deep: #8b8168;
+        --delta-clay: #ded2bb;
+        --delta-clay-deep: #665d4d;
 
         --bg: var(--delta-canvas);
-        --surface: #ffffff;
+        --surface: var(--oat-50);
         --surface-soft: var(--delta-mist);
         --wash-green: color-mix(in srgb, var(--delta-sage) 48%, var(--delta-canvas));
         --wash-blue: color-mix(in srgb, var(--delta-slate) 42%, var(--delta-canvas));
         --wash-warm: color-mix(in srgb, var(--delta-sand) 36%, var(--delta-canvas));
         --wash-clay: color-mix(in srgb, var(--delta-clay) 32%, var(--delta-canvas));
         --text: var(--delta-ink);
-        --text-soft: #5f5b53;
-        --text-faint: #706c65;
+        --text-soft: #665d4d;
+        --text-faint: #6f6553;
+        --nav-link: #4f473a;
         --line: var(--delta-stone);
-        --line-strong: #b7b0a7;
-        --success: #58765c;
-        --code-bg: var(--delta-ink);
+        --line-strong: #cfc4ad;
+        --success: #4f6b4a;
+        --code-bg: var(--oat-950);
         --code-text: var(--delta-cream);
-        --code-muted: #b8b2aa;
-        --header: rgba(247, 247, 244, 0.92);
-        --shadow: 0 24px 64px rgba(29, 27, 22, 0.09);
+        --code-muted: #a89f8c;
+        --header: rgba(244, 239, 230, 0.92);
+        --shadow: 0 24px 64px rgba(20, 17, 11, 0.10);
         --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         --mono: ui-monospace, "SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, Consolas,
           monospace;
@@ -96,23 +102,24 @@
 
       html[data-theme="dark"] {
         color-scheme: dark;
-        --bg: var(--delta-ink);
-        --surface: #25231e;
-        --surface-soft: #2d2a24;
+        --bg: #100c05;
+        --surface: var(--oat-900);
+        --surface-soft: #2a2519;
         --wash-green: color-mix(in srgb, var(--delta-sage-deep) 18%, var(--delta-ink));
         --wash-blue: color-mix(in srgb, var(--delta-slate-deep) 18%, var(--delta-ink));
         --wash-warm: color-mix(in srgb, var(--delta-olive) 16%, var(--delta-ink));
         --wash-clay: color-mix(in srgb, var(--delta-clay-deep) 15%, var(--delta-ink));
         --text: var(--delta-cream);
-        --text-soft: #b8b2aa;
-        --text-faint: #9b958c;
+        --text-soft: #b8b0a0;
+        --text-faint: #a29a85;
+        --nav-link: #cfc7b8;
         --line: color-mix(in srgb, var(--delta-cream) 13%, var(--delta-ink));
         --line-strong: color-mix(in srgb, var(--delta-cream) 25%, var(--delta-ink));
         --success: var(--delta-sage);
-        --code-bg: #100f0c;
+        --code-bg: #0e0b06;
         --code-text: var(--delta-cream);
-        --code-muted: #b8b2aa;
-        --header: rgba(29, 27, 22, 0.92);
+        --code-muted: #a89f8c;
+        --header: rgba(20, 17, 11, 0.92);
         --shadow: 0 28px 72px rgba(0, 0, 0, 0.28);
       }
 
@@ -138,8 +145,8 @@
       }
 
       ::selection {
-        background: var(--text);
-        color: var(--bg);
+        background: color-mix(in srgb, var(--delta-clay-deep) 24%, transparent);
+        color: var(--text);
       }
 
       a {
@@ -192,12 +199,54 @@
       }
 
       .header-inner {
-        display: flex;
+        display: grid;
         width: var(--header-page);
         min-height: 60px;
+        grid-template-columns: 1fr auto 1fr;
         align-items: center;
         gap: 18px;
         margin-inline: auto;
+      }
+
+      .header-inner .brand {
+        justify-self: start;
+      }
+
+      .nav-links {
+        display: flex;
+        justify-self: center;
+        align-items: center;
+        gap: clamp(18px, 2.1vw, 30px);
+        color: var(--nav-link);
+        font-size: 14px;
+      }
+
+      .nav-links a {
+        transition: color 150ms ease;
+      }
+
+      .nav-links a:hover {
+        color: var(--text);
+      }
+
+      .nav-links a.is-active {
+        position: relative;
+        color: var(--text);
+      }
+
+      .nav-links a.is-active::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: -6px;
+        height: 1.5px;
+        border-radius: 1px;
+        background: var(--delta-sage-deep);
+      }
+
+      html[data-theme="dark"] .nav-links a.is-active::after {
+        background: var(--delta-sage);
       }
 
       .brand {
@@ -257,9 +306,9 @@
 
       .header-actions {
         display: flex;
+        justify-self: end;
         align-items: center;
         gap: 8px;
-        margin-left: auto;
       }
 
       .github-link {
@@ -1051,6 +1100,14 @@
           display: inline-grid;
         }
 
+        .header-inner {
+          grid-template-columns: 1fr auto;
+        }
+
+        .nav-links {
+          display: none;
+        }
+
         .sidebar {
           position: fixed;
           z-index: 80;
@@ -1283,22 +1340,14 @@
           </span>
           <span>delta</span>
         </a>
-        <span class="header-divider" aria-hidden="true"></span>
-        <span class="header-section">Documentation</span>
+
+        <nav class="nav-links" aria-label="Main navigation">
+          <a href="/how-it-works">How it works</a>
+          <a href="/docs/" class="is-active" aria-current="page">Documentation</a>
+          <a href="/changelog">Changelog</a>
+        </nav>
 
         <div class="header-actions">
-          <a
-            class="github-link"
-            href="https://github.com/Carrara-Labs/delta-harness"
-            target="_blank"
-            rel="noopener"
-            aria-label="View Delta on GitHub"
-            title="View Delta on GitHub"
-          >
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <path d="M12 .7a11.5 11.5 0 0 0-3.64 22.4c.58.1.79-.25.79-.56v-2.02c-3.22.7-3.9-1.37-3.9-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.17.08 1.78 1.2 1.78 1.2 1.04 1.77 2.72 1.26 3.38.96.1-.75.4-1.26.74-1.55-2.57-.29-5.27-1.28-5.27-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.16 1.18a10.98 10.98 0 0 1 5.76 0c2.2-1.49 3.16-1.18 3.16-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.71 5.39-5.29 5.68.42.36.79 1.06.79 2.14v3.18c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z" />
-            </svg>
-          </a>
           <div class="copy-control">
             <button
               class="markdown-copy"
@@ -1341,6 +1390,18 @@
               </div>
             </details>
           </div>
+          <a
+            class="github-link"
+            href="https://github.com/Carrara-Labs/delta-harness"
+            target="_blank"
+            rel="noopener"
+            aria-label="View Delta on GitHub"
+            title="View Delta on GitHub"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 .7a11.5 11.5 0 0 0-3.64 22.4c.58.1.79-.25.79-.56v-2.02c-3.22.7-3.9-1.37-3.9-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.17.08 1.78 1.2 1.78 1.2 1.04 1.77 2.72 1.26 3.38.96.1-.75.4-1.26.74-1.55-2.57-.29-5.27-1.28-5.27-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.16 1.18a10.98 10.98 0 0 1 5.76 0c2.2-1.49 3.16-1.18 3.16-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.71 5.39-5.29 5.68.42.36.79 1.06.79 2.14v3.18c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z" />
+            </svg>
+          </a>
           <button
             class="contents-toggle"
             id="contents-toggle"
@@ -1459,7 +1520,7 @@
         const next = root.dataset.theme === "dark" ? "light" : "dark";
         themeToggle.setAttribute("aria-label", `Switch to ${next} theme`);
         themeToggle.title = `Switch to ${next} theme`;
-        themeColor.content = root.dataset.theme === "dark" ? "#1d1b16" : "#f7f7f4";
+        themeColor.content = root.dataset.theme === "dark" ? "#14110b" : "#f4efe6";
         themeFavicon.href =
           root.dataset.theme === "dark"
             ? "/delta-logo-dark-background.svg"

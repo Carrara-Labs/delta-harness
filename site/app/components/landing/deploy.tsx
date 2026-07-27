@@ -1,15 +1,18 @@
-import { CopyButton } from "~/components/copy-button";
+type DeploySectionProps = { kicker?: string; heading?: string };
 
 /** Generated from the approved static landing page for parity. */
-export function DeploySection() {
+export function DeploySection({
+  kicker = "Deploy",
+  heading = "One binary. One volume. Your cloud.",
+}: DeploySectionProps = {}) {
   return (
     <section className="section" id="deploy">
       <div className="page">
         <header className="deploy-head">
           <div>
-            <p className="section-kicker">Deploy</p>
+            <p className="section-kicker">{kicker}</p>
             <h2 className="section-heading" id="deploy-title">
-              One binary. One volume. Your cloud.
+              {heading}
             </h2>
           </div>
           <div className="deploy-summary">
@@ -22,19 +25,6 @@ export function DeploySection() {
             </a>
           </div>
         </header>
-
-        <div className="code-block">
-          <div className="code-block-header">
-            <span>Run the daemon (container)</span>
-            <CopyButton
-              text="docker run -p 8080:8080 --env-file .env ghcr.io/carrara-labs/delta-harness"
-              label="Copy docker command"
-            />
-          </div>
-          <pre>
-            <code>docker run -p 8080:8080 --env-file .env ghcr.io/carrara-labs/delta-harness</code>
-          </pre>
-        </div>
 
         <figure className="deploy-topology" aria-labelledby="deploy-title topology-caption">
           <figcaption className="topology-head" id="topology-caption">
@@ -137,68 +127,45 @@ export function DeploySection() {
               </li>
             </ul>
           </div>
-
-          <div className="lifecycle">
-            <div className="lifecycle-head">
-              <strong>External lifecycle</strong>
-              <span>Delta does not provision or suspend infrastructure itself.</span>
-            </div>
-            <ol className="lifecycle-strip">
-              <li>
-                <span className="lifecycle-index">01</span>
-                <strong>Gate</strong>
-                <span>Hold new work</span>
-              </li>
-              <li>
-                <span className="lifecycle-index">02</span>
-                <strong>Wake</strong>
-                <span>Start the runtime</span>
-              </li>
-              <li>
-                <span className="lifecycle-index">03</span>
-                <strong>Run</strong>
-                <span>Checkpoint durable work</span>
-              </li>
-              <li>
-                <span className="lifecycle-index">04</span>
-                <strong>Check</strong>
-                <span>No queued or running work</span>
-              </li>
-              <li>
-                <span className="lifecycle-index">05</span>
-                <strong>Suspend</strong>
-                <span>Compute sleeps, /data stays</span>
-              </li>
-            </ol>
-            <p className="lifecycle-caveat">
-              Queue zero does not drain reflection or telemetry. Suspending can interrupt background
-              work.
-            </p>
-          </div>
         </figure>
 
-        <dl className="deploy-contract">
-          <div>
-            <dt>Runtime</dt>
-            <dd>Compiled Linux binary</dd>
+        <div className="lifecycle deploy-lifecycle">
+          <div className="lifecycle-head">
+            <strong>External lifecycle</strong>
+            <span>Delta does not provision or suspend infrastructure itself.</span>
           </div>
-          <div>
-            <dt>Persistence</dt>
-            <dd>
-              Mount all of <code>/data</code>
-            </dd>
-          </div>
-          <div>
-            <dt>Health</dt>
-            <dd>
-              <code>/healthz</code> is liveness
-            </dd>
-          </div>
-          <div>
-            <dt>Recovery</dt>
-            <dd>Back up DB + workspace; test coordinated restore</dd>
-          </div>
-        </dl>
+          <ol className="lifecycle-strip">
+            <li>
+              <span className="lifecycle-index">01</span>
+              <strong>Gate</strong>
+              <span>Hold new work</span>
+            </li>
+            <li>
+              <span className="lifecycle-index">02</span>
+              <strong>Wake</strong>
+              <span>Start the runtime</span>
+            </li>
+            <li>
+              <span className="lifecycle-index">03</span>
+              <strong>Run</strong>
+              <span>Checkpoint durable work</span>
+            </li>
+            <li>
+              <span className="lifecycle-index">04</span>
+              <strong>Check</strong>
+              <span>No queued or running work</span>
+            </li>
+            <li>
+              <span className="lifecycle-index">05</span>
+              <strong>Suspend</strong>
+              <span>Compute sleeps, /data stays</span>
+            </li>
+          </ol>
+          <p className="lifecycle-caveat">
+            Queue zero does not drain reflection or telemetry. Suspending can interrupt background
+            work.
+          </p>
+        </div>
       </div>
     </section>
   );
