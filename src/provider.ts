@@ -197,6 +197,31 @@ const THINKING_BUDGET: Record<string, number> = {
 };
 const DEFAULT_THINKING_BUDGET = 16384; // unknown effort → treat as "high" on the Anthropic wire
 
+/** The native wire has TWO thinking modes. Extended thinking (`enabled` + budget_tokens) is
+ * REQUIRED on Claude ≤4.5 and REJECTED (400 `"thinking.type.enabled" is not supported`) on 4.7+.
+ * Adaptive (`adaptive` + output_config.effort) is the modern wire — valid on 4.6+ and every future
+ * model, rejected only on ≤4.5. The enabled-only set is CLOSED (the frontier only moves toward
+ * adaptive), so DEFAULT to adaptive and special-case the finite legacy list by parsing the version
+ * out of the model id. Unknown/unparseable → adaptive (the safe modern default; a legacy proxy
+ * name that rejects it surfaces cleanly now via the run's error field). */
+export function anthropicUsesAdaptive(model: string): boolean {
+  // The minor is 1–2 digits bounded by a separator or end — so a DATE snapshot ("claude-opus-4-
+  // 20250514", an Opus 4.0 legacy id) is NOT misread as minor 20250514; its long run fails the
+  // lookahead and leaves minor absent → treated as 4.0 (enabled-only). Dotted ids ("4.8") also match.
+  const m = model.match(/claude-(?:[a-z]+-)?(\d+)(?:[.-](\d{1,2})(?=$|[.-]))?/i);
+  if (!m) return true;
+  const major = Number(m[1]);
+  if (major !== 4) return major > 4; // 5.x+ adaptive; 3.x and earlier enabled-only
+  return Number(m[2] ?? 0) >= 6; // 4.6+ adaptive; 4.0–4.5 enabled-only
+}
+
+/** output_config.effort accepts low|medium|high|xhigh|max. Delta's two OpenAI-only tiers map to the
+ * safe floor `low`; everything else passes through (the model is the authority — same doctrine as
+ * the OpenAI wire). `none` also → `low`: adaptive has no universal "off" (always-on models like
+ * Fable/Mythos 5, and Opus 5 at xhigh/max, REJECT `thinking:{type:"disabled"}`), and adaptive at
+ * low effort already skips thinking on easy inputs — the closest safe expression of "minimal". */
+const ADAPTIVE_EFFORT_ALIAS: Record<string, string> = { none: "low", minimal: "low" };
+
 /** Per-call output ceiling on the native Anthropic wire (the OpenAI wire has a generous
  * server-side default and sends max_tokens only when asked). 4096 was a safe cross-provider
  * floor, but it silently TRUNCATES big tool calls: the model stops at max_tokens mid
@@ -809,26 +834,46 @@ async function streamAnthropic(
   const sig = withTimeout(req.signal, timeoutMs, idle);
   let emitted = false;
   const { system, msgs } = toAnthropic(req.messages);
+  // A9: the native wire wants a bare DASHED id ("claude-opus-4-8") — strip any provider prefix
+  // and translate dotted versions, for EVERY model (primary AND fallback), not just the utility
+  // model. The RETURNED model keeps the configured id (pricing/telemetry already alias both forms).
+  const wireModel = (model.split("/").pop() ?? model).replace(/\.(\d)/g, "-$1");
   const body: Record<string, unknown> = {
-    model,
+    model: wireModel,
     messages: msgs,
     max_tokens: req.maxTokens ?? STEP_MAX_TOKENS,
     stream: true,
   };
-  // The native wire has no effort enum — extended thinking takes a token budget. Map the
-  // effort to one and guarantee max_tokens > budget (Anthropic's rule) with room left over
-  // for the answer AFTER the thinking spend. Temperature is left at the default (thinking
-  // forbids a custom one), so nothing else needs to change.
+  // Reasoning control per wire mode (A8). Temperature is left at the default (thinking forbids a
+  // custom one), so nothing else changes.
   if (req.reasoningEffort) {
-    // Unknown effort (a model-specific/future tier) → the `high` budget; `none` → 0 = no thinking
-    // (Anthropic rejects a 0 budget, so we simply don't enable it — the OpenAI "none" semantics).
-    const budget = THINKING_BUDGET[req.reasoningEffort] ?? DEFAULT_THINKING_BUDGET;
-    if (budget > 0) {
-      body.thinking = { type: "enabled", budget_tokens: budget };
+    const effort = req.reasoningEffort;
+    if (anthropicUsesAdaptive(wireModel)) {
+      // Modern wire (4.6+, all Claude 5): adaptive thinking, depth via output_config.effort.
+      const wireEffort = ADAPTIVE_EFFORT_ALIAS[effort] ?? effort;
+      body.thinking = { type: "adaptive" };
+      body.output_config = { effort: wireEffort };
+      // Adaptive has no explicit budget, but thinking still counts toward max_tokens. Reserve the
+      // SAME headroom the legacy budget wire does — keyed on the NORMALIZED effort so `none`→`low`
+      // still gets low's headroom (not 0) — so a default 4096 cap can't truncate the answer after
+      // the model thinks (Anthropic's own guidance: size max_tokens generously at high effort).
+      const headroom = THINKING_BUDGET[wireEffort] ?? DEFAULT_THINKING_BUDGET;
       body.max_tokens = Math.max(
         body.max_tokens as number,
-        (req.maxTokens ?? STEP_MAX_TOKENS) + budget,
+        (req.maxTokens ?? STEP_MAX_TOKENS) + headroom,
       );
+    } else {
+      // Legacy extended-thinking wire (Claude ≤4.5): a token budget; guarantee max_tokens leaves
+      // room for the answer AFTER the thinking spend. Unknown effort → the `high` budget; `none`
+      // → 0 = no thinking (Anthropic rejects a 0 budget, so we just don't enable it).
+      const budget = THINKING_BUDGET[effort] ?? DEFAULT_THINKING_BUDGET;
+      if (budget > 0) {
+        body.thinking = { type: "enabled", budget_tokens: budget };
+        body.max_tokens = Math.max(
+          body.max_tokens as number,
+          (req.maxTokens ?? STEP_MAX_TOKENS) + budget,
+        );
+      }
     }
   }
   if (system) body.system = system;

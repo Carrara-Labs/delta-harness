@@ -4,8 +4,16 @@
 // re-runs this same binary as a child for context isolation. Every tool returns
 // error text as a value; nothing here throws past the loop.
 
-import { existsSync, mkdirSync, readdirSync, renameSync, statSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  statSync,
+} from "node:fs";
+import { dirname, isAbsolute, resolve } from "node:path";
 import {
   confine,
   extractDocText,
@@ -50,6 +58,26 @@ const clip = (text: string, max = 2000): string => elide(text, max);
 // Resolve a user-supplied path inside the workspace; refuses `..` escapes AND
 // symlinks pointing outside (confine is realpath-hard — codex S8 #3).
 const inside = confine;
+
+// A5 probe: can the code CLI actually run? A bare name is resolved on PATH (Bun.which returns only
+// executables); an explicit path must be a regular, executable FILE (existsSync alone accepts a
+// directory, statSync alone accepts a non-executable file) — and a RELATIVE path is resolved against
+// the workspace, the CWD the code tool actually spawns in, not the daemon's CWD.
+const isExecutableFile = (p: string): boolean => {
+  try {
+    // isFile() rejects a (traversable) directory; accessSync(X_OK) proves THIS process may actually
+    // execute it — a mode-bit check alone passes a root-owned 0700 file that Bun.spawn then EACCESes.
+    if (!statSync(p).isFile()) return false;
+    accessSync(p, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const codeCliResolves = (bin: string, workspace: string): boolean =>
+  bin.includes("/")
+    ? isExecutableFile(isAbsolute(bin) ? bin : resolve(workspace, bin))
+    : Bun.which(bin) != null;
 
 // The write-authorization boundary for the model's OWN file tools (codex #3/#5/#6/#8).
 // One classifier below EVERY mutation surface (write/move/delete), so a reserved file is
@@ -638,35 +666,45 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
     },
   });
 
-  add({
-    name: "code",
-    description:
-      "Delegate a coding task to a sandboxed coding CLI working in the workspace. Describe the task fully; returns the CLI's final output.",
-    parameters: {
-      type: "object",
-      properties: { task: { type: "string" } },
-      required: ["task"],
-    },
-    idempotent: false,
-    timeoutMs: 0, // the coding CLI legitimately runs long — never guillotine it
-    execute: async (args, ctx) => {
-      mkdirSync(ctx.workspace, { recursive: true });
-      const proc = Bun.spawn([...cfg.codeCli, String(args.task)], {
-        cwd: ctx.workspace,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: childEnv("code"),
-        ...(ctx.signal ? { signal: ctx.signal } : {}),
-      });
-      const [out, err, code] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-      ]);
-      if (code !== 0) return `[tool error] code CLI exited ${code}: ${clip(err || out)}`;
-      return out.trim() || "(no output)";
-    },
-  });
+  // A5: only advertise `code` if its CLI actually resolves. A tool that ENOENTs on every call
+  // sends the model into a retry loop (field report bc8e877e). Probe once at boot; a bare name is
+  // looked up on PATH, an explicit path is checked on disk. Absent → skip registration + warn loud.
+  const codeBin = cfg.codeCli[0];
+  const codeAvailable = codeBin ? codeCliResolves(codeBin, cfg.workspace) : false;
+  if (!codeAvailable)
+    console.error(
+      `delta: code CLI '${codeBin ?? "(unset)"}' not found — 'code' tool disabled this run (set DELTA_CODE_CLI or install it).`,
+    );
+  if (codeAvailable)
+    add({
+      name: "code",
+      description:
+        "Delegate a coding task to a sandboxed coding CLI working in the workspace. Describe the task fully; returns the CLI's final output.",
+      parameters: {
+        type: "object",
+        properties: { task: { type: "string" } },
+        required: ["task"],
+      },
+      idempotent: false,
+      timeoutMs: 0, // the coding CLI legitimately runs long — never guillotine it
+      execute: async (args, ctx) => {
+        mkdirSync(ctx.workspace, { recursive: true });
+        const proc = Bun.spawn([...cfg.codeCli, String(args.task)], {
+          cwd: ctx.workspace,
+          stdout: "pipe",
+          stderr: "pipe",
+          env: childEnv("code"),
+          ...(ctx.signal ? { signal: ctx.signal } : {}),
+        });
+        const [out, err, code] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+          proc.exited,
+        ]);
+        if (code !== 0) return `[tool error] code CLI exited ${code}: ${clip(err || out)}`;
+        return out.trim() || "(no output)";
+      },
+    });
 
   // One sub-agent run (a oneshot child of this binary). Shared by spawn_subagent
   // and eval_n; returns the child's final answer or a [tool error] value.

@@ -55,6 +55,78 @@ describe("POST /v1/tasks (async)", () => {
     expect(final.result?.output_text).toBe("async answer");
   });
 
+  test("A6: a run that fails before its first token exposes WHY on GET", async () => {
+    // A provider that rejects instantly (e.g. Opus 5 refusing thinking.type=enabled) — the
+    // class of zero-token failure that used to look 'merely dead' to a plain HTTP poller.
+    const { base, server } = serverWith(async () => ({
+      ok: false as const,
+      model: "claude-opus-5",
+      status: 400,
+      error: '"thinking.type.enabled" is not supported on this model',
+    }));
+    stopFns.push(() => server.stop());
+    const { id } = (await (
+      await fetch(`${base}/v1/tasks`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ input: "hello" }),
+      })
+    ).json()) as { id: string };
+
+    let final: { status: string; error?: string } = { status: "" };
+    for (let i = 0; i < 50; i++) {
+      final = (await (await fetch(`${base}/v1/tasks/${id}`)).json()) as typeof final;
+      if (final.status === "failed") break;
+      await Bun.sleep(20);
+    }
+    expect(final.status).toBe("failed");
+    // The reason is a first-class field on the poller's view — no shell-in, one poll interval.
+    expect(final.error).toContain("thinking.type.enabled");
+  });
+
+  test("A3: GET exposes the cold-start timeline (accepted → started → finished)", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const { base, server } = serverWith(async () => {
+      await gate;
+      return textResult("done");
+    });
+    stopFns.push(() => server.stop());
+    const { id } = (await (
+      await fetch(`${base}/v1/tasks`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ input: "time me" }),
+      })
+    ).json()) as { id: string };
+
+    // While running: accepted + started are present, marking the "reading your question" boundary.
+    await Bun.sleep(20);
+    const running = (await (await fetch(`${base}/v1/tasks/${id}`)).json()) as {
+      status: string;
+      created_at?: number;
+      started_at?: number;
+      finished_at?: number;
+    };
+    expect(running.status).toBe("running");
+    expect(typeof running.created_at).toBe("number");
+    expect(typeof running.started_at).toBe("number");
+    expect(running.started_at).toBeGreaterThanOrEqual(running.created_at as number);
+    expect(running.finished_at).toBeUndefined();
+
+    release();
+    let done: typeof running = { status: "" };
+    for (let i = 0; i < 50; i++) {
+      done = (await (await fetch(`${base}/v1/tasks/${id}`)).json()) as typeof running;
+      if (done.status === "done") break;
+      await Bun.sleep(20);
+    }
+    expect(typeof done.finished_at).toBe("number");
+    expect(done.finished_at).toBeGreaterThanOrEqual(done.started_at as number);
+  });
+
   test("DELETE cancels a running task", async () => {
     // Real providers abort their fetch on the signal; mirror that so the loop's
     // aborted path runs (a blocked chat that ignores the signal never cancels).

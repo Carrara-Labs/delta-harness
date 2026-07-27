@@ -49,23 +49,17 @@ function buildDeps(cfg: Config, dbPath: string): Deps {
   });
   if (process.env.DELTA_TEST_TOOLS) for (const [n, t] of testTools()) tools.set(n, t);
   const chat = (req: Parameters<typeof chatVia>[1]) => chatVia(cfg.providers, req);
-  // Utility lane: same providers, cheap model — with per-wire model-id translation
-  // (codex P1): the Anthropic-native wire wants a bare DASHED id ("claude-haiku-4-5",
-  // not "anthropic/claude-haiku-4.5"), and the OpenAI-Responses subscription backend
-  // can't serve a Claude slug at all, so responses-API providers are skipped rather
-  // than burning a guaranteed-4xx roundtrip on every aux call. Any failure still falls
-  // back to the main cascade — the lane can only ever save money, never lose a call.
-  const utilityLeaf = cfg.utilityModel.split("/").pop() ?? cfg.utilityModel;
+  // Utility lane: same providers, cheap model. The Anthropic-native wire wants a bare DASHED id
+  // ("claude-haiku-4-5", not "anthropic/claude-haiku-4.5"); that translation now lives once in
+  // streamAnthropic (A9), so the same utility slug flows to every provider. The OpenAI-Responses
+  // subscription backend can't serve a Claude slug at all, so responses-API providers are skipped
+  // rather than burning a guaranteed-4xx roundtrip on every aux call. Any failure still falls back
+  // to the main cascade — the lane can only ever save money, never lose a call.
   const utilityIsClaude = /claude/i.test(cfg.utilityModel);
   const utilityProviders = cfg.utilityModel
     ? cfg.providers
         .filter((p) => !(p.api === "responses" && utilityIsClaude))
-        .map((p) => ({
-          ...p,
-          models: [
-            p.api === "anthropic" ? utilityLeaf.replace(/\.(\d)/g, "-$1") : cfg.utilityModel,
-          ],
-        }))
+        .map((p) => ({ ...p, models: [cfg.utilityModel] }))
     : [];
   const chatUtility = utilityProviders.length
     ? async (req: Parameters<typeof chatVia>[1]) => {

@@ -13,6 +13,13 @@ describe("resolvePrice", () => {
   test("unknown model → null (caller keeps cost 0)", () => {
     expect(resolvePrice("some/unknown-model", BAKED_PRICES)).toBeNull();
   });
+  test("opus-5 is priced on every id form (A10 — native + prefixed + versioned)", () => {
+    const opus5 = { in: 5, out: 25, cacheRead: 0.5 };
+    expect(resolvePrice("claude-opus-5", BAKED_PRICES)).toEqual(opus5);
+    expect(resolvePrice("anthropic/claude-opus-5", BAKED_PRICES)).toEqual(opus5);
+    expect(resolvePrice("claude-opus-5-20260601", BAKED_PRICES)).toEqual(opus5);
+    expect(computeCost(opus5, { input: 1_000_000, output: 0, cacheRead: 0 })).toBeCloseTo(5, 5);
+  });
 });
 
 describe("computeCost", () => {

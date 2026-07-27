@@ -26,6 +26,7 @@ export type ModelPrice = { in: number; out: number; cacheRead: number };
 // a small first-turn undercount, negligible against the cache-HIT-dominated steady state.
 export const BAKED_PRICES: Record<string, ModelPrice> = {
   "claude-sonnet-5": { in: 2, out: 10, cacheRead: 0.2 }, // harness default (config.ts)
+  "claude-opus-5": { in: 5, out: 25, cacheRead: 0.5 }, // frontier default (api pricing 2026-07-27)
   "claude-sonnet-4.6": { in: 3, out: 15, cacheRead: 0.3 }, // fleet default (openrouter)
   "claude-opus-4.8": { in: 5, out: 25, cacheRead: 0.5 },
   "claude-haiku-4.5": { in: 1, out: 5, cacheRead: 0.1 }, // utility-model default

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { chat, normalizeEffort, type ProviderConfig } from "../src/provider";
+import { anthropicUsesAdaptive, chat, normalizeEffort, type ProviderConfig } from "../src/provider";
 
 describe("normalizeEffort", () => {
   test("normalizes case/space and passes ANY non-empty value through (the model is the authority)", () => {
@@ -131,15 +131,74 @@ describe("provider streaming", () => {
       expect(seen.reasoning).toEqual({ effort: "xhigh" });
     });
 
-    test("Anthropic native → thinking budget, max_tokens raised above it", async () => {
+    test("Anthropic ≤4.5 (legacy) → thinking budget, max_tokens raised above it", async () => {
       capture();
-      await chat(cfg({ api: "anthropic", maxRetries: 0 }), {
+      await chat(cfg({ api: "anthropic", models: ["claude-opus-4-5"], maxRetries: 0 }), {
         messages: [{ role: "user", content: "hi" }],
         maxTokens: 4096,
         reasoningEffort: "high",
       });
       expect(seen.thinking).toEqual({ type: "enabled", budget_tokens: 16384 });
       expect(seen.max_tokens as number).toBeGreaterThan(16384); // room for the answer after thinking
+      expect(seen.output_config).toBeUndefined();
+    });
+
+    test("A8: Anthropic 5.x/4.6+ → adaptive + output_config.effort (NO enabled), max_tokens headroom", async () => {
+      for (const model of ["claude-opus-5", "claude-sonnet-4-6", "test/a"]) {
+        capture();
+        await chat(cfg({ api: "anthropic", models: [model], maxRetries: 0 }), {
+          messages: [{ role: "user", content: "hi" }],
+          maxTokens: 4096,
+          reasoningEffort: "high",
+        });
+        expect(seen.thinking).toEqual({ type: "adaptive" });
+        expect(seen.output_config).toEqual({ effort: "high" });
+        // headroom: 4096 base + 16384 (high) so thinking can't truncate the answer at the default cap
+        expect(seen.max_tokens).toBe(4096 + 16384);
+      }
+    });
+
+    test("A8: adaptive effort aliases — none/minimal→low (never disabled) with low's headroom", async () => {
+      // Headroom is keyed on the NORMALIZED wire effort, so none/minimal→low get low's 4096 budget
+      // (not 0) — a default 4096 cap can't truncate the answer after thinking (codex R2 #2).
+      for (const [effort, wire, maxTokens] of [
+        ["none", "low", 4096 + 4096],
+        ["minimal", "low", 4096 + 4096],
+        ["xhigh", "xhigh", 4096 + 32768],
+      ] as const) {
+        capture();
+        await chat(cfg({ api: "anthropic", models: ["claude-opus-5"], maxRetries: 0 }), {
+          messages: [{ role: "user", content: "hi" }],
+          maxTokens: 4096,
+          reasoningEffort: effort,
+        });
+        // Always adaptive — never thinking:{type:"disabled"} (always-on models 400 on that).
+        expect(seen.thinking).toEqual({ type: "adaptive" });
+        expect(seen.output_config).toEqual({ effort: wire });
+        expect(seen.max_tokens).toBe(maxTokens);
+      }
+    });
+
+    test("A8: anthropicUsesAdaptive classifies real ids (incl. dated legacy slugs)", () => {
+      for (const m of ["claude-opus-5", "claude-opus-4-8", "claude-sonnet-4-6", "claude-opus-4.8"])
+        expect(anthropicUsesAdaptive(m)).toBe(true);
+      for (const m of [
+        "claude-opus-4-5",
+        "claude-sonnet-4-5-20250929", // dated 4.5 — still enabled-only (threshold is 4.6)
+        "claude-opus-4-1-20250805",
+        "claude-opus-4-20250514", // dated Opus 4.0 — must NOT be read as minor 20250514
+        "claude-3-7-sonnet",
+      ])
+        expect(anthropicUsesAdaptive(m)).toBe(false);
+      expect(anthropicUsesAdaptive("some-proxy-alias")).toBe(true); // unknown → modern default
+    });
+
+    test("A9: native wire normalizes model id (strip prefix + dots→dashes)", async () => {
+      capture();
+      await chat(cfg({ api: "anthropic", models: ["anthropic/claude-opus-4.8"], maxRetries: 0 }), {
+        messages: [{ role: "user", content: "hi" }],
+      });
+      expect(seen.model).toBe("claude-opus-4-8"); // primary and fallback both normalize here
     });
 
     test("no effort → no reasoning field on any wire (provider default)", async () => {

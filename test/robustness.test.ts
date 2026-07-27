@@ -10,7 +10,7 @@ import { PROFILES } from "../src/profiles";
 import { chat, type ModelResult, OVERFLOW, type ProviderConfig } from "../src/provider";
 import { Queue } from "../src/queue";
 import { capAndSpill, type ToolDef, type Tools } from "../src/tools";
-import { makeDeps, textResult, toolCallResult } from "./helpers";
+import { makeDeps, ok, textResult, toolCallResult } from "./helpers";
 
 // A server that reproduces the two failure modes a wall-clock timeout must catch:
 //  /hang       — accepts the POST and never sends a response (pre-first-byte stall)
@@ -272,6 +272,140 @@ describe("tool-execution timeout (integration)", () => {
       .map((r) => JSON.parse(r.msg))
       .filter((m) => m.role === "tool");
     expect(toolMsgs.some((m) => /exceeded 200ms timeout/.test(m.content))).toBe(true);
+  });
+});
+
+describe("A4: categorical-failure breaker (integration)", () => {
+  const deadTool = (fn: () => string): ToolDef => ({
+    name: "dead",
+    description: "a tool whose CLI is missing — fails categorically",
+    parameters: { type: "object", properties: {} },
+    idempotent: true,
+    execute: async () => fn(),
+  });
+  // A chat stub that calls `dead` whenever it is still advertised, else gives up.
+  const chatUntilGone = () => {
+    let calls = 0;
+    const chat = async (req: { tools?: { function: { name: string } }[] }) => {
+      const advertised = new Set((req.tools ?? []).map((t) => t.function.name));
+      if (advertised.has("dead")) {
+        calls++;
+        return toolCallResult("dead", {}, `c${calls}`);
+      }
+      return textResult("gave up on the dead tool and moved on");
+    };
+    return { chat, calls: () => calls };
+  };
+
+  test("a tool that fails identically is quarantined after N and the run still finishes", async () => {
+    PROFILES.breaker = {
+      name: "breaker",
+      allowed: "*",
+      pinned: "*",
+      budget: { maxSteps: 30, maxTokens: 400_000, maxCostUsd: 1 },
+    };
+    const { chat, calls } = chatUntilGone();
+    const deps = makeDeps(
+      chat as never,
+      new Map([["dead", deadTool(() => "[tool error] ENOENT: spawn 'nope' — no such file")]]),
+    );
+    const queue = new Queue(deps);
+    const done = await queue.wait(
+      queue.enqueue({ input: "use the dead tool", metadata: { profile: "breaker" } }).id,
+    );
+    expect(done.status).toBe("done"); // finished — did NOT loop to budget exhaustion
+    expect(calls()).toBe(3); // called exactly the limit, then dropped from the schema
+    const toolMsgs = (
+      deps.db.query("SELECT msg FROM messages WHERE run_id = ?").all(done.id) as { msg: string }[]
+    )
+      .map((r) => JSON.parse(r.msg))
+      .filter((m) => m.role === "tool");
+    expect(toolMsgs.some((m) => /\[norm\] 'dead' has failed identically 3×/.test(m.content))).toBe(
+      true,
+    );
+  });
+
+  test("an IDENTICAL but TRANSIENT error is never quarantined (a flaky tool stays usable)", async () => {
+    PROFILES.breaker2 = {
+      name: "breaker2",
+      allowed: "*",
+      pinned: "*",
+      budget: { maxSteps: 30, maxTokens: 400_000, maxCostUsd: 1 },
+    };
+    let stop = 0;
+    const chat = async (req: { tools?: { function: { name: string } }[] }) => {
+      const advertised = new Set((req.tools ?? []).map((t) => t.function.name));
+      if (advertised.has("dead") && stop < 5) {
+        stop++;
+        return toolCallResult("dead", {}, `v${stop}`);
+      }
+      return textResult("done");
+    };
+    // Byte-identical every call, but a TRANSIENT class (timeout) — must not latch (codex #3).
+    const deps = makeDeps(
+      chat as never,
+      new Map([["dead", deadTool(() => "[tool error] fetch failed: connection timed out")]]),
+    );
+    const queue = new Queue(deps);
+    const done = await queue.wait(
+      queue.enqueue({ input: "transient errors", metadata: { profile: "breaker2" } }).id,
+    );
+    expect(done.status).toBe("done");
+    const toolMsgs = (
+      deps.db.query("SELECT msg FROM messages WHERE run_id = ?").all(done.id) as { msg: string }[]
+    )
+      .map((r) => JSON.parse(r.msg))
+      .filter((m) => m.role === "tool");
+    // All 5 identical-transient calls executed (never quarantined); no norm was ever injected.
+    expect(toolMsgs.filter((m) => /timed out/.test(m.content)).length).toBe(5);
+    expect(toolMsgs.some((m) => /\[norm\]/.test(m.content))).toBe(false);
+  });
+
+  test("a same-turn success vetoes quarantine (codex R2: a tool that ever works isn't dead)", async () => {
+    PROFILES.breaker3 = {
+      name: "breaker3",
+      allowed: "*",
+      pinned: "*",
+      budget: { maxSteps: 30, maxTokens: 400_000, maxCostUsd: 1 },
+    };
+    // Fails categorically for {ok:false}, succeeds for {ok:true}.
+    const flaky: ToolDef = {
+      name: "flaky",
+      description: "sometimes works",
+      parameters: { type: "object", properties: { ok: { type: "boolean" } } },
+      idempotent: true,
+      execute: async (args) => (args.ok ? "worked" : "[tool error] ENOENT: no such file"),
+    };
+    let turn = 0;
+    const chat = async (): Promise<ModelResult> => {
+      turn++;
+      if (turn === 1 || turn === 2) return toolCallResult("flaky", { ok: false }, `t${turn}`);
+      if (turn === 3)
+        // Third turn: a failing call AND a succeeding call in the SAME batch — the success must veto.
+        return ok({
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            { id: "t3a", type: "function", function: { name: "flaky", arguments: '{"ok":false}' } },
+            { id: "t3b", type: "function", function: { name: "flaky", arguments: '{"ok":true}' } },
+          ],
+        });
+      return textResult("done");
+    };
+    const deps = makeDeps(chat as never, new Map([["flaky", flaky]]));
+    const queue = new Queue(deps);
+    const done = await queue.wait(
+      queue.enqueue({ input: "flaky tool", metadata: { profile: "breaker3" } }).id,
+    );
+    expect(done.status).toBe("done");
+    const toolMsgs = (
+      deps.db.query("SELECT msg FROM messages WHERE run_id = ?").all(done.id) as { msg: string }[]
+    )
+      .map((r) => JSON.parse(r.msg))
+      .filter((m) => m.role === "tool");
+    // Never quarantined: the turn-3 success vetoed the third strike, so no norm was injected.
+    expect(toolMsgs.some((m) => /\[norm\]/.test(m.content))).toBe(false);
+    expect(toolMsgs.some((m) => m.content === "worked")).toBe(true);
   });
 });
 

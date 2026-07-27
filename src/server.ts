@@ -438,6 +438,15 @@ export function createServer(
             id: run.id,
             object: "task",
             status: run.status,
+            // A3: the cold-start timeline, so the UI can split "waking the agent" (accepted →
+            // started) from "reading your question" (started → done). started_at is set the instant
+            // the daemon dequeues the run — i.e. its first turn begins — the boundary a user waits on.
+            created_at: run.created_at,
+            ...(run.started_at ? { started_at: run.started_at } : {}),
+            ...(run.finished_at ? { finished_at: run.finished_at } : {}),
+            // A6: surface the last provider/tool error (already one-lined by normalizeError) so a
+            // plain HTTP poller learns WHY a run failed before its first token — no shell-in needed.
+            ...(run.error ? { error: run.error } : {}),
             ...(run.status === "done" || run.status === "failed" || run.status === "cancelled"
               ? { result: JSON.parse(run.result ?? "{}") }
               : {}),

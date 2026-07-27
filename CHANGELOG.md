@@ -6,6 +6,41 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-07-27
+
+Failure-visibility + native-wire batch, driven by Aperture's production field report (two prod
+agents, the harness's heaviest real consumer). Every item ships with a test.
+
+### Added
+
+- **Provider/tool error on the task surface.** `GET /v1/tasks/:id` now returns a first-class
+  `error` field (the last provider/tool error, already one-lined) so a plain HTTP poller learns
+  *why* a run failed before its first token — no more shelling in to diagnose a zero-token fail.
+- **Cold-start timeline on the task surface.** `GET /v1/tasks/:id` now returns `created_at`,
+  `started_at`, and `finished_at`, so a host can honestly split "waking the agent" (accepted →
+  started) from "reading your question" (started → done) instead of one faith-based spinner.
+- **Native Anthropic adaptive thinking.** `DELTA_REASONING_EFFORT` now maps to the correct wire
+  per model: `thinking:{type:"adaptive"}` + `output_config.effort` on Claude 4.6+ and all Claude 5
+  models (Opus 5, Sonnet 5, Fable 5…), which **reject** the legacy `thinking:{type:"enabled"}`;
+  the legacy budget wire is kept for Claude ≤4.5. Effort control now works on frontier models.
+  Note: adaptive thinking has no fixed budget, so size `DELTA_STEP_MAX_TOKENS` generously for a
+  reasoning model at high effort.
+- **Opus 5 pricing** baked into the cost table (`claude-opus-5`), so the native/subscription paths
+  meter real dollars without a `DELTA_MODEL_PRICES` override.
+
+### Changed
+
+- **Categorical-failure breaker.** A tool that returns the *same* `[tool error]` three times in one
+  run (a missing CLI, a persistent schema reject) is quarantined for the rest of that run and the
+  model is told to try another approach — instead of looping. Replays of the field report's worst
+  case (a missing `code` CLI that burned $3.50 of a $5.17 run) now cost pennies and still file output.
+- **`code` tool self-disables when its CLI is absent.** The tool is probed at boot and only
+  advertised if its CLI (`DELTA_CODE_CLI`, default `codex`) resolves on `PATH` — a capability the
+  daemon can't back is never offered, so the model can't loop on it.
+- **All native-wire model ids are normalized** (provider prefix stripped, dotted versions →
+  dashes), for the primary *and* every fallback — not just the utility model. `claude-opus-4.8`
+  and `claude-opus-4-8` both reach the Anthropic wire correctly now.
+
 ## [0.2.2] — 2026-07-27
 
 ### Added

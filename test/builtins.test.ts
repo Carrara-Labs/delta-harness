@@ -83,6 +83,30 @@ describe("code delegation", () => {
     const tool = failing.get("code");
     expect(await tool?.execute({ task: "x" }, ctx)).toContain("[tool error] code CLI exited 1");
   });
+
+  test("A5: an absent CLI is not advertised as a tool", () => {
+    const absent = builtinTools({
+      workspace: ws,
+      codeCli: ["definitely-not-a-real-binary-xyz"],
+      selfCmd: ["true"],
+      subagentDepth: 0,
+    });
+    expect(absent.has("code")).toBe(false);
+    // A path to a real but NON-EXECUTABLE file must not count (codex R2 #4).
+    const nonExec = builtinTools({
+      workspace: ws,
+      codeCli: ["/etc/hosts"],
+      selfCmd: ["true"],
+      subagentDepth: 0,
+    });
+    expect(nonExec.has("code")).toBe(false);
+    // A present executable CLI still registers (guards against over-eager disabling).
+    expect(
+      builtinTools({ workspace: ws, codeCli: ["echo"], selfCmd: ["true"], subagentDepth: 0 }).has(
+        "code",
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("spawn_subagent", () => {

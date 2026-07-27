@@ -298,6 +298,11 @@ export async function executeRun(
   const active = new Set<string>(pinnedNames);
   // Mid-run activations (search_tools results) are intentional — re-add them uncapped.
   for (const n of JSON.parse(run.tools ?? "[]") as string[]) if (allowedMap.has(n)) active.add(n);
+  // A4 breaker: a tool that returns the SAME [tool error] N times is categorically dead (missing
+  // binary, persistent schema reject) — quarantine it for the run instead of looping the model
+  // (bc8e877e burned $3.50 retrying a missing CLI). In-memory per run; a resume re-arms it. See
+  // the tally in execCall. `disabled` is subtracted in effectiveTools so it also survives re-search.
+  const breaker: Breaker = { disabled: new Set<string>(), fails: new Map(), turn: [] };
   // Mutates memory only; persisted inside execCall's journal transaction so a
   // crash can never leave the active set ahead of the recorded tool result.
   const activate = (names: string[]) => {
@@ -337,6 +342,7 @@ export async function executeRun(
   const effectiveTools = (): Tools => {
     const map: Tools = new Map();
     for (const n of active) {
+      if (breaker.disabled.has(n)) continue; // A4: quarantined — drop from the advertised schema
       const def = allowedMap.get(n);
       if (def) map.set(n, def);
     }
@@ -577,9 +583,11 @@ export async function executeRun(
               call,
               resuming,
               persistActive,
+              breaker,
             ),
           ),
         );
+        aggregateBreaker(db, run, breaker); // A4: decide quarantine once the whole batch has settled
         resuming = false;
         continue;
       }
@@ -893,6 +901,67 @@ function pendingCalls(db: Database, run: RunRow, assistant: AssistantMsg) {
   return (assistant.tool_calls ?? []).filter((c) => !answered.has(c.id));
 }
 
+/** A4 retry-loop breaker state (per run, in-memory). `disabled` = tools quarantined this run;
+ * `fails` = per tool the byte-identical categorical error and how many CONSECUTIVE TURNS it has
+ * repeated; `turn` = this turn's per-call outcomes, drained and aggregated once the whole batch
+ * settles (below). Aggregating per turn — not per call — means a fan-out can't inflate the count
+ * AND a single success anywhere in the turn vetoes the latch (a tool that ever succeeds isn't dead). */
+type Breaker = {
+  disabled: Set<string>;
+  fails: Map<string, { err: string; n: number }>;
+  turn: { name: string; callId: string; categorical: string | null }[];
+};
+const CATEGORICAL_TOOL_FAIL_LIMIT = 3;
+/** Categorical = the failure can't fix itself by retrying (the report's ENOENT / not-found /
+ * schema-invalid class). Transient wins if both match — a "timed out" is never categorical.
+ * Deliberately does NOT include "unavailable" (a service being unavailable is usually transient). */
+const CATEGORICAL_TOOL_ERROR =
+  /ENOENT|not found|no such file|command not found|executable|posix_spawn|unknown tool|failed to parse|invalid arguments?|schema/i;
+const TRANSIENT_TOOL_ERROR =
+  /time(?:d)? ?out|rate.?limit|\b429\b|\b503\b|unavailable|overloaded|fetch failed|network|ECONN|socket|temporarily/i;
+/** The pre-cap error string if this result is a categorical [tool error], else null (a success OR
+ * a non-categorical/transient error — both veto the latch). */
+const categoricalErr = (result: string): string | null =>
+  result.startsWith("[tool error]") &&
+  CATEGORICAL_TOOL_ERROR.test(result) &&
+  !TRANSIENT_TOOL_ERROR.test(result)
+    ? result
+    : null;
+
+/** Aggregate one settled tool-call batch (A4). A tool is a fresh categorical failure this turn ONLY
+ * if EVERY call to it returned the SAME categorical error (no success, no different/transient
+ * result). That increments its consecutive-turn streak; anything else resets it. At the limit the
+ * tool is quarantined for the run and a one-line norm is appended to its last error message so the
+ * model reads the way out inline. Returns nothing; mutates `breaker` and the message row. */
+function aggregateBreaker(db: Database, run: RunRow, breaker: Breaker): void {
+  const byTool = new Map<string, { callId: string; categorical: string | null }[]>();
+  for (const o of breaker.turn) {
+    const list = byTool.get(o.name) ?? [];
+    list.push({ callId: o.callId, categorical: o.categorical });
+    byTool.set(o.name, list);
+  }
+  breaker.turn = [];
+  for (const [name, calls] of byTool) {
+    const err = calls[0]?.categorical ?? null;
+    const allSame = err !== null && calls.every((c) => c.categorical === err);
+    if (!allSame) {
+      breaker.fails.delete(name); // a success / different / transient result this turn resets it
+      continue;
+    }
+    const f = breaker.fails.get(name);
+    const n = f && f.err === err ? f.n + 1 : 1;
+    breaker.fails.set(name, { err, n });
+    const lastCall = calls[calls.length - 1]?.callId;
+    if (n >= CATEGORICAL_TOOL_FAIL_LIMIT && !breaker.disabled.has(name) && lastCall) {
+      breaker.disabled.add(name);
+      const norm = `\n[norm] '${name}' has failed identically ${n}× this run and is now disabled for the rest of it — use another approach; retrying it cannot succeed.`;
+      db.query(
+        "UPDATE messages SET msg = json_set(msg, '$.content', json_extract(msg, '$.content') || ?) WHERE run_id = ? AND json_extract(msg, '$.tool_call_id') = ?",
+      ).run(norm, run.id, lastCall);
+    }
+  }
+}
+
 async function execCall(
   deps: Deps,
   tools: Tools,
@@ -902,6 +971,7 @@ async function execCall(
   call: NonNullable<AssistantMsg["tool_calls"]>[number],
   resuming: boolean,
   persistActive: () => void,
+  breaker: Breaker,
 ): Promise<void> {
   const { db, events } = deps;
   const name = call.function.name;
@@ -978,6 +1048,10 @@ async function execCall(
     } catch (e) {
       result = `[tool error] ${String(e).slice(0, 2000)}`;
     }
+    // A4: record this call's outcome for the batch aggregation (below, after Promise.all). Classify
+    // on the RAW pre-cap result — capAndSpill embeds this call's id in its spill-path notice, so an
+    // oversized error would look different every call and never compare equal.
+    breaker.turn.push({ name, callId: call.id, categorical: categoricalErr(result) });
     // Cap oversized output at the source — it's persisted AND re-sent every turn, and a single
     // giant payload is the top cause of a mid-run context-window overflow. Spill keeps it re-readable.
     result = await capAndSpill(result, ctx.workspace, run.id, call.id, deps.toolResultCap);
