@@ -36,7 +36,12 @@ class RecCodec implements ChannelCodec {
   }
 }
 
-const noopSup: AgentSupervisor = { async ensureAwake() { return "x"; }, async maybeSuspend() {} };
+const noopSup: AgentSupervisor = {
+  async ensureAwake() {
+    return "x";
+  },
+  async maybeSuspend() {},
+};
 
 const evt = (id: string, text: string): Inbound => ({
   eventId: id,
@@ -104,7 +109,16 @@ describe("dispatch loop", () => {
     const c = new Connector(store, codec, new FakeAgent(), noopSup);
     for (let i = 1; i <= 8; i++) store.insertInbox(evt(`tg:${i}`, `msg ${i}`));
     await drain(c);
-    expect(codec.sent).toEqual(["reply 1", "reply 2", "reply 3", "reply 4", "reply 5", "reply 6", "reply 7", "reply 8"]);
+    expect(codec.sent).toEqual([
+      "reply 1",
+      "reply 2",
+      "reply 3",
+      "reply 4",
+      "reply 5",
+      "reply 6",
+      "reply 7",
+      "reply 8",
+    ]);
     expect(store.getSession("tg:100")?.prev_response_id).toBe("resp_8");
   });
 
@@ -121,7 +135,9 @@ describe("dispatch loop", () => {
   test("a long reply is chunked, ordered, and fully delivered", async () => {
     const store = new Store(tmpDb());
     const codec = new RecCodec();
-    const big = Array.from({ length: 500 }, (_, i) => `paragraph ${i} ${"z".repeat(20)}`).join("\n");
+    const big = Array.from({ length: 500 }, (_, i) => `paragraph ${i} ${"z".repeat(20)}`).join(
+      "\n",
+    );
     const c = new Connector(store, codec, new FakeAgent(() => big), noopSup);
     store.insertInbox(evt("tg:1", "tell me a lot"));
     await drain(c);
@@ -182,7 +198,14 @@ describe("crash resume", () => {
     // process A: the atomic turn commit lands (session + reply + inbox-done), then "crash" before send
     const a = new Store(db);
     a.insertInbox(evt("tg:1", "hi"));
-    a.commitTurn({ eventId: "tg:1", conversationId: "tg:100", chatId: "100", userId: "tg:7", responseId: "r", replyChunks: ["the answer"] });
+    a.commitTurn({
+      eventId: "tg:1",
+      conversationId: "tg:100",
+      chatId: "100",
+      userId: "tg:7",
+      responseId: "r",
+      replyChunks: ["the answer"],
+    });
     a.db.close();
 
     // process B: restart on the same file, deliver

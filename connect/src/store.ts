@@ -113,10 +113,14 @@ export class Store {
   }
 
   nextPending(): InboxRow | null {
-    return (this.db
-      // rowid tiebreak: two updates in the same ms still drain in arrival order.
-      .query(`SELECT * FROM inbox WHERE status = 'pending' ORDER BY received_at ASC, rowid ASC LIMIT 1`)
-      .get() as InboxRow) ?? null;
+    return (
+      (this.db
+        // rowid tiebreak: two updates in the same ms still drain in arrival order.
+        .query(
+          `SELECT * FROM inbox WHERE status = 'pending' ORDER BY received_at ASC, rowid ASC LIMIT 1`,
+        )
+        .get() as InboxRow) ?? null
+    );
   }
 
   markInboxDone(eventId: string): void {
@@ -126,9 +130,11 @@ export class Store {
   // --- sessions ----------------------------------------------------------
 
   getSession(conversationId: string): { prev_response_id: string | null; user_id: string } | null {
-    return (this.db
-      .query(`SELECT prev_response_id, user_id FROM sessions WHERE conversation_id = ?`)
-      .get(conversationId) as { prev_response_id: string | null; user_id: string }) ?? null;
+    return (
+      (this.db
+        .query(`SELECT prev_response_id, user_id FROM sessions WHERE conversation_id = ?`)
+        .get(conversationId) as { prev_response_id: string | null; user_id: string }) ?? null
+    );
   }
 
   // --- the atomic turn commit -------------------------------------------
@@ -181,14 +187,20 @@ export class Store {
    *  waits rather than skipping ahead, so a backed-off chunk never lets a later
    *  chunk of the same reply overtake it. */
   nextQueuedOutbox(): OutboxRow | null {
-    return (this.db
-      .query(`SELECT * FROM outbox WHERE status = 'queued' ORDER BY created_at ASC, rowid ASC LIMIT 1`)
-      .get() as OutboxRow) ?? null;
+    return (
+      (this.db
+        .query(
+          `SELECT * FROM outbox WHERE status = 'queued' ORDER BY created_at ASC, rowid ASC LIMIT 1`,
+        )
+        .get() as OutboxRow) ?? null
+    );
   }
 
   markOutboxSent(dedupKey: string): void {
     this.db
-      .query(`UPDATE outbox SET status = 'sent', sent_at = ?, attempts = attempts + 1 WHERE dedup_key = ?`)
+      .query(
+        `UPDATE outbox SET status = 'sent', sent_at = ?, attempts = attempts + 1 WHERE dedup_key = ?`,
+      )
       .run(Date.now(), dedupKey);
   }
 
@@ -211,20 +223,26 @@ export class Store {
    *  partial, out-of-order reply is never delivered. */
   markGroupDead(groupKey: string): void {
     this.db
-      .query(`UPDATE outbox SET status = 'dead', attempts = attempts + 1 WHERE group_key = ? AND status = 'queued'`)
+      .query(
+        `UPDATE outbox SET status = 'dead', attempts = attempts + 1 WHERE group_key = ? AND status = 'queued'`,
+      )
       .run(groupKey);
   }
 
   // --- meta (durable long-poll offset, etc.) -----------------------------
 
   getMeta(key: string): string | null {
-    const r = this.db.query(`SELECT value FROM meta WHERE key = ?`).get(key) as { value: string } | null;
+    const r = this.db.query(`SELECT value FROM meta WHERE key = ?`).get(key) as {
+      value: string;
+    } | null;
     return r ? r.value : null;
   }
 
   setMeta(key: string, value: string | number): void {
     this.db
-      .query(`INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+      .query(
+        `INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
       .run(key, String(value));
   }
 }

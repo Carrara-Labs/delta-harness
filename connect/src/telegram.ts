@@ -1,5 +1,5 @@
-import type { ChannelCodec, IngressDriver, Inbound, OutboundResult } from "./types";
 import type { Store } from "./store";
+import type { ChannelCodec, Inbound, IngressDriver, OutboundResult } from "./types";
 
 // Telegram codec + long-poll ingress. Zero deps: raw Bot API over fetch.
 // Long-poll is the right default for a home box - no public URL, just outbound
@@ -30,8 +30,15 @@ export class TelegramCodec implements ChannelCodec {
       if (data.ok) return { ok: true, retryable: false };
       const retryable = res.status === 429 || res.status >= 500;
       const retryAfterMs =
-        typeof data.parameters?.retry_after === "number" ? data.parameters.retry_after * 1000 : undefined;
-      return { ok: false, retryable, error: data.description, ...(retryAfterMs ? { retryAfterMs } : {}) };
+        typeof data.parameters?.retry_after === "number"
+          ? data.parameters.retry_after * 1000
+          : undefined;
+      return {
+        ok: false,
+        retryable,
+        error: data.description,
+        ...(retryAfterMs ? { retryAfterMs } : {}),
+      };
     } catch (e) {
       return { ok: false, retryable: true, error: String(e) };
     }
@@ -110,7 +117,10 @@ export class TelegramLongPoll implements IngressDriver {
           API(this.token, "getUpdates") +
           `?timeout=25&offset=${offset}&allowed_updates=${encodeURIComponent('["message"]')}`;
         const res = await fetch(url, { signal: AbortSignal.timeout(35000) });
-        const data = (await res.json().catch(() => null)) as { ok?: boolean; result?: unknown } | null;
+        const data = (await res.json().catch(() => null)) as {
+          ok?: boolean;
+          result?: unknown;
+        } | null;
         if (!data?.ok || !Array.isArray(data.result)) {
           await Bun.sleep(1000);
           continue;

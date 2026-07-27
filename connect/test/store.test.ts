@@ -12,7 +12,14 @@ const evt = (id: string, text = "hi"): Inbound => ({
 });
 
 const commit = (s: Store, eventId: string, chunks: string[], responseId = "resp_a") =>
-  s.commitTurn({ eventId, conversationId: "tg:100", chatId: "100", userId: "tg:7", responseId, replyChunks: chunks });
+  s.commitTurn({
+    eventId,
+    conversationId: "tg:100",
+    chatId: "100",
+    userId: "tg:7",
+    responseId,
+    replyChunks: chunks,
+  });
 
 describe("durable inbox", () => {
   test("dedup: the same eventId inserts once", () => {

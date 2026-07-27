@@ -30,14 +30,25 @@ describe("parseUpdate (untrusted input)", () => {
 
   test("allowlist: allowed user passes, others become a no-event skip", () => {
     expect(parseUpdate(msg(), gated)?.event?.text).toBe("hi");
-    const other = { update_id: 11, message: { text: "hi", chat: { id: 9, type: "private" }, from: { id: 999 } } };
+    const other = {
+      update_id: 11,
+      message: { text: "hi", chat: { id: 9, type: "private" }, from: { id: 999 } },
+    };
     const r = parseUpdate(other, gated);
     expect(r?.updateId).toBe(11);
     expect(r?.event).toBeNull(); // advance past it, don't process
   });
 
   test("garbage that can't yield a usable update_id -> null (caller skips)", () => {
-    for (const bad of [null, undefined, 42, "x", {}, { update_id: "nope" }, { update_id: Number.NaN }]) {
+    for (const bad of [
+      null,
+      undefined,
+      42,
+      "x",
+      {},
+      { update_id: "nope" },
+      { update_id: Number.NaN },
+    ]) {
       expect(parseUpdate(bad, open)).toBeNull();
     }
   });
@@ -59,6 +70,8 @@ describe("parseUpdate (untrusted input)", () => {
   });
 
   test("a malformed update never throws", () => {
-    expect(() => parseUpdate({ update_id: 1, message: { text: {}, chat: null, from: [] } }, open)).not.toThrow();
+    expect(() =>
+      parseUpdate({ update_id: 1, message: { text: {}, chat: null, from: [] } }, open),
+    ).not.toThrow();
   });
 });

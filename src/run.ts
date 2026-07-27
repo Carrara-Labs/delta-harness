@@ -261,7 +261,10 @@ export async function executeRun(
     deps.reasoningEffort;
   // Placement ceiling (untrusted metadata may only narrow it), then the
   // trusted-gateway self-write grant (off by default). See grantSelfWrite.
-  const profile = grantSelfWrite(getProfile(req.metadata?.profile, deps.profile), deps.allowSelfWrite ?? false);
+  const profile = grantSelfWrite(
+    getProfile(req.metadata?.profile, deps.profile),
+    deps.allowSelfWrite ?? false,
+  );
   const vocab = deps.vocab ?? NEUTRAL_VOCAB;
   // Run-local snapshot of the writable self-file (codex #9/#10): DELTA.md is read ONCE
   // here and used for every turn of this run. A self-edit during the run lands on disk

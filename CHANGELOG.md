@@ -6,6 +6,28 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-07-27
+
+### Added
+
+- **`DELTA_ALLOW_SELF_WRITE` — trusted-gateway self-write.** Off by default. When set, the
+  `remember` self-write tool is granted (and pinned) even on the restricted `chat` profile — for a
+  daemon fronted by a trusted, authenticated gateway. This is what lets a chat agent learn safely.
+- **`DELTA_STEP_MAX_TOKENS`** — cap the tokens a single tool call may emit, with an honest
+  truncation error for oversized tool calls instead of silent corruption.
+
+### Changed
+
+- **`DELTA_MAX_TOKENS` / `DELTA_MAX_COST_USD` now override the profile budget** instead of only
+  narrowing it, so an operator can raise as well as lower a profile's budget explicitly.
+
+### Companion
+
+- **[`@carrara-labs/delta-connect`](https://www.npmjs.com/package/@carrara-labs/delta-connect)** —
+  a new companion package: a thin, always-on edge that plugs a Delta agent into a chat channel
+  (Telegram first). The agent scales to zero between messages; the edge holds the conversation.
+  See [/connect](https://deltaharness.dev/connect).
+
 ## [0.2.1] — 2026-07-22
 
 ### Added

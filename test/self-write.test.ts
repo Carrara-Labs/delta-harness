@@ -8,6 +8,7 @@ import { getProfile, grantSelfWrite, PROFILES } from "../src/profiles";
 
 describe("grantSelfWrite", () => {
   const chat = PROFILES.chat as (typeof PROFILES)["chat"];
+  const work = PROFILES.work as (typeof PROFILES)["work"];
 
   test("off by default: the chat profile keeps no self-write", () => {
     expect(grantSelfWrite(chat, false).allowed).not.toContain("remember");
@@ -22,12 +23,14 @@ describe("grantSelfWrite", () => {
   });
 
   test("a '*'-tools profile already has it: unchanged", () => {
-    expect(grantSelfWrite(PROFILES.work, true).allowed).toBe("*");
+    expect(grantSelfWrite(work, true).allowed).toBe("*");
   });
 
   test("idempotent: granting twice does not duplicate the tool", () => {
     const twice = grantSelfWrite(grantSelfWrite(chat, true), true);
-    const n = (Array.isArray(twice.allowed) ? twice.allowed : []).filter((t) => t === "remember").length;
+    const n = (Array.isArray(twice.allowed) ? twice.allowed : []).filter(
+      (t) => t === "remember",
+    ).length;
     expect(n).toBe(1);
   });
 

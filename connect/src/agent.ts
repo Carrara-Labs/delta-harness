@@ -34,7 +34,9 @@ export class DeltaAgent implements AgentClient {
       output_text?: string;
     };
     if (data.status !== "completed") {
-      throw new Error(`agent turn ${data.status ?? res.status}: ${JSON.stringify(data).slice(0, 200)}`);
+      throw new Error(
+        `agent turn ${data.status ?? res.status}: ${JSON.stringify(data).slice(0, 200)}`,
+      );
     }
     return { responseId: data.id ?? "", outputText: data.output_text ?? "" };
   }

@@ -1,5 +1,5 @@
-import type { AgentClient, AgentSupervisor, ChannelCodec } from "./types";
 import type { Store } from "./store";
+import type { AgentClient, AgentSupervisor, ChannelCodec } from "./types";
 
 // The dispatch loop. Drains the durable inbox oldest-first, one at a time
 // (serial per process = ordered, no session fork). The per-turn durable writes
@@ -94,7 +94,9 @@ export class Connector {
       replyChunks = chunkText(out.outputText.trim() || "(I finished, but produced no text.)");
     } catch (e) {
       this.log(`turn failed for ${row.event_id}: ${String(e)}`);
-      replyChunks = ["Something went wrong on my end and I could not finish that. Try again in a moment."];
+      replyChunks = [
+        "Something went wrong on my end and I could not finish that. Try again in a moment.",
+      ];
     }
 
     // One atomic commit: session + reply chunks + inbox-done.

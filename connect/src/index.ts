@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-import { Connector } from "./core";
 import { DeltaAgent } from "./agent";
+import { Connector } from "./core";
 import { Store } from "./store";
 import { LocalKeepAliveSupervisor } from "./supervisor";
 import { TelegramCodec, TelegramLongPoll } from "./telegram";
@@ -31,7 +31,9 @@ const sup = new LocalKeepAliveSupervisor(baseUrl);
 const connector = new Connector(store, codec, agent, sup, log);
 const ingress = new TelegramLongPoll(token, store, { allowed });
 
-log(`${agentName} bot up. daemon=${baseUrl} allowlist=${allowed.size > 0 ? [...allowed].join(",") : "open (dev)"}`);
+log(
+  `${agentName} bot up. daemon=${baseUrl} allowlist=${allowed.size > 0 ? [...allowed].join(",") : "open (dev)"}`,
+);
 
 const shutdown = () => {
   log("shutting down");

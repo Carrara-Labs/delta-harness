@@ -103,3 +103,16 @@ jobs:
       - run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Companion package: publish only when its (independent) version is new, so a
+      # harness-only release doesn't fail trying to re-publish an existing version.
+      - name: Publish @carrara-labs/delta-connect
+        working-directory: connect
+        run: |
+          V="$(node -p "require('./package.json').version")"
+          if npm view "@carrara-labs/delta-connect@$V" version >/dev/null 2>&1; then
+            echo "connect@$V already published — skipping"
+          else
+            npm publish --provenance --access public
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
