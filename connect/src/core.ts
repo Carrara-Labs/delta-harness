@@ -2,10 +2,12 @@ import type { AgentClient, AgentSupervisor, ChannelCodec } from "./types";
 import type { Store } from "./store";
 
 // The dispatch loop. Drains the durable inbox oldest-first, one at a time
-// (serial per process = ordered, no session fork). Order of durable writes is
-// the whole point: the reply is enqueued to the outbox and the inbox row is
-// marked done BEFORE we attempt delivery, so a crash never loses an answer,
-// and the outbox dedup_key means a re-run never sends it twice.
+// (serial per process = ordered, no session fork). The per-turn durable writes
+// (advance session, enqueue reply, complete inbox) commit atomically via
+// store.commitTurn, so a crash never leaves a partial turn. Delivery is
+// AT-LEAST-ONCE: a crash between a successful platform send and markOutboxSent
+// re-sends on restart (Telegram has no send-idempotency key), so a rare
+// duplicate is possible and acceptable for chat.
 
 /** Telegram caps a message at 4096 chars. Split on structure, hard-cut only as a last resort. */
 export function chunkText(text: string, max = 4000): string[] {
@@ -18,7 +20,6 @@ export function chunkText(text: string, max = 4000): string[] {
   };
   for (const line of text.split("\n")) {
     if (line.length > max) {
-      // a single very long line: flush what we have, then hard-cut the line
       flush();
       for (let i = 0; i < line.length; i += max) chunks.push(line.slice(i, i + max));
       continue;
@@ -49,14 +50,6 @@ export class Connector {
     private readonly log: (m: string) => void = () => {},
   ) {}
 
-  /** Enqueue a reply as one or more ordered, individually-idempotent outbox rows. */
-  private enqueueReply(eventId: string, conversationId: string, chatId: string, text: string): void {
-    const parts = chunkText(text);
-    parts.forEach((part, i) => {
-      this.store.enqueueOutbox(`out:${eventId}:${i}`, conversationId, chatId, part);
-    });
-  }
-
   /** Process at most one inbox event. Returns false when the inbox is empty. */
   async runOnce(): Promise<boolean> {
     const row = this.store.nextPending();
@@ -74,41 +67,52 @@ export class Connector {
           ? HELP
           : null;
     if (canned !== null) {
-      this.enqueueReply(row.event_id, row.conversation_id, row.chat_id, canned);
-      this.store.markInboxDone(row.event_id);
+      this.store.commitTurn({
+        eventId: row.event_id,
+        conversationId: row.conversation_id,
+        chatId: row.chat_id,
+        userId: row.actor_id,
+        replyChunks: chunkText(canned),
+      });
       await this.flushOutbox();
       return true;
     }
 
+    // Run the agent turn (the one non-durable step). A crash here leaves the
+    // event pending, so it re-runs on restart (at-least-once on the turn).
+    let responseId: string | undefined;
+    let replyChunks: string[];
     try {
       await this.sup.ensureAwake();
       await this.codec.typing?.(row.chat_id);
       const session = this.store.getSession(row.conversation_id);
-      const { responseId, outputText } = await this.agent.run(text, {
+      const out = await this.agent.run(text, {
         previousResponseId: session?.prev_response_id ?? undefined,
         userId: row.actor_id,
       });
-      this.store.setSession(row.conversation_id, responseId, row.actor_id);
-      const reply = outputText.trim() || "(I finished, but produced no text.)";
-      this.enqueueReply(row.event_id, row.conversation_id, row.chat_id, reply);
-      this.store.markInboxDone(row.event_id);
+      responseId = out.responseId;
+      replyChunks = chunkText(out.outputText.trim() || "(I finished, but produced no text.)");
     } catch (e) {
       this.log(`turn failed for ${row.event_id}: ${String(e)}`);
-      this.enqueueReply(
-        row.event_id,
-        row.conversation_id,
-        row.chat_id,
-        "Something went wrong on my end and I could not finish that. Try again in a moment.",
-      );
-      this.store.markInboxDone(row.event_id);
+      replyChunks = ["Something went wrong on my end and I could not finish that. Try again in a moment."];
     }
+
+    // One atomic commit: session + reply chunks + inbox-done.
+    this.store.commitTurn({
+      eventId: row.event_id,
+      conversationId: row.conversation_id,
+      chatId: row.chat_id,
+      userId: row.actor_id,
+      responseId,
+      replyChunks,
+    });
 
     await this.flushOutbox();
     await this.sup.maybeSuspend();
     return true;
   }
 
-  /** Deliver queued replies in order. Idempotent send; retryable failures wait, permanent ones dead-letter. */
+  /** Deliver queued replies in order. At-least-once; backs off on retryable failures. */
   async flushOutbox(): Promise<void> {
     let row = this.store.nextQueuedOutbox();
     while (row) {
@@ -116,12 +120,14 @@ export class Connector {
       if (r.ok) {
         this.store.markOutboxSent(row.dedup_key);
       } else if (r.retryable) {
-        this.store.bumpOutboxAttempt(row.dedup_key);
-        this.log(`send retry (${row.attempts + 1}) for ${row.dedup_key}: ${r.error ?? ""}`);
-        break; // try again on the next flush
+        // Honor Telegram retry_after; keep the reply intact (later chunks wait behind this one).
+        this.store.markOutboxRetry(row.dedup_key, r.retryAfterMs ?? 1000);
+        this.log(`send backoff (${row.attempts + 1}) for ${row.dedup_key}: ${r.error ?? ""}`);
+        break;
       } else {
-        this.store.markOutboxDead(row.dedup_key);
-        this.log(`send dead for ${row.dedup_key}: ${r.error ?? ""}`);
+        // Permanent: drop the whole reply so a partial, out-of-order one is never sent.
+        this.store.markGroupDead(row.group_key);
+        this.log(`send dead for ${row.group_key}: ${r.error ?? ""}`);
       }
       row = this.store.nextQueuedOutbox();
     }

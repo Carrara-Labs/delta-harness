@@ -28,18 +28,22 @@ cp "$DEPLOY/fly.toml" "$STAGE/fly.toml"
 
 cd "$STAGE"
 
+NEW=0
 if ! flyctl status --app "$APP" >/dev/null 2>&1; then
+  NEW=1
   echo "[deploy] creating app $APP (no public services)"
   flyctl apps create "$APP" --org personal
   flyctl volumes create ferni_data --app "$APP" --region "$REGION" --size 1 --yes
 fi
 
-# Secrets (from env only). Staged so the first deploy has them.
+# Secrets from the environment, imported via STDIN (never in argv / ps output).
 if [ -n "${OPENROUTER_API_KEY:-}" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
-  echo "[deploy] setting Fly secrets"
-  flyctl secrets set --app "$APP" --stage \
-    "OPENROUTER_API_KEY=$OPENROUTER_API_KEY" \
-    "TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN" >/dev/null
+  echo "[deploy] importing secrets (stdin)"
+  printf 'OPENROUTER_API_KEY=%s\nTELEGRAM_BOT_TOKEN=%s\n' \
+    "$OPENROUTER_API_KEY" "$TELEGRAM_BOT_TOKEN" | flyctl secrets import --app "$APP" --stage
+elif [ "$NEW" -eq 1 ]; then
+  echo "[deploy] ERROR: first deploy needs OPENROUTER_API_KEY and TELEGRAM_BOT_TOKEN in the environment" >&2
+  exit 1
 fi
 
 echo "[deploy] deploying"

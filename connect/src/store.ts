@@ -5,8 +5,12 @@ import type { Inbound } from "./types";
 // The durable spine. Three tables carry the correctness boundaries:
 //   inbox   - dedup by eventId, so a platform retry is a no-op
 //   sessions - conversationId -> previous_response_id, so a chat threads
-//   outbox  - idempotent send by dedup_key, so a crash never double-delivers
-// SQLite WAL, checkpoint-per-statement. Keyed by session; no shared RAM state.
+//   outbox  - ordered, grouped delivery with retry backoff and dead-lettering
+// SQLite WAL. The per-turn writes (advance session, enqueue reply, complete
+// inbox) commit in ONE transaction (commitTurn) so a crash never leaves a
+// partial turn. Delivery is at-least-once: a crash between a successful
+// platform send and markOutboxSent re-sends on restart (Telegram has no send
+// idempotency key), so a rare duplicate is possible and acceptable for chat.
 
 export type InboxRow = {
   event_id: string;
@@ -20,11 +24,13 @@ export type InboxRow = {
 
 export type OutboxRow = {
   dedup_key: string;
+  group_key: string;
   conversation_id: string;
   chat_id: string;
   text: string;
   status: string;
   attempts: number;
+  next_attempt_at: number;
 };
 
 const MAX_SEND_ATTEMPTS = 5;
@@ -60,21 +66,34 @@ export class Store {
 
       CREATE TABLE IF NOT EXISTS outbox (
         dedup_key       TEXT PRIMARY KEY,
+        group_key       TEXT NOT NULL DEFAULT '',
         conversation_id TEXT NOT NULL,
         chat_id         TEXT NOT NULL,
         text            TEXT NOT NULL,
         status          TEXT NOT NULL DEFAULT 'queued',
         attempts        INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at INTEGER NOT NULL DEFAULT 0,
         created_at      INTEGER NOT NULL,
         sent_at         INTEGER
       );
-      CREATE INDEX IF NOT EXISTS outbox_queued ON outbox(status, created_at);
+      CREATE INDEX IF NOT EXISTS outbox_queued ON outbox(status, next_attempt_at, created_at);
 
       CREATE TABLE IF NOT EXISTS meta (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
     `);
+    // Migrate an older outbox table (pre grouping/backoff) in place.
+    for (const alter of [
+      "ALTER TABLE outbox ADD COLUMN group_key TEXT NOT NULL DEFAULT ''",
+      "ALTER TABLE outbox ADD COLUMN next_attempt_at INTEGER NOT NULL DEFAULT 0",
+    ]) {
+      try {
+        this.db.exec(alter);
+      } catch {
+        // column already present on a fresh table - fine
+      }
+    }
   }
 
   // --- inbox -------------------------------------------------------------
@@ -92,7 +111,8 @@ export class Store {
 
   nextPending(): InboxRow | null {
     return (this.db
-      .query(`SELECT * FROM inbox WHERE status = 'pending' ORDER BY received_at ASC LIMIT 1`)
+      // rowid tiebreak: two updates in the same ms still drain in arrival order.
+      .query(`SELECT * FROM inbox WHERE status = 'pending' ORDER BY received_at ASC, rowid ASC LIMIT 1`)
       .get() as InboxRow) ?? null;
   }
 
@@ -108,35 +128,59 @@ export class Store {
       .get(conversationId) as { prev_response_id: string | null; user_id: string }) ?? null;
   }
 
-  setSession(conversationId: string, prevResponseId: string, userId: string): void {
-    this.db
-      .query(
-        `INSERT INTO sessions (conversation_id, prev_response_id, user_id, updated_at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(conversation_id) DO UPDATE SET
-           prev_response_id = excluded.prev_response_id,
-           updated_at       = excluded.updated_at`,
-      )
-      .run(conversationId, prevResponseId, userId, Date.now());
+  // --- the atomic turn commit -------------------------------------------
+
+  /**
+   * Advance the session, enqueue the reply as ordered/grouped outbox rows, and
+   * mark the inbox event done - all in ONE transaction. A crash either leaves
+   * the event still pending (whole turn re-runs) or fully committed (delivered
+   * once). No partial state: never a split reply, never a half-advanced thread.
+   * previousResponseId omitted when the reply spends no agent turn (intercepts).
+   */
+  commitTurn(args: {
+    eventId: string;
+    conversationId: string;
+    chatId: string;
+    userId: string;
+    responseId?: string;
+    replyChunks: string[];
+  }): void {
+    const now = Date.now();
+    const groupKey = `out:${args.eventId}`;
+    const tx = this.db.transaction(() => {
+      if (args.responseId) {
+        this.db
+          .query(
+            `INSERT INTO sessions (conversation_id, prev_response_id, user_id, updated_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(conversation_id) DO UPDATE SET
+               prev_response_id = excluded.prev_response_id, updated_at = excluded.updated_at`,
+          )
+          .run(args.conversationId, args.responseId, args.userId, now);
+      }
+      args.replyChunks.forEach((text, i) => {
+        this.db
+          .query(
+            `INSERT OR IGNORE INTO outbox (dedup_key, group_key, conversation_id, chat_id, text, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+          )
+          .run(`${groupKey}:${i}`, groupKey, args.conversationId, args.chatId, text, now + i);
+      });
+      this.db.query(`UPDATE inbox SET status = 'done' WHERE event_id = ?`).run(args.eventId);
+    });
+    tx();
   }
 
-  // --- outbox ------------------------------------------------------------
+  // --- outbox delivery ---------------------------------------------------
 
-  /** Idempotent enqueue. Same dedup_key twice is a no-op, so a re-run never doubles a reply. */
-  enqueueOutbox(dedupKey: string, conversationId: string, chatId: string, text: string): boolean {
-    const r = this.db
-      .query(
-        `INSERT OR IGNORE INTO outbox (dedup_key, conversation_id, chat_id, text, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(dedupKey, conversationId, chatId, text, Date.now());
-    return r.changes > 0;
-  }
-
+  /** Next deliverable row: queued, past its backoff, oldest first. */
   nextQueuedOutbox(): OutboxRow | null {
     return (this.db
-      .query(`SELECT * FROM outbox WHERE status = 'queued' ORDER BY created_at ASC, rowid ASC LIMIT 1`)
-      .get() as OutboxRow) ?? null;
+      .query(
+        `SELECT * FROM outbox WHERE status = 'queued' AND next_attempt_at <= ?
+         ORDER BY created_at ASC, rowid ASC LIMIT 1`,
+      )
+      .get(Date.now()) as OutboxRow) ?? null;
   }
 
   markOutboxSent(dedupKey: string): void {
@@ -145,21 +189,27 @@ export class Store {
       .run(Date.now(), dedupKey);
   }
 
-  /** Retryable failure: keep queued, count the attempt, dead-letter past the cap. */
-  bumpOutboxAttempt(dedupKey: string): void {
+  /** Retryable failure: back off (honor Telegram retry_after), dead-letter past the cap. */
+  markOutboxRetry(dedupKey: string, retryAfterMs: number): void {
+    const row = this.db
+      .query(`SELECT group_key, attempts FROM outbox WHERE dedup_key = ?`)
+      .get(dedupKey) as { group_key: string; attempts: number } | null;
+    if (!row) return;
+    if (row.attempts + 1 >= MAX_SEND_ATTEMPTS) {
+      this.markGroupDead(row.group_key); // give up on the whole reply, not just this chunk
+      return;
+    }
     this.db
-      .query(
-        `UPDATE outbox
-         SET attempts = attempts + 1,
-             status = CASE WHEN attempts + 1 >= ${MAX_SEND_ATTEMPTS} THEN 'dead' ELSE 'queued' END
-         WHERE dedup_key = ?`,
-      )
-      .run(dedupKey);
+      .query(`UPDATE outbox SET attempts = attempts + 1, next_attempt_at = ? WHERE dedup_key = ?`)
+      .run(Date.now() + Math.max(0, retryAfterMs), dedupKey);
   }
 
-  /** Permanent failure. */
-  markOutboxDead(dedupKey: string): void {
-    this.db.query(`UPDATE outbox SET status = 'dead', attempts = attempts + 1 WHERE dedup_key = ?`).run(dedupKey);
+  /** Permanent failure of a whole reply: dead-letter every remaining chunk so a
+   *  partial, out-of-order reply is never delivered. */
+  markGroupDead(groupKey: string): void {
+    this.db
+      .query(`UPDATE outbox SET status = 'dead', attempts = attempts + 1 WHERE group_key = ? AND status = 'queued'`)
+      .run(groupKey);
   }
 
   // --- meta (durable long-poll offset, etc.) -----------------------------

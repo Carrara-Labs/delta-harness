@@ -7,7 +7,7 @@ this edge is the only always-on part. See `../docs/delta-connect/SPEC.md` for th
 ## Layout
 
 - `src/types.ts` - the neutral contract (Inbound envelope, codec/ingress/supervisor/agent interfaces).
-- `src/store.ts` - the durable spine: inbox (dedup), sessions (threading), outbox (idempotent send).
+- `src/store.ts` - the durable spine: inbox (dedup), sessions (threading), outbox (ordered, grouped, at-least-once delivery with retry backoff + dead-lettering). The per-turn writes commit atomically (`commitTurn`).
 - `src/telegram.ts` - Telegram codec + long-poll ingress (durable insert before offset advance).
 - `src/agent.ts` - one turn against the Delta seam (`POST /v1/responses`).
 - `src/supervisor.ts` - local keep-alive; Fly start/suspend swaps in behind the same interface.

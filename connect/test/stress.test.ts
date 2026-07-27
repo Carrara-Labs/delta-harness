@@ -29,7 +29,7 @@ class RecCodec implements ChannelCodec {
   async send(_chatId: string, text: string) {
     if (this.failTimes > 0) {
       this.failTimes--;
-      return { ok: false, retryable: true, error: "429" };
+      return { ok: false, retryable: true, error: "429", retryAfterMs: 0 }; // no backoff for the test
     }
     this.sent.push(text);
     return { ok: true, retryable: false };
@@ -77,7 +77,7 @@ describe("chunkText", () => {
     const parts = chunkText(body, 4000);
     expect(parts.length).toBeGreaterThan(1);
     for (const p of parts) expect(p.length).toBeLessThanOrEqual(4000);
-    expect(parts.join("\n")).toBe(body); // lines rejoin exactly
+    expect(parts.join("\n")).toBe(body);
   });
   test("a single over-long line is hard-split", () => {
     const line = "y".repeat(9500);
@@ -93,8 +93,7 @@ describe("dispatch loop", () => {
   test("burst: 8 messages reply in order and thread the session", async () => {
     const store = new Store(tmpDb());
     const codec = new RecCodec();
-    const agent = new FakeAgent();
-    const c = new Connector(store, codec, agent, noopSup);
+    const c = new Connector(store, codec, new FakeAgent(), noopSup);
     for (let i = 1; i <= 8; i++) store.insertInbox(evt(`tg:${i}`, `msg ${i}`));
     await drain(c);
     expect(codec.sent).toEqual(["reply 1", "reply 2", "reply 3", "reply 4", "reply 5", "reply 6", "reply 7", "reply 8"]);
@@ -124,12 +123,12 @@ describe("dispatch loop", () => {
 
   test("retryable send failures recover without dropping or doubling", async () => {
     const store = new Store(tmpDb());
-    const codec = new RecCodec(2); // first two sends fail retryably
+    const codec = new RecCodec(2); // first two sends fail retryably (retry_after 0)
     const c = new Connector(store, codec, new FakeAgent(() => "answer"), noopSup);
     store.insertInbox(evt("tg:1", "hi"));
-    await drain(c); // enqueues + fails, breaks
-    await c.flushOutbox(); // retry
-    await c.flushOutbox(); // retry -> success
+    await drain(c);
+    await c.flushOutbox();
+    await c.flushOutbox();
     expect(codec.sent).toEqual(["answer"]);
   });
 
@@ -141,21 +140,20 @@ describe("dispatch loop", () => {
     await drain(c);
     expect(codec.sent.length).toBe(1);
     expect(codec.sent[0]).toContain("Something went wrong");
-    expect(store.nextPending()).toBeNull(); // marked done, no reprocessing
+    expect(store.nextPending()).toBeNull();
   });
 });
 
 // --- crash resume: the durable spine's whole reason to exist ----------
 
 describe("crash resume", () => {
-  test("a reply enqueued before a crash is delivered exactly once on restart", async () => {
+  test("a reply committed before a crash is delivered exactly once on restart", async () => {
     const db = tmpDb();
-    // process A: durable writes done (reply enqueued, inbox marked), then "crash" before send
+    // process A: the atomic turn commit lands (session + reply + inbox-done), then "crash" before send
     const a = new Store(db);
     a.insertInbox(evt("tg:1", "hi"));
-    a.enqueueOutbox("out:tg:1:0", "tg:100", "100", "the answer");
-    a.markInboxDone("tg:1");
-    a.db.close(); // crash
+    a.commitTurn({ eventId: "tg:1", conversationId: "tg:100", chatId: "100", userId: "tg:7", responseId: "r", replyChunks: ["the answer"] });
+    a.db.close();
 
     // process B: restart on the same file, deliver
     const b = new Store(db);
@@ -163,12 +161,11 @@ describe("crash resume", () => {
     const c = new Connector(b, codec, new FakeAgent(), noopSup);
     await c.flushOutbox();
     expect(codec.sent).toEqual(["the answer"]);
-    // a second restart must not re-send
-    await c.flushOutbox();
+    await c.flushOutbox(); // a second restart must not re-send
     expect(codec.sent.length).toBe(1);
   });
 
-  test("a crash before the reply is enqueued re-runs, and dedup stops a double", async () => {
+  test("a crash before the turn commits re-runs, and dedup stops a double", async () => {
     const db = tmpDb();
     const a = new Store(db);
     a.insertInbox(evt("tg:1", "hi")); // accepted, but process dies before the turn runs
@@ -181,8 +178,7 @@ describe("crash resume", () => {
     await drain(c); // inbox still pending -> runs the turn now
     expect(agent.calls).toBe(1);
     expect(codec.sent).toEqual(["recovered answer"]);
-    // platform redelivers the same update after recovery -> no double
-    b.insertInbox(evt("tg:1", "hi"));
+    b.insertInbox(evt("tg:1", "hi")); // platform redelivers -> dedup, no double
     await drain(c);
     expect(codec.sent.length).toBe(1);
   });

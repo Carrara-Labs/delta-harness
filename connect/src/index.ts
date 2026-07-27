@@ -44,5 +44,11 @@ process.on("SIGTERM", shutdown);
 
 // Ingress fills the durable inbox; the connector drains it. Independent loops
 // joined only by the inbox table - that decoupling is what lets the agent sleep.
-void ingress.start();
-void connector.loop();
+// If EITHER loop rejects, exit non-zero so the supervisor (entrypoint / Fly)
+// restarts a clean process instead of limping along half-dead.
+const fatal = (where: string) => (e: unknown) => {
+  log(`FATAL ${where}: ${String(e)}`);
+  process.exit(1);
+};
+ingress.start().catch(fatal("ingress"));
+connector.loop().catch(fatal("dispatch"));

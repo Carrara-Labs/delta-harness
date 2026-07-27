@@ -9,6 +9,9 @@ primary_region = "iad"
 
 [env]
   PORT = "8321"
+  # loopback-only: the daemon's HTTP seam must NOT be reachable on Fly's org
+  # private network - only the connector (same machine) talks to it.
+  DELTA_BIND = "127.0.0.1"
   DELTA_BASE_URL = "http://127.0.0.1:8321"
   # all durable state on the volume
   DELTA_DB = "/data/delta.db"

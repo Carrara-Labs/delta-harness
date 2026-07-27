@@ -17,7 +17,13 @@ export type Inbound = {
   raw?: unknown;
 };
 
-export type OutboundResult = { ok: boolean; retryable: boolean; error?: string };
+export type OutboundResult = {
+  ok: boolean;
+  retryable: boolean;
+  error?: string;
+  /** Platform-requested backoff before the next attempt (Telegram 429 retry_after). */
+  retryAfterMs?: number;
+};
 
 /** Per-channel, pure transport. Small on purpose. */
 export interface ChannelCodec {

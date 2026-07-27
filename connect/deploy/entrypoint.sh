@@ -21,14 +21,21 @@ DAEMON=$!
 
 # Wait for it to be healthy before the connector starts dispatching (bun, no curl).
 i=0
+HEALTHY=0
 while [ "$i" -lt 60 ]; do
   if bun -e 'const r=await fetch("http://127.0.0.1:'"${PORT:-8321}"'/healthz").catch(()=>null);process.exit(r&&r.ok?0:1)'; then
     echo "[entrypoint] daemon healthy"
+    HEALTHY=1
     break
   fi
   i=$((i + 1))
   sleep 1
 done
+if [ "$HEALTHY" -ne 1 ]; then
+  echo "[entrypoint] daemon never became healthy in 60s - exiting for a clean restart"
+  kill "$DAEMON" 2>/dev/null || true
+  exit 1
+fi
 
 # Delta Connect (the Telegram edge), background.
 cd /app/connect
