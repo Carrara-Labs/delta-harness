@@ -1,0 +1,437 @@
+<title>Delta Connect - the agent connectivity layer</title>
+<style>
+  :root {
+    --bg: #F4F2EA; --surface: #FCFBF6; --surface-2: #EFEDE2; --ink: #1E2018;
+    --soft: #575A4B; --faint: #8B8D7C; --line: #E0DDD0; --line-strong: #CFCCBC;
+    --sage: #5E7355; --sage-deep: #3E5137; --sage-wash: #E7ECDF;
+    --clay: #A9603C; --clay-wash: #F1E3D9;
+    --blue: #4C6A82; --blue-wash: #E1E9EF;
+    --shadow: 0 1px 2px rgba(30,32,24,.04), 0 8px 24px rgba(30,32,24,.06);
+    --shadow-lift: 0 2px 6px rgba(30,32,24,.06), 0 18px 44px rgba(30,32,24,.10);
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12140D; --surface: #1A1D14; --surface-2: #22261A; --ink: #ECEADD;
+      --soft: #AEB19F; --faint: #7A7D6C; --line: #2A2E20; --line-strong: #3A3F2D;
+      --sage: #93AC88; --sage-deep: #B0C8A5; --sage-wash: #21281A;
+      --clay: #D08C64; --clay-wash: #2E2318;
+      --blue: #86A6C0; --blue-wash: #1B2530;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+      --shadow-lift: 0 2px 6px rgba(0,0,0,.35), 0 18px 44px rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #F4F2EA; --surface: #FCFBF6; --surface-2: #EFEDE2; --ink: #1E2018;
+    --soft: #575A4B; --faint: #8B8D7C; --line: #E0DDD0; --line-strong: #CFCCBC;
+    --sage: #5E7355; --sage-deep: #3E5137; --sage-wash: #E7ECDF;
+    --clay: #A9603C; --clay-wash: #F1E3D9; --blue: #4C6A82; --blue-wash: #E1E9EF;
+    --shadow: 0 1px 2px rgba(30,32,24,.04), 0 8px 24px rgba(30,32,24,.06);
+    --shadow-lift: 0 2px 6px rgba(30,32,24,.06), 0 18px 44px rgba(30,32,24,.10);
+  }
+  :root[data-theme="dark"] {
+    --bg: #12140D; --surface: #1A1D14; --surface-2: #22261A; --ink: #ECEADD;
+    --soft: #AEB19F; --faint: #7A7D6C; --line: #2A2E20; --line-strong: #3A3F2D;
+    --sage: #93AC88; --sage-deep: #B0C8A5; --sage-wash: #21281A;
+    --clay: #D08C64; --clay-wash: #2E2318; --blue: #86A6C0; --blue-wash: #1B2530;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    --shadow-lift: 0 2px 6px rgba(0,0,0,.35), 0 18px 44px rgba(0,0,0,.5);
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1160px; margin: 0 auto; padding: 0 28px; }
+  section { padding: clamp(46px, 6.5vw, 88px) 0; border-top: 1px solid var(--line); }
+
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  .rise { animation: rise .6s cubic-bezier(.2,.7,.2,1) both; }
+  @media (prefers-reduced-motion: reduce) { .rise { animation: none; } }
+
+  h1 { font-size: clamp(2.3rem, 5vw, 3.9rem); line-height: 1.04; letter-spacing: -.02em; margin: 0; text-wrap: balance; font-weight: 680; }
+  h2 { font-size: clamp(1.5rem, 3vw, 2.15rem); line-height: 1.12; letter-spacing: -.015em; margin: 0 0 .5em; text-wrap: balance; font-weight: 660; }
+  h3 { font-size: 1.05rem; margin: 0; letter-spacing: -.01em; font-weight: 640; }
+  p { margin: 0 0 1em; max-width: 68ch; }
+  .lead { font-size: clamp(1.05rem, 1.6vw, 1.26rem); color: var(--soft); max-width: 62ch; }
+  .eyebrow { font-family: var(--mono); font-size: .74rem; letter-spacing: .18em; text-transform: uppercase; color: var(--sage); font-weight: 600; margin: 0 0 20px; }
+  .sect-label { font-family: var(--mono); font-size: .72rem; letter-spacing: .16em; text-transform: uppercase; color: var(--faint); font-weight: 600; margin: 0 0 16px; display: flex; align-items: center; gap: 10px; }
+  .sect-label::before { content: ""; width: 22px; height: 1px; background: var(--line-strong); }
+  code, .mono { font-family: var(--mono); font-size: .86em; }
+  .kbd { font-family: var(--mono); font-size: .82em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; color: var(--ink); white-space: nowrap; }
+  b, strong { color: var(--ink); font-weight: 640; }
+
+  /* hero */
+  .hero { padding-top: clamp(54px, 8vw, 100px); border-top: none; }
+  .namebadge { display: inline-flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: .78rem; letter-spacing: .04em; color: var(--sage-deep); background: var(--sage-wash); border: 1px solid color-mix(in srgb, var(--sage) 24%, var(--line)); padding: 6px 12px; border-radius: 999px; margin-bottom: 24px; font-weight: 600; }
+  .namebadge .d { width: 8px; height: 8px; border-radius: 50%; background: var(--sage); }
+  .hero .lead { margin-top: 22px; }
+  .bigidea { margin-top: 36px; background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--sage); border-radius: 14px; padding: 24px 26px; box-shadow: var(--shadow); }
+  .bigidea p { margin: 0; font-size: 1.06rem; max-width: 78ch; }
+  .bigidea .kick { font-family: var(--mono); font-size: .72rem; letter-spacing: .14em; text-transform: uppercase; color: var(--sage); font-weight: 600; display: block; margin-bottom: 10px; }
+
+  /* ---- hub diagram ---- */
+  .hub { margin-top: 36px; display: grid; grid-template-columns: 1fr auto 1.15fr auto 1fr; gap: 0; align-items: stretch; }
+  .hub-col { display: flex; flex-direction: column; gap: 10px; justify-content: center; }
+  .col-label { font-family: var(--mono); font-size: .68rem; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); font-weight: 600; margin-bottom: 4px; }
+  .src { background: var(--surface); border: 1px solid var(--line-strong); border-radius: 10px; padding: 10px 13px; font-size: .86rem; display: flex; align-items: center; gap: 9px; box-shadow: var(--shadow); }
+  .src .mk { font-family: var(--mono); font-size: .7rem; color: var(--blue); font-weight: 700; }
+  .src.evt .mk { color: var(--clay); }
+  .conn { display: flex; flex-direction: column; justify-content: center; gap: 12px; padding: 0 14px; min-width: 92px; }
+  .lane { font-family: var(--mono); font-size: .64rem; letter-spacing: .06em; text-transform: uppercase; font-weight: 600; text-align: center; line-height: 1.5; }
+  .lane .a { display: block; font-size: 1.1rem; letter-spacing: 0; }
+  .lane.in { color: var(--sage); }
+  .lane.out { color: var(--clay); }
+  .core { background: linear-gradient(165deg, var(--sage-wash), var(--surface)); border: 1.5px solid color-mix(in srgb, var(--sage) 42%, var(--line)); border-radius: 18px; padding: 22px 20px; box-shadow: var(--shadow-lift); display: flex; flex-direction: column; justify-content: center; text-align: center; }
+  .core .ct { font-family: var(--mono); font-size: .7rem; letter-spacing: .14em; text-transform: uppercase; color: var(--sage); font-weight: 700; }
+  .core .cn { font-size: 1.35rem; font-weight: 680; letter-spacing: -.015em; margin: 6px 0 14px; }
+  .core .fns { display: flex; flex-direction: column; gap: 7px; }
+  .core .fn { font-family: var(--mono); font-size: .74rem; color: var(--sage-deep); background: color-mix(in srgb, var(--sage-wash) 60%, var(--surface)); border: 1px solid color-mix(in srgb, var(--sage) 20%, var(--line)); border-radius: 7px; padding: 5px 8px; }
+  .agent { background: var(--surface); border: 1px solid var(--line-strong); border-radius: 14px; padding: 18px; box-shadow: var(--shadow); text-align: center; display: flex; flex-direction: column; justify-content: center; gap: 6px; height: 100%; }
+  .agent .big { font-weight: 660; font-size: 1.05rem; }
+  .agent .sub { color: var(--soft); font-size: .84rem; }
+  .agent .pure { font-family: var(--mono); font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; color: var(--sage); margin-top: 6px; }
+  .hub-caption { margin-top: 22px; color: var(--soft); font-size: .95rem; max-width: 82ch; }
+  .hub-caption b { color: var(--sage-deep); }
+
+  /* layers */
+  .layers { margin-top: 30px; display: flex; flex-direction: column; gap: 12px; }
+  .layer { display: grid; grid-template-columns: 130px 1fr; gap: 20px; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 20px; box-shadow: var(--shadow); }
+  .layer .lname { font-family: var(--mono); font-size: .8rem; font-weight: 700; letter-spacing: .02em; }
+  .layer .ldesc { color: var(--soft); font-size: .92rem; }
+  .layer.hl { border-color: color-mix(in srgb, var(--sage) 42%, var(--line)); background: linear-gradient(120deg, var(--sage-wash), var(--surface)); }
+  .layer.hl .lname { color: var(--sage-deep); }
+  .layer .lname .num { color: var(--faint); font-weight: 500; }
+
+  /* anatomy grid */
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 30px; }
+  .cell { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px; box-shadow: var(--shadow); }
+  .cell .cm { font-family: var(--mono); font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; color: var(--sage); font-weight: 600; }
+  .cell h3 { margin: 8px 0 7px; font-size: 1rem; }
+  .cell p { font-size: .89rem; color: var(--soft); margin: 0; }
+
+  /* contract code */
+  .codeblock { margin-top: 26px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: var(--shadow); }
+  .codeblock .head { font-family: var(--mono); font-size: .72rem; letter-spacing: .04em; color: var(--faint); padding: 12px 18px; border-bottom: 1px solid var(--line); background: var(--surface); }
+  .codeblock pre { margin: 0; padding: 20px 22px; overflow-x: auto; font-family: var(--mono); font-size: .84rem; line-height: 1.7; color: var(--ink); }
+  .codeblock .c { color: var(--faint); }
+  .codeblock .k { color: var(--sage-deep); font-weight: 600; }
+  .codeblock .s { color: var(--clay); }
+  .codeblock .cap { padding: 0 22px 18px; color: var(--soft); font-size: .88rem; }
+
+  /* use cases */
+  .usewrap { margin-top: 30px; }
+  .colhead { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 14px; }
+  .colhead div { font-family: var(--mono); font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; font-weight: 600; }
+  .colhead .ours { color: var(--sage); }
+  .colhead .world { color: var(--blue); }
+  .uc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .uc { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 6px; transition: transform .18s ease, box-shadow .18s ease; }
+  .uc:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
+  .uc .tag { font-family: var(--mono); font-size: .66rem; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; align-self: flex-start; padding: 3px 8px; border-radius: 999px; }
+  .uc.o .tag { color: var(--sage-deep); background: var(--sage-wash); }
+  .uc.w .tag { color: var(--blue); background: var(--blue-wash); }
+  .uc h3 { font-size: .98rem; }
+  .uc p { font-size: .87rem; color: var(--soft); margin: 0; }
+
+  /* packaging */
+  .pkg { margin-top: 30px; display: flex; flex-direction: column; gap: 16px; }
+  .opt { display: grid; grid-template-columns: 150px 1fr; gap: 22px; align-items: start; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; box-shadow: var(--shadow); }
+  .opt .verdict { display: flex; flex-direction: column; gap: 8px; }
+  .opt .vpill { font-family: var(--mono); font-size: .72rem; letter-spacing: .04em; font-weight: 700; padding: 6px 12px; border-radius: 8px; text-align: center; }
+  .opt .vpill.no { color: var(--clay); background: var(--clay-wash); }
+  .opt .vpill.yes { color: #F4F2EA; background: var(--sage-deep); }
+  :root[data-theme="dark"] .opt .vpill.yes { color: #12140D; background: var(--sage); }
+  .opt .vpill.mid { color: var(--faint); background: var(--surface-2); border: 1px solid var(--line); }
+  .opt .oname { font-family: var(--mono); font-size: .82rem; font-weight: 600; }
+  .opt h3 { font-size: 1.05rem; margin-bottom: 6px; }
+  .opt p { font-size: .9rem; color: var(--soft); margin: 0; }
+  .opt.pick { border-color: color-mix(in srgb, var(--sage) 42%, var(--line)); box-shadow: var(--shadow-lift); }
+  .opt ul { margin: 8px 0 0; padding-left: 18px; }
+  .opt li { font-size: .88rem; color: var(--soft); margin-bottom: 4px; }
+
+  /* roadmap */
+  .road { margin-top: 30px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .tier { border-radius: 16px; padding: 22px; }
+  .tier.now { background: linear-gradient(160deg, var(--sage-wash), var(--surface)); border: 1.5px solid color-mix(in srgb, var(--sage) 40%, var(--line)); box-shadow: var(--shadow-lift); }
+  .tier.soon { background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow); }
+  .tier.later { background: var(--surface); border: 1px dashed var(--line-strong); }
+  .tier .th { font-family: var(--mono); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; font-weight: 700; margin-bottom: 4px; }
+  .tier.now .th { color: var(--sage-deep); }
+  .tier.soon .th { color: var(--blue); }
+  .tier.later .th { color: var(--faint); }
+  .tier .ts { font-size: .82rem; color: var(--soft); margin-bottom: 14px; }
+  .tier ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+  .tier li { font-size: .9rem; display: grid; grid-template-columns: 16px 1fr; gap: 9px; align-items: start; line-height: 1.45; }
+  .tier li .mk { font-family: var(--mono); font-weight: 700; font-size: .8rem; line-height: 1.55; }
+  .tier.now li .mk { color: var(--sage); }
+  .tier.soon li .mk { color: var(--blue); }
+  .tier.later li .mk { color: var(--faint); }
+  .tier li b { color: var(--ink); }
+
+  /* discipline callout */
+  .warn { margin-top: 30px; background: var(--clay-wash); border: 1px solid color-mix(in srgb, var(--clay) 30%, var(--line)); border-left: 3px solid var(--clay); border-radius: 14px; padding: 24px 26px; }
+  .warn .kick { font-family: var(--mono); font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; color: var(--clay); font-weight: 700; display: block; margin-bottom: 10px; }
+  .warn p { margin: 0; font-size: 1rem; max-width: 80ch; color: var(--ink); }
+  .warn p + p { margin-top: 10px; color: var(--soft); }
+
+  footer { padding: 40px 0 64px; color: var(--faint); font-size: .82rem; font-family: var(--mono); border-top: 1px solid var(--line); }
+  footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+
+  @media (max-width: 900px) {
+    .grid-3 { grid-template-columns: 1fr; }
+    .road { grid-template-columns: 1fr; }
+    .uc-grid { grid-template-columns: 1fr; }
+    .colhead { grid-template-columns: 1fr; gap: 4px; }
+    .colhead .world { margin-top: 8px; }
+  }
+  @media (max-width: 820px) {
+    .hub { grid-template-columns: 1fr; gap: 14px; }
+    .conn { flex-direction: row; justify-content: center; padding: 6px 0; }
+    .lane .a { transform: rotate(90deg); display: inline-block; }
+    .opt { grid-template-columns: 1fr; gap: 14px; }
+    .layer { grid-template-columns: 1fr; gap: 6px; }
+  }
+</style>
+
+<header class="hero">
+  <div class="wrap rise">
+    <span class="namebadge"><span class="d"></span> Working name · Delta Connect</span>
+    <h1>Give your agents a way in - and a way to reach back out</h1>
+    <p class="lead">The harness left one space empty on purpose. This is the thin, reusable layer that fills it: normalize any inbound event into a Delta turn, then route the reply (or an unprompted nudge) back to whatever channel the person lives on. Telegram is the first adapter, not the point.</p>
+    <div class="bigidea">
+      <span class="kick">The one idea</span>
+      <p>It is not a Telegram bot. It is an <strong>agent I/O bus</strong> - the switchboard between the world's channels and events and a request/reply agent daemon. Every serious agent deployment quietly rebuilds this. Delta deliberately refuses to ship it inside the engine. That refusal is exactly what creates the reusable gap.</p>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">01 · The picture</p>
+    <h2>One hub, both directions</h2>
+    <p class="lead">Sources push events in; the hub normalizes them, remembers who is who, and hands the agent a clean turn. Replies and proactive nudges flow back out the same way. The agent never learns what a chat_id is.</p>
+
+    <div class="hub">
+      <div class="hub-col">
+        <div class="col-label">Channels &amp; events</div>
+        <div class="src"><span class="mk">TG</span> Telegram</div>
+        <div class="src"><span class="mk">SL</span> Slack</div>
+        <div class="src"><span class="mk">@</span> Email</div>
+        <div class="src evt"><span class="mk">WH</span> Webhooks</div>
+        <div class="src evt"><span class="mk">SMS</span> SMS / voice</div>
+        <div class="src evt"><span class="mk">⏱</span> Cron / timers</div>
+        <div class="src"><span class="mk">A→A</span> Other agents</div>
+      </div>
+
+      <div class="conn">
+        <div class="lane in"><span class="a">→</span> inbound</div>
+        <div class="lane out"><span class="a">←</span> outbound</div>
+      </div>
+
+      <div class="core">
+        <div class="ct">The gateway</div>
+        <div class="cn">Delta Connect</div>
+        <div class="fns">
+          <div class="fn">normalize event → turn</div>
+          <div class="fn">identity → user_id</div>
+          <div class="fn">session map + store</div>
+          <div class="fn">route reply / proactive</div>
+          <div class="fn">credential custody</div>
+        </div>
+      </div>
+
+      <div class="conn">
+        <div class="lane in"><span class="a">→</span> turn</div>
+        <div class="lane out"><span class="a">←</span> reply</div>
+      </div>
+
+      <div class="hub-col">
+        <div class="col-label">Runtime</div>
+        <div class="agent" style="flex:1">
+          <div class="big">Delta agent</div>
+          <div class="sub"><code>POST /v1/responses</code></div>
+          <div class="sub">durable sessions · on/off-able</div>
+          <div class="pure">engine stays pure</div>
+        </div>
+      </div>
+    </div>
+
+    <p class="hub-caption">The gateway is the only always-on part, and it is deliberately dumb: it holds sockets and moves bytes. All the intelligence stays in the agent, which can sleep between turns or run forever - the hub does not care. <b>Inbound and outbound share one contract</b>, which is what makes proactive messages (agent pings you first) fall out for free instead of being a second system.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">02 · Where it sits</p>
+    <h2>A layer, not a fork of the harness</h2>
+    <p class="lead">It does not replace the engine and it is not scope-creep on it. It fills the space Delta's own doctrine leaves for someone else, across the seam Delta already drew.</p>
+    <div class="layers">
+      <div class="layer"><div class="lname"><span class="num">L1 ·</span> Channels</div><div class="ldesc">Telegram, Slack, email, web, SMS, webhooks. The world, and the events in it.</div></div>
+      <div class="layer hl"><div class="lname"><span class="num">L2 ·</span> Delta Connect</div><div class="ldesc">The always-on piping. Normalizes inbound into turns, routes outbound to channels, owns the identity map and channel credentials. <strong>The new thing.</strong></div></div>
+      <div class="layer"><div class="lname"><span class="num">L3 ·</span> Delta harness</div><div class="ldesc">The agent runtime. Thin, zero-dep, product-neutral, on/off-able. Unchanged.</div></div>
+      <div class="layer"><div class="lname"><span class="num">L4 ·</span> Memory &amp; tools</div><div class="ldesc">MCP, local memory, skills, code. What the agent composes to actually do things.</div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">03 · What is inside it</p>
+    <h2>Six small parts, one tiny contract</h2>
+    <div class="grid-3">
+      <div class="cell"><div class="cm">adapters</div><h3>Channel adapters</h3><p>One small file per channel. The SDK does the hard part (long-poll, retries). A plain in-code map, not a plugin framework.</p></div>
+      <div class="cell"><div class="cm">normalize</div><h3>The normalizer</h3><p>Turns any inbound shape into <code>{ text, identity, sessionKey, attachments }</code>. This is the seam everything else hangs off.</p></div>
+      <div class="cell"><div class="cm">identity</div><h3>Identity resolution</h3><p>Maps a channel-native handle to one canonical <code>user_id</code> so Delta's session-ownership stays safe across channels and people.</p></div>
+      <div class="cell"><div class="cm">sessions</div><h3>Session store</h3><p>A tiny durable table: <code>identity → last resp_id</code>. Hands the same id back each turn for continuity across messages and restarts.</p></div>
+      <div class="cell"><div class="cm">router</div><h3>Outbound router</h3><p>A <code>send({ identity, text })</code> endpoint. The agent (or a timer) says "tell Nic X"; the router knows what "Nic on Telegram" means.</p></div>
+      <div class="cell"><div class="cm">custody</div><h3>Credential custody</h3><p>Bot tokens and channel keys live here, never in the agent. One place to rotate, allowlist, and gate who may talk to whom.</p></div>
+    </div>
+
+    <div class="codeblock">
+      <div class="head">the entire reusable surface, roughly</div>
+<pre><span class="c">// one adapter implements this. that is the whole contract.</span>
+<span class="k">interface</span> ChannelAdapter {
+  name: <span class="s">string</span>
+  listen(onMessage): <span class="s">void</span>     <span class="c">// inbound: push normalized events</span>
+  deliver(target, text): <span class="s">void</span>  <span class="c">// outbound: reply or proactive</span>
+}
+
+<span class="k">type</span> Inbound = {
+  text: <span class="s">string</span>
+  identity: <span class="s">string</span>     <span class="c">// -&gt; canonical user_id (ownership)</span>
+  sessionKey: <span class="s">string</span>   <span class="c">// -&gt; previous_response_id (continuity)</span>
+  attachments?: <span class="s">File[]</span>
+}</pre>
+      <div class="cap">Add a channel by writing one adapter against this. Nothing upstream changes. That is the difference between a leverageable tool and a pile of bespoke bots.</div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">04 · Why it is worth it</p>
+    <h2>Use cases well beyond our own</h2>
+    <p class="lead">The unifying shape is simple: any time an external event or conversation should reach an agent, and the agent should be able to reach back, this is the tool. Chat is just the most visible instance.</p>
+
+    <div class="usewrap">
+      <div class="colhead">
+        <div class="ours">For us · Carrara</div>
+        <div class="world">For anyone · the product case</div>
+      </div>
+      <div class="uc-grid">
+        <div class="uc o"><span class="tag">ours</span><h3>Dogfood the fleet daily</h3><p>Every Delta agent reachable from your phone. The fastest way to feel real strengths and gaps.</p></div>
+        <div class="uc w"><span class="tag">world</span><h3>Customer support agent</h3><p>A Delta agent behind a web widget, WhatsApp, or Slack. Inbound question in, answer out.</p></div>
+
+        <div class="uc o"><span class="tag">ours</span><h3>Brain &amp; Aperture over chat</h3><p>The Quarry Brain and Aperture agents get a channel presence with zero new runtime.</p></div>
+        <div class="uc w"><span class="tag">world</span><h3>Team ops bot in Slack</h3><p>An agent that lives in a company workspace, pinged in channels, does real work in thread.</p></div>
+
+        <div class="uc o"><span class="tag">ours</span><h3>Proactive chief of staff</h3><p>Morning brief, nudges, reminders - the outbound path turns a reactive agent into an ambient one.</p></div>
+        <div class="uc w"><span class="tag">world</span><h3>Email-driven agent</h3><p>Forward a thread; the agent triages, drafts, schedules. Email is just another adapter.</p></div>
+
+        <div class="uc o"><span class="tag">ours</span><h3>Echoes route to Deltas</h3><p>Agent-to-agent as a channel: one agent's outbound is another's inbound over the same bus.</p></div>
+        <div class="uc w"><span class="tag">world</span><h3>Webhook automation</h3><p>GitHub, Stripe, calendar events wake an agent. The gateway is the event front door.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">05 · How to package it</p>
+    <h2>Separate package - not the engine, not a whole repo</h2>
+    <p class="lead">Your instinct to reuse it is right, and the packaging is what protects it. Three options, one clear pick.</p>
+
+    <div class="pkg">
+      <div class="opt">
+        <div class="verdict"><div class="vpill no">✕ No</div><div class="oname">in the engine</div></div>
+        <div>
+          <h3>Inside <code>@carrara-labs/delta-harness</code></h3>
+          <p>Batteries-included, one install. But it breaks the three things that make the engine valuable:</p>
+          <ul>
+            <li>Drags channel SDKs (grammY, Slack) into a <b>zero-runtime-dep</b> binary.</li>
+            <li>Bloats the &lt;2k spine and the <b>&lt;10ms cold start</b> the whole design protects.</li>
+            <li>Directly violates the stated doctrine: <em>"NOT building: channels."</em> Hard no.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="opt pick">
+        <div class="verdict"><div class="vpill yes">✓ Pick</div><div class="oname">separate package</div></div>
+        <div>
+          <h3><code>@carrara-labs/delta-connect</code>, same workspace</h3>
+          <p>Its own package with its own deps and release cadence, living beside the engine so it can share the normalization types.</p>
+          <ul>
+            <li>Engine stays pure; users <b>opt in</b> only when they want channels.</li>
+            <li>The boundary already exists - it talks to the engine over the <b>public HTTP seam</b>, so nothing is forced.</li>
+            <li>Shared contract, coordinated evolution, minimal release overhead.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="opt">
+        <div class="verdict"><div class="vpill mid">~ Too much</div><div class="oname">separate repo</div></div>
+        <div>
+          <h3>A fully independent repository</h3>
+          <p>Maximal independence, but premature. You lose the shared-contract ergonomics and have to sync two histories to co-evolve one seam. Revisit only if it grows its own team or external contributors.</p>
+        </div>
+      </div>
+    </div>
+    <p style="margin-top:24px; color:var(--soft); font-size:.95rem; max-width:80ch;">Two homes, one contract: the standalone package serves the OSS self-hoster running a local daemon; the <span class="kbd">delta-agents</span> control plane grows an inbound receiver implementing the <b>same</b> contract for hosted agents. Write the seam once, deploy it twice.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">06 · What else to build</p>
+    <h2>Roadmap with a spine of discipline</h2>
+    <p class="lead">There is a real roadmap here, but the whole thing only works if the first build stays small and each later piece is pulled by real use, never pushed on spec.</p>
+
+    <div class="road">
+      <div class="tier now">
+        <div class="th">Build first</div>
+        <div class="ts">This week. The thing you use daily.</div>
+        <ul>
+          <li><span class="mk">1</span><span><b>Gateway core</b> - normalizer, session store, dispatch.</span></li>
+          <li><span class="mk">2</span><span><b>Telegram adapter</b> - long-poll, no public URL.</span></li>
+          <li><span class="mk">3</span><span><b>Identity map</b> - handle → canonical user_id.</span></li>
+          <li><span class="mk">4</span><span><b>Outbound + notify tool</b> - proactive from day one.</span></li>
+          <li><span class="mk">5</span><span><b>Allowlist</b> - only you can talk to it.</span></li>
+        </ul>
+      </div>
+      <div class="tier soon">
+        <div class="th">Pull by demand</div>
+        <div class="ts">When real usage asks for it.</div>
+        <ul>
+          <li><span class="mk">+</span><span><b>Second adapter</b> - Slack or email, whichever you reach for.</span></li>
+          <li><span class="mk">+</span><span><b>Attachments</b> - inbound files → <code>/v1/files</code>.</span></li>
+          <li><span class="mk">+</span><span><b>Scheduler bridge</b> - <code>schedule_self</code> → timed sends.</span></li>
+          <li><span class="mk">+</span><span><b>Contacts directory</b> - people ↔ their handles.</span></li>
+          <li><span class="mk">+</span><span><b>Streaming replies</b> - placeholder then edit-in-place.</span></li>
+        </ul>
+      </div>
+      <div class="tier later">
+        <div class="th">Later / maybe</div>
+        <div class="ts">Only with a concrete reason.</div>
+        <ul>
+          <li><span class="mk">·</span><span><b>Approval hook</b> - human-in-loop outbound (control plane has one).</span></li>
+          <li><span class="mk">·</span><span><b>Admin / observability</b> - conversations, delivery status.</span></li>
+          <li><span class="mk">·</span><span><b>More channels</b> - Discord, WhatsApp, voice.</span></li>
+          <li><span class="mk">·</span><span><b>Agent-to-agent fabric</b> - once two agents actually need it.</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="warn">
+      <span class="kick">The line that keeps it from becoming overbuilding</span>
+      <p>Hermes ships adapters for Signal, iMessage, WhatsApp, WeChat, QQ, Teams plus a plugin registry and relay transports. OpenClaw has ~25 platforms, each a plugin.json. <strong>That is precisely the mega-gateway Delta deliberately walked away from.</strong> If you set out to build "the universal channel gateway," you spend two weeks on an adapter framework and never dogfood the agent.</p>
+      <p>The discipline: <b>contract-first, one channel at a time, separate package, no registry.</b> The seam is free - naming the interface cleanly costs nothing. The framework is expensive and premature. Build Telegram, use it for two weeks, and let the second adapter earn its place.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>Delta Connect · architecture note</span>
+    <span>L2 gateway · reusable · out of the engine</span>
+  </div>
+</footer>

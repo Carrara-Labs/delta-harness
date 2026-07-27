@@ -1,0 +1,495 @@
+<title>Chatting with your own Delta agent</title>
+<style>
+  :root {
+    /* neutrals with a slight green bias, chosen not defaulted */
+    --bg: #F4F2EA;
+    --surface: #FCFBF6;
+    --surface-2: #EFEDE2;
+    --ink: #1E2018;
+    --soft: #575A4B;
+    --faint: #8B8D7C;
+    --line: #E0DDD0;
+    --line-strong: #CFCCBC;
+    /* sage accent - Delta's own hue */
+    --sage: #5E7355;
+    --sage-deep: #3E5137;
+    --sage-wash: #E7ECDF;
+    /* secondary: warm clay for "to build" / contrast in diagrams */
+    --clay: #A9603C;
+    --clay-wash: #F1E3D9;
+    --shadow: 0 1px 2px rgba(30,32,24,.04), 0 8px 24px rgba(30,32,24,.06);
+    --shadow-lift: 0 2px 6px rgba(30,32,24,.06), 0 18px 44px rgba(30,32,24,.10);
+
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12140D;
+      --surface: #1A1D14;
+      --surface-2: #22261A;
+      --ink: #ECEADD;
+      --soft: #AEB19F;
+      --faint: #7A7D6C;
+      --line: #2A2E20;
+      --line-strong: #3A3F2D;
+      --sage: #93AC88;
+      --sage-deep: #B0C8A5;
+      --sage-wash: #21281A;
+      --clay: #D08C64;
+      --clay-wash: #2E2318;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+      --shadow-lift: 0 2px 6px rgba(0,0,0,.35), 0 18px 44px rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #F4F2EA; --surface: #FCFBF6; --surface-2: #EFEDE2; --ink: #1E2018;
+    --soft: #575A4B; --faint: #8B8D7C; --line: #E0DDD0; --line-strong: #CFCCBC;
+    --sage: #5E7355; --sage-deep: #3E5137; --sage-wash: #E7ECDF;
+    --clay: #A9603C; --clay-wash: #F1E3D9;
+    --shadow: 0 1px 2px rgba(30,32,24,.04), 0 8px 24px rgba(30,32,24,.06);
+    --shadow-lift: 0 2px 6px rgba(30,32,24,.06), 0 18px 44px rgba(30,32,24,.10);
+  }
+  :root[data-theme="dark"] {
+    --bg: #12140D; --surface: #1A1D14; --surface-2: #22261A; --ink: #ECEADD;
+    --soft: #AEB19F; --faint: #7A7D6C; --line: #2A2E20; --line-strong: #3A3F2D;
+    --sage: #93AC88; --sage-deep: #B0C8A5; --sage-wash: #21281A;
+    --clay: #D08C64; --clay-wash: #2E2318;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    --shadow-lift: 0 2px 6px rgba(0,0,0,.35), 0 18px 44px rgba(0,0,0,.5);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "kern" 1;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 28px; }
+  section { padding: clamp(48px, 7vw, 92px) 0; border-top: 1px solid var(--line); }
+
+  /* subtle load reveal */
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  .rise { animation: rise .6s cubic-bezier(.2,.7,.2,1) both; }
+  @media (prefers-reduced-motion: reduce) { .rise { animation: none; } }
+
+  /* ---------- type ---------- */
+  h1 { font-size: clamp(2.4rem, 5.2vw, 4rem); line-height: 1.04; letter-spacing: -.02em; margin: 0; text-wrap: balance; font-weight: 680; }
+  h2 { font-size: clamp(1.5rem, 3vw, 2.1rem); line-height: 1.12; letter-spacing: -.015em; margin: 0 0 .5em; text-wrap: balance; font-weight: 660; }
+  h3 { font-size: 1.05rem; margin: 0; letter-spacing: -.01em; font-weight: 640; }
+  p { margin: 0 0 1em; max-width: 66ch; }
+  .lead { font-size: clamp(1.05rem, 1.6vw, 1.28rem); color: var(--soft); max-width: 60ch; }
+  .eyebrow {
+    font-family: var(--mono); font-size: .74rem; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--sage); font-weight: 600; margin: 0 0 22px;
+  }
+  .sect-label {
+    font-family: var(--mono); font-size: .72rem; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--faint); font-weight: 600; margin: 0 0 16px; display: flex; align-items: center; gap: 10px;
+  }
+  .sect-label::before { content: ""; width: 22px; height: 1px; background: var(--line-strong); }
+  code, .mono { font-family: var(--mono); font-size: .86em; }
+  .kbd {
+    font-family: var(--mono); font-size: .82em; background: var(--surface-2);
+    border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; color: var(--ink); white-space: nowrap;
+  }
+  em { font-style: normal; color: var(--sage-deep); font-weight: 600; }
+
+  /* ---------- hero ---------- */
+  .hero { padding-top: clamp(56px, 8vw, 104px); border-top: none; }
+  .hero .lead { margin-top: 22px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 30px; }
+  .chip {
+    font-family: var(--mono); font-size: .8rem; letter-spacing: .01em; font-weight: 600;
+    padding: 7px 14px; border-radius: 999px; background: var(--sage-wash); color: var(--sage-deep);
+    border: 1px solid transparent; display: inline-flex; align-items: center; gap: 8px;
+  }
+  .chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--sage); }
+
+  /* verdict band */
+  .verdict {
+    margin-top: 40px; background: var(--surface); border: 1px solid var(--line);
+    border-left: 3px solid var(--sage); border-radius: 14px; padding: 26px 28px; box-shadow: var(--shadow);
+  }
+  .verdict p { margin: 0; font-size: 1.08rem; max-width: 74ch; }
+  .verdict strong { color: var(--ink); }
+
+  /* ---------- diagram primitives ---------- */
+  .node {
+    background: var(--surface); border: 1px solid var(--line-strong); border-radius: 12px;
+    padding: 16px 18px; box-shadow: var(--shadow); min-width: 0;
+  }
+  .node .tag { font-family: var(--mono); font-size: .68rem; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); font-weight: 600; }
+  .node .title { font-weight: 640; font-size: 1rem; margin-top: 3px; letter-spacing: -.01em; }
+  .node .sub { color: var(--soft); font-size: .88rem; margin-top: 5px; line-height: 1.45; }
+  .node.sage { border-color: color-mix(in srgb, var(--sage) 45%, var(--line-strong)); }
+  .node.sage .tag { color: var(--sage); }
+  .node.clay { border-color: color-mix(in srgb, var(--clay) 45%, var(--line-strong)); }
+  .node.clay .tag { color: var(--clay); }
+  .node.ghost { background: var(--surface-2); border-style: dashed; box-shadow: none; }
+
+  .arrow { display: flex; align-items: center; justify-content: center; color: var(--faint); font-family: var(--mono); flex: 0 0 auto; }
+  .arrow span { font-size: 1.3rem; line-height: 1; }
+
+  /* ---------- tension diagram ---------- */
+  .tension { display: grid; gap: 20px; margin-top: 34px; }
+  .tension-row {
+    display: grid; grid-template-columns: 148px 1fr; gap: 22px; align-items: center;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; box-shadow: var(--shadow);
+  }
+  .tension-row .rowlabel { font-family: var(--mono); font-size: .78rem; letter-spacing: .04em; font-weight: 600; text-transform: uppercase; }
+  .tension-row.worry .rowlabel { color: var(--clay); }
+  .tension-row.fix .rowlabel { color: var(--sage); }
+  .tension-row.fix { border-color: color-mix(in srgb, var(--sage) 30%, var(--line)); }
+  .flow { display: flex; align-items: stretch; gap: 12px; flex-wrap: wrap; }
+  .flow .node { flex: 1 1 150px; }
+  .clash { color: var(--clay); font-family: var(--mono); font-weight: 700; align-self: center; padding: 0 4px; }
+
+  .callout-line {
+    margin-top: 28px; font-size: 1.12rem; line-height: 1.5; max-width: 70ch; color: var(--ink);
+    padding-left: 20px; border-left: 3px solid var(--sage);
+  }
+  .callout-line b { color: var(--sage-deep); }
+
+  /* ---------- inventory cards ---------- */
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 34px; }
+  .inv {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 24px; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; transition: transform .2s ease, box-shadow .2s ease;
+  }
+  .inv:hover { transform: translateY(-3px); box-shadow: var(--shadow-lift); }
+  .inv .repo { font-family: var(--mono); font-size: .74rem; color: var(--sage); letter-spacing: .04em; font-weight: 600; }
+  .inv h3 { margin-top: 6px; }
+  .inv .desc { color: var(--soft); font-size: .9rem; margin: 10px 0 18px; }
+  .checklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .checklist li { display: grid; grid-template-columns: 20px 1fr; gap: 10px; font-size: .9rem; line-height: 1.45; align-items: start; }
+  .checklist .ic { font-family: var(--mono); font-weight: 700; font-size: .82rem; line-height: 1.5; text-align: center; }
+  .checklist li.have .ic { color: var(--sage); }
+  .checklist li.build .ic { color: var(--clay); }
+  .checklist li b { color: var(--ink); font-weight: 620; }
+  .divider-mini { height: 1px; background: var(--line); margin: 16px 0; }
+  .legend { display: flex; gap: 20px; margin-top: 26px; font-size: .82rem; color: var(--soft); font-family: var(--mono); flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; }
+  .dot.s { background: var(--sage); } .dot.c { background: var(--clay); }
+
+  /* ---------- the chat loop ---------- */
+  .loop { display: flex; flex-direction: column; gap: 0; margin-top: 34px; }
+  .step {
+    display: grid; grid-template-columns: 54px 1fr; gap: 22px; align-items: start;
+    padding: 20px 0; position: relative;
+  }
+  .step:not(:last-child)::after {
+    content: ""; position: absolute; left: 26px; top: 54px; bottom: -6px; width: 2px;
+    background: linear-gradient(var(--line-strong), var(--line));
+  }
+  .step .num {
+    width: 54px; height: 54px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line-strong);
+    display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-weight: 700;
+    font-size: 1.1rem; color: var(--sage-deep); box-shadow: var(--shadow); z-index: 1; flex: 0 0 auto;
+  }
+  .step .body h3 { margin-bottom: 5px; }
+  .step .body p { color: var(--soft); font-size: .92rem; margin: 0; }
+  .step .body .meta { font-family: var(--mono); font-size: .78rem; color: var(--faint); margin-top: 8px; }
+  .step .body .meta code { color: var(--sage-deep); }
+
+  /* ---------- two paths ---------- */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 34px; align-items: start; }
+  .path {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 28px; box-shadow: var(--shadow);
+    position: relative; display: flex; flex-direction: column;
+  }
+  .path.pick { border-color: color-mix(in srgb, var(--sage) 42%, var(--line)); box-shadow: var(--shadow-lift); }
+  .path .ribbon {
+    position: absolute; top: -12px; left: 24px; font-family: var(--mono); font-size: .68rem; letter-spacing: .1em;
+    text-transform: uppercase; font-weight: 700; background: var(--sage); color: #fff; padding: 5px 12px; border-radius: 999px;
+  }
+  :root[data-theme="dark"] .path .ribbon, @media (prefers-color-scheme: dark) { }
+  .path .ptag { font-family: var(--mono); font-size: .74rem; letter-spacing: .06em; color: var(--faint); font-weight: 600; text-transform: uppercase; }
+  .path h3 { font-size: 1.32rem; margin: 8px 0 4px; letter-spacing: -.015em; }
+  .path .ptagline { color: var(--soft); font-size: .94rem; margin-bottom: 20px; }
+  .specs { display: flex; flex-direction: column; gap: 0; margin-top: 4px; }
+  .spec { display: grid; grid-template-columns: 96px 1fr; gap: 14px; padding: 11px 0; border-top: 1px solid var(--line); font-size: .9rem; }
+  .spec:first-child { border-top: none; }
+  .spec .k { font-family: var(--mono); font-size: .74rem; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); padding-top: 2px; }
+  .spec .v { color: var(--ink); }
+  .spec .v.good { color: var(--sage-deep); font-weight: 600; }
+  .spec .v.warn { color: var(--clay); font-weight: 600; }
+
+  /* recommendation */
+  .reco {
+    background: linear-gradient(160deg, var(--sage-wash), var(--surface));
+    border: 1px solid color-mix(in srgb, var(--sage) 30%, var(--line));
+    border-radius: 20px; padding: clamp(30px, 5vw, 48px); box-shadow: var(--shadow-lift); margin-top: 12px;
+  }
+  .reco .eyebrow { color: var(--sage-deep); }
+  .reco h2 { max-width: 20ch; }
+  .reco p { font-size: 1.06rem; max-width: 72ch; color: var(--soft); }
+  .reco p strong { color: var(--ink); }
+  .reco .cta {
+    margin-top: 24px; display: inline-flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: .9rem;
+    background: var(--sage-deep); color: #F4F2EA; padding: 12px 20px; border-radius: 10px; font-weight: 600; text-decoration: none;
+  }
+  :root[data-theme="dark"] .reco .cta { background: var(--sage); color: #12140D; }
+
+  /* later */
+  .later { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 30px; }
+  .later .card { background: var(--surface); border: 1px dashed var(--line-strong); border-radius: 14px; padding: 22px 24px; }
+  .later .card .ptag { font-family: var(--mono); font-size: .72rem; letter-spacing: .06em; color: var(--clay); text-transform: uppercase; font-weight: 600; }
+  .later .card h3 { margin: 8px 0 8px; font-size: 1.05rem; }
+  .later .card p { font-size: .9rem; color: var(--soft); margin: 0; }
+
+  footer { padding: 40px 0 64px; color: var(--faint); font-size: .82rem; font-family: var(--mono); border-top: 1px solid var(--line); }
+  footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+
+  /* responsive */
+  @media (max-width: 860px) {
+    .grid-3 { grid-template-columns: 1fr; }
+    .grid-2 { grid-template-columns: 1fr; }
+    .later { grid-template-columns: 1fr; }
+    .tension-row { grid-template-columns: 1fr; gap: 14px; }
+  }
+  @media (max-width: 560px) {
+    .flow { flex-direction: column; }
+    .arrow span { transform: rotate(90deg); }
+    .clash { align-self: flex-start; }
+  }
+</style>
+
+<header class="hero">
+  <div class="wrap rise">
+    <p class="eyebrow">Feasibility assessment · Dogfooding Delta</p>
+    <h1>Chatting with your own Delta agent</h1>
+    <p class="lead">Run a Delta agent on the Mac Mini, talk to it from Telegram, and lean on it every day to feel out its strengths and weaknesses. Four probes swept the harness, the control plane, and the reference agents. Here is everything they found.</p>
+    <div class="chips">
+      <span class="chip">Feasible</span>
+      <span class="chip">Small lift</span>
+      <span class="chip">The tension dissolves</span>
+    </div>
+    <div class="verdict">
+      <p><strong>Bottom line.</strong> The full chat loop already lives at Delta's HTTP seam - you build a thin shim, not an engine. On an always-on Mac Mini the daemon idles at <span class="kbd">~30MB</span>, so the "agent is off, chat wants it on" worry never bites. A working chat UI even exists already inside the control plane. The realistic starting point is a single-file Telegram bot: roughly <strong>half a day</strong> to something you use daily.</p>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">01 · The architecture question</p>
+    <h2>The tension you named - and why it dissolves</h2>
+    <p class="lead">Delta's signature trait is scale-to-zero: an agent can be switched fully off and woken on demand. A live chat, by contrast, wants something listening at all times. That looks like a conflict. It is not.</p>
+
+    <div class="tension">
+      <div class="tension-row worry">
+        <div class="rowlabel">The worry</div>
+        <div class="flow">
+          <div class="node clay"><div class="tag">Telegram</div><div class="title">Always listening</div><div class="sub">a socket has to stay open</div></div>
+          <div class="clash">✕ vs</div>
+          <div class="node ghost"><div class="tag">Delta agent</div><div class="title">Fully off at rest</div><div class="sub">wakes only when called</div></div>
+        </div>
+      </div>
+
+      <div class="tension-row fix">
+        <div class="rowlabel">The resolution</div>
+        <div class="flow">
+          <div class="node clay"><div class="tag">Telegram</div><div class="title">Always listening</div><div class="sub">holds the chat socket</div></div>
+          <div class="arrow"><span>→</span></div>
+          <div class="node sage"><div class="tag">Shim · ~100 lines</div><div class="title">The only always-on part</div><div class="sub">dumb poll-and-forward</div></div>
+          <div class="arrow"><span>→</span></div>
+          <div class="node"><div class="tag">Delta agent</div><div class="title">Durable, wake-on-message</div><div class="sub">SQLite WAL, resumable</div></div>
+        </div>
+      </div>
+    </div>
+
+    <p class="callout-line">The always-on piece is a <b>dumb socket-holder</b>, not the intelligence. That is a cleaner split than Hermes or OpenClaw, which fuse the socket and the agent into one always-on process. And on a Mac Mini you can sidestep the whole question: keep the daemon running at <b>~30MB</b> and skip scale-to-zero entirely - it is a cloud-cost trick you do not need on hardware you already leave on.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">02 · What the probes found</p>
+    <h2>Most of the machinery already exists</h2>
+    <p class="lead">Across three repositories, the picture is consistent: the hard parts (durable sessions, a clean request/reply seam, a turn engine, even a chat UI) are built. What is missing is small and predictable.</p>
+
+    <div class="grid-3">
+      <div class="inv">
+        <div class="repo">delta-harness</div>
+        <h3>The engine</h3>
+        <div class="desc">The in-VM agent loop. Ships no channel code on purpose.</div>
+        <ul class="checklist">
+          <li class="have"><span class="ic">✓</span><span><b>Sync request/reply seam.</b> <code class="mono">POST /v1/responses</code> → <code class="mono">output_text</code>. One call in, one reply out.</span></li>
+          <li class="have"><span class="ic">✓</span><span><b>Durable sessions</b> thread via <code class="mono">previous_response_id</code> and survive off/on cycles.</span></li>
+          <li class="have"><span class="ic">✓</span><span><b>Suspend-safety + auth.</b> <code class="mono">/v1/busy</code> signal, bearer token, per-session ownership.</span></li>
+        </ul>
+        <div class="divider-mini"></div>
+        <ul class="checklist">
+          <li class="build"><span class="ic">+</span><span><b>Nothing in the engine.</b> Channels are an explicit non-goal - correctly so.</span></li>
+        </ul>
+      </div>
+
+      <div class="inv">
+        <div class="repo">delta-agents</div>
+        <h3>The control plane</h3>
+        <div class="desc">Provisions and hosts agents on Fly microVMs from Railway.</div>
+        <ul class="checklist">
+          <li class="have"><span class="ic">✓</span><span><b>A chat UI already exists.</b> Dashboard has text box, send, poll-for-reply, threads, plan cards.</span></li>
+          <li class="have"><span class="ic">✓</span><span><b>Robust turn engine</b> with per-user FIFO, background runs, memory threading.</span></li>
+          <li class="have"><span class="ic">✓</span><span><b>Suspend / resume primitives</b> - warm resume clocked at <code class="mono">~2.7s</code>.</span></li>
+        </ul>
+        <div class="divider-mini"></div>
+        <ul class="checklist">
+          <li class="build"><span class="ic">+</span><span><b>Wake-on-message.</b> Today a suspended agent returns <code class="mono">409</code>; swap that for a <code class="mono">resume()</code>.</span></li>
+          <li class="build"><span class="ic">+</span><span><b>Auto-suspend on idle.</b> A small post-turn ticker. Both use functions that exist.</span></li>
+        </ul>
+      </div>
+
+      <div class="inv">
+        <div class="repo">.refs</div>
+        <h3>Reference agents</h3>
+        <div class="desc">Hermes, OpenClaw, Pi - studied for the proven pattern.</div>
+        <ul class="checklist">
+          <li class="have"><span class="ic">✓</span><span><b>Two converge on one shape.</b> A long-poll listener → session map → call agent → post reply.</span></li>
+          <li class="have"><span class="ic">✓</span><span><b>Long-poll needs no public URL.</b> Just outbound HTTPS - ideal for a home box behind NAT.</span></li>
+          <li class="have"><span class="ic">✓</span><span><b>The relay split</b> (Hermes) is the escape hatch if you ever want the agent to scale to zero.</span></li>
+        </ul>
+        <div class="divider-mini"></div>
+        <ul class="checklist">
+          <li class="build"><span class="ic">+</span><span><b>Pi skips chat entirely</b> - useful only as a supervisor/lifecycle reference.</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="legend">
+      <span><span class="dot s"></span> Already exists</span>
+      <span><span class="dot c"></span> To build (small)</span>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">03 · The recommended architecture</p>
+    <h2>The five-part chat loop</h2>
+    <p class="lead">Both Hermes and OpenClaw reduce to the same seam. For Delta on the Mac Mini it is a single always-on file in front of the local daemon. This is the whole thing.</p>
+
+    <div class="loop">
+      <div class="step">
+        <div class="num">1</div>
+        <div class="body">
+          <h3>You message the bot from your phone</h3>
+          <p>A Telegram bot you create with @BotFather. Nothing else on the phone side.</p>
+          <div class="meta">requires: <code>TELEGRAM_BOT_TOKEN</code></div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="num">2</div>
+        <div class="body">
+          <h3>The shim pulls updates by long-poll</h3>
+          <p>One resident process runs <code class="mono">getUpdates</code> via a maintained SDK (grammY). No public URL, no TLS, no webhook - just outbound HTTPS from the Mac Mini.</p>
+          <div class="meta">the only always-on component</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="num">3</div>
+        <div class="body">
+          <h3>It maps your chat to a Delta session</h3>
+          <p>A tiny table: <code class="mono">chat_id → last resp_id</code>. Handing the same id back each turn is what gives the conversation continuity across messages - and across restarts.</p>
+          <div class="meta">key: <code>telegram:{chat_type}:{chat_id}</code></div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="num">4</div>
+        <div class="body">
+          <h3>It calls the local daemon</h3>
+          <p>A single HTTP POST to the Delta agent running on loopback. The daemon wakes if needed, runs the turn against durable state, and returns the answer.</p>
+          <div class="meta"><code>POST localhost/v1/responses</code> → <code>{ output_text }</code></div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="num">5</div>
+        <div class="body">
+          <h3>It posts the reply back to you</h3>
+          <p>Simplest: send the final text. Nicer later: one placeholder message, then edit it as tokens stream - Hermes' universal edit-transport, which works the same on Telegram, Slack, and Discord.</p>
+          <div class="meta">optional hardening: allowlist your own <code>chat_id</code></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">04 · Two ways to get there</p>
+    <h2>Pick the surface</h2>
+    <p class="lead">Both work and both dogfood the agent. They differ in effort, risk, and where you end up talking to it.</p>
+
+    <div class="grid-2">
+      <div class="path pick">
+        <span class="ribbon">Recommended start</span>
+        <div class="ptag">Path A</div>
+        <h3>Telegram shim, local daemon</h3>
+        <div class="ptagline">Phone-first, ambient, the truest day-to-day dogfood.</div>
+        <div class="specs">
+          <div class="spec"><div class="k">Lift</div><div class="v good">~100-150 lines, half a day</div></div>
+          <div class="spec"><div class="k">New code</div><div class="v">One Bun/TS file + a mapping table</div></div>
+          <div class="spec"><div class="k">Infra</div><div class="v good">No public URL, no deploy, no NAT setup</div></div>
+          <div class="spec"><div class="k">Risk</div><div class="v good">Zero production surface touched</div></div>
+          <div class="spec"><div class="k">Scale-to-zero</div><div class="v">Not needed - Mac Mini is already on</div></div>
+        </div>
+      </div>
+
+      <div class="path">
+        <div class="ptag">Path B</div>
+        <h3>The control-plane chat UI</h3>
+        <div class="ptagline">Richer inspection: plan cards, tools, usage, threads.</div>
+        <div class="specs">
+          <div class="spec"><div class="k">Lift</div><div class="v">UI built; 2 small gaps to close</div></div>
+          <div class="spec"><div class="k">New code</div><div class="v">Wake-on-message + idle auto-suspend</div></div>
+          <div class="spec"><div class="k">Infra</div><div class="v warn">Touches prod control plane + a deploy</div></div>
+          <div class="spec"><div class="k">Risk</div><div class="v warn">Rides the scale-to-zero confirm list</div></div>
+          <div class="spec"><div class="k">Best for</div><div class="v">Inspecting a run in depth, later</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="reco">
+      <p class="eyebrow">The recommendation</p>
+      <h2>Start with the local Telegram shim on the Mac Mini.</h2>
+      <p>It is the smallest new surface, has no production risk, needs no webhook or NAT gymnastics, and the always-on Mac makes the scale-to-zero question moot for v1. It gives you real, ambient, day-to-day dogfooding the fastest. The <strong>control-plane chat UI is already there</strong> as the complement whenever you want to inspect a run in depth. If you later want the agent itself to scale to zero, graft on Hermes' relay split - the shim becomes the tiny always-on connector and the agent sleeps between messages.</p>
+      <a class="cta" href="#">→ Next: draft and locally test the shim end-to-end</a>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">05 · Decide later, not now</p>
+    <h2>Two open threads</h2>
+    <div class="later">
+      <div class="card">
+        <div class="ptag">Proactive messages</div>
+        <h3>Should the agent ping you unprompted?</h3>
+        <p>v1 just relays replies. If you later want the agent to message you on its own (reminders, nudges), wire a Telegram-send capability as an MCP tool, or fire it from a timer in the shim. The built-in <span class="kbd">schedule_self</span> path needs a control-plane callback the shim can play.</p>
+      </div>
+      <div class="card">
+        <div class="ptag">Slack</div>
+        <h3>Skip it for v1.</h3>
+        <p>Slack's Events API wants a public webhook URL - more setup for a home box. Telegram long-poll is strictly easier. The existing Slack code in the control plane is outbound-only and approval-gated anyway, not a two-way chat channel.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>Delta harness · feasibility assessment</span>
+    <span>Probes: harness seam · control plane · reference agents · docs</span>
+  </div>
+</footer>

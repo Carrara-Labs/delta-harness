@@ -1,0 +1,11 @@
+{
+  "name": "@carrara-labs/delta-connect",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Thin channel edge that plugs a Delta agent into chat channels. Telegram first. Zero runtime deps.",
+  "scripts": {
+    "start": "bun src/index.ts",
+    "test": "bun test"
+  }
+}

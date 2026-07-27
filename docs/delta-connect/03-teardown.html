@@ -1,0 +1,499 @@
+<title>Delta Connect - learning from Hermes and OpenClaw</title>
+<style>
+  :root {
+    --bg: #F4F2EA; --surface: #FCFBF6; --surface-2: #EFEDE2; --ink: #1E2018;
+    --soft: #575A4B; --faint: #8B8D7C; --line: #E0DDD0; --line-strong: #CFCCBC;
+    --sage: #5E7355; --sage-deep: #3E5137; --sage-wash: #E7ECDF;
+    --clay: #A9603C; --clay-wash: #F1E3D9;
+    --blue: #4C6A82; --blue-wash: #E1E9EF;
+    --shadow: 0 1px 2px rgba(30,32,24,.04), 0 8px 24px rgba(30,32,24,.06);
+    --shadow-lift: 0 2px 6px rgba(30,32,24,.06), 0 18px 44px rgba(30,32,24,.10);
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12140D; --surface: #1A1D14; --surface-2: #22261A; --ink: #ECEADD;
+      --soft: #AEB19F; --faint: #7A7D6C; --line: #2A2E20; --line-strong: #3A3F2D;
+      --sage: #93AC88; --sage-deep: #B0C8A5; --sage-wash: #21281A;
+      --clay: #D08C64; --clay-wash: #2E2318; --blue: #86A6C0; --blue-wash: #1B2530;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+      --shadow-lift: 0 2px 6px rgba(0,0,0,.35), 0 18px 44px rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #F4F2EA; --surface: #FCFBF6; --surface-2: #EFEDE2; --ink: #1E2018;
+    --soft: #575A4B; --faint: #8B8D7C; --line: #E0DDD0; --line-strong: #CFCCBC;
+    --sage: #5E7355; --sage-deep: #3E5137; --sage-wash: #E7ECDF;
+    --clay: #A9603C; --clay-wash: #F1E3D9; --blue: #4C6A82; --blue-wash: #E1E9EF;
+    --shadow: 0 1px 2px rgba(30,32,24,.04), 0 8px 24px rgba(30,32,24,.06);
+    --shadow-lift: 0 2px 6px rgba(30,32,24,.06), 0 18px 44px rgba(30,32,24,.10);
+  }
+  :root[data-theme="dark"] {
+    --bg: #12140D; --surface: #1A1D14; --surface-2: #22261A; --ink: #ECEADD;
+    --soft: #AEB19F; --faint: #7A7D6C; --line: #2A2E20; --line-strong: #3A3F2D;
+    --sage: #93AC88; --sage-deep: #B0C8A5; --sage-wash: #21281A;
+    --clay: #D08C64; --clay-wash: #2E2318; --blue: #86A6C0; --blue-wash: #1B2530;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    --shadow-lift: 0 2px 6px rgba(0,0,0,.35), 0 18px 44px rgba(0,0,0,.5);
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 28px; }
+  section { padding: clamp(46px, 6.5vw, 84px) 0; border-top: 1px solid var(--line); }
+
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  .rise { animation: rise .6s cubic-bezier(.2,.7,.2,1) both; }
+  @media (prefers-reduced-motion: reduce) { .rise { animation: none; } }
+
+  h1 { font-size: clamp(2.3rem, 5vw, 3.8rem); line-height: 1.04; letter-spacing: -.02em; margin: 0; text-wrap: balance; font-weight: 680; }
+  h2 { font-size: clamp(1.5rem, 3vw, 2.15rem); line-height: 1.12; letter-spacing: -.015em; margin: 0 0 .5em; text-wrap: balance; font-weight: 660; }
+  h3 { font-size: 1.05rem; margin: 0; letter-spacing: -.01em; font-weight: 640; }
+  p { margin: 0 0 1em; max-width: 70ch; }
+  .lead { font-size: clamp(1.05rem, 1.6vw, 1.26rem); color: var(--soft); max-width: 64ch; }
+  .eyebrow { font-family: var(--mono); font-size: .74rem; letter-spacing: .18em; text-transform: uppercase; color: var(--sage); font-weight: 600; margin: 0 0 20px; }
+  .sect-label { font-family: var(--mono); font-size: .72rem; letter-spacing: .16em; text-transform: uppercase; color: var(--faint); font-weight: 600; margin: 0 0 16px; display: flex; align-items: center; gap: 10px; }
+  .sect-label::before { content: ""; width: 22px; height: 1px; background: var(--line-strong); }
+  code, .mono { font-family: var(--mono); font-size: .86em; }
+  .kbd { font-family: var(--mono); font-size: .82em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; color: var(--ink); white-space: nowrap; }
+  b, strong { color: var(--ink); font-weight: 640; }
+  em { font-style: normal; color: var(--sage-deep); font-weight: 600; }
+
+  /* hero */
+  .hero { padding-top: clamp(54px, 8vw, 100px); border-top: none; }
+  .namebadge { display: inline-flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: .76rem; letter-spacing: .04em; color: var(--sage-deep); background: var(--sage-wash); border: 1px solid color-mix(in srgb, var(--sage) 24%, var(--line)); padding: 6px 12px; border-radius: 999px; margin-bottom: 24px; font-weight: 600; }
+  .namebadge .d { width: 8px; height: 8px; border-radius: 50%; background: var(--sage); }
+  .hero .lead { margin-top: 22px; }
+  .thesis { margin-top: 36px; background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--sage); border-radius: 14px; padding: 24px 26px; box-shadow: var(--shadow); }
+  .thesis p { margin: 0; font-size: 1.08rem; max-width: 82ch; }
+  .thesis .kick { font-family: var(--mono); font-size: .72rem; letter-spacing: .14em; text-transform: uppercase; color: var(--sage); font-weight: 600; display: block; margin-bottom: 10px; }
+  .sources { margin-top: 18px; font-family: var(--mono); font-size: .74rem; color: var(--faint); }
+
+  /* corrections strip */
+  .correx { margin-top: 20px; background: var(--sage-wash); border: 1px solid color-mix(in srgb, var(--sage) 26%, var(--line)); border-radius: 14px; padding: 20px 24px; }
+  .correx .ck { font-family: var(--mono); font-size: .7rem; letter-spacing: .12em; text-transform: uppercase; color: var(--sage-deep); font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  .correx ul { margin: 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+  .correx li { font-size: .9rem; color: var(--ink); display: grid; grid-template-columns: 18px 1fr; gap: 8px; align-items: start; }
+  .correx li .m { color: var(--clay); font-family: var(--mono); font-weight: 700; }
+  .correx li b { color: var(--sage-deep); }
+
+  /* premise diagram */
+  .premise { margin-top: 34px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .stack { border-radius: 16px; padding: 22px; border: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow); }
+  .stack.them { border-color: color-mix(in srgb, var(--clay) 26%, var(--line)); }
+  .stack.us { border-color: color-mix(in srgb, var(--sage) 36%, var(--line)); background: linear-gradient(165deg, var(--sage-wash), var(--surface)); box-shadow: var(--shadow-lift); }
+  .stack .sh { font-family: var(--mono); font-size: .74rem; letter-spacing: .08em; text-transform: uppercase; font-weight: 700; margin-bottom: 4px; }
+  .stack.them .sh { color: var(--clay); }
+  .stack.us .sh { color: var(--sage-deep); }
+  .stack .ss { font-size: .86rem; color: var(--soft); margin-bottom: 16px; }
+  .brick { border-radius: 9px; padding: 10px 13px; font-size: .84rem; margin-bottom: 8px; border: 1px solid var(--line); background: var(--surface-2); }
+  .brick .bt { font-weight: 620; }
+  .brick .bd { color: var(--soft); font-size: .8rem; }
+  .brick.core { background: color-mix(in srgb, var(--sage-wash) 55%, var(--surface)); border-color: color-mix(in srgb, var(--sage) 28%, var(--line)); }
+  .brick.core .bt { color: var(--sage-deep); }
+  .brick.keep { background: color-mix(in srgb, var(--sage-wash) 30%, var(--surface)); border-color: color-mix(in srgb, var(--sage) 22%, var(--line)); }
+  .brick.keep .bt { color: var(--sage-deep); }
+  .brick.keep .bt::before { content: "keep · "; color: var(--sage); font-family: var(--mono); font-size: .72rem; font-weight: 700; }
+  .brick.dead { opacity: .58; }
+  .brick.dead .bt { text-decoration: line-through; text-decoration-color: var(--clay); text-decoration-thickness: 1.5px; }
+  .brick.gone { border-style: dashed; background: transparent; }
+  .brick.gone .bt { color: var(--faint); }
+
+  /* comparison table */
+  .tablewrap { margin-top: 32px; overflow-x: auto; border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
+  table { border-collapse: collapse; width: 100%; min-width: 720px; background: var(--surface); }
+  th, td { text-align: left; padding: 14px 18px; border-bottom: 1px solid var(--line); font-size: .9rem; vertical-align: top; }
+  thead th { font-family: var(--mono); font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); font-weight: 600; background: var(--surface-2); }
+  thead th.delta { color: var(--sage-deep); }
+  tbody th { font-family: var(--mono); font-size: .78rem; font-weight: 600; color: var(--soft); white-space: nowrap; }
+  td.delta { background: color-mix(in srgb, var(--sage-wash) 40%, var(--surface)); color: var(--ink); font-weight: 520; }
+  td.them { color: var(--soft); }
+  tr:last-child th, tr:last-child td { border-bottom: none; }
+  .num { font-family: var(--mono); font-size: .84em; }
+
+  /* steal / delete */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 32px; align-items: start; }
+  .panel { border-radius: 16px; padding: 24px; border: 1px solid var(--line); box-shadow: var(--shadow); }
+  .panel.steal { background: linear-gradient(160deg, var(--sage-wash), var(--surface)); border-color: color-mix(in srgb, var(--sage) 34%, var(--line)); }
+  .panel.delete { background: var(--surface); }
+  .panel .ph { font-family: var(--mono); font-size: .74rem; letter-spacing: .08em; text-transform: uppercase; font-weight: 700; margin-bottom: 3px; }
+  .panel.steal .ph { color: var(--sage-deep); }
+  .panel.delete .ph { color: var(--clay); }
+  .panel .psub { font-size: .86rem; color: var(--soft); margin-bottom: 18px; }
+  .item { padding: 13px 0; border-top: 1px solid var(--line); }
+  .item:first-of-type { border-top: none; }
+  .item .it { font-weight: 620; font-size: .95rem; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .src-tag { font-family: var(--mono); font-size: .62rem; letter-spacing: .04em; text-transform: uppercase; font-weight: 700; padding: 2px 7px; border-radius: 999px; }
+  .src-tag.h { color: var(--blue); background: var(--blue-wash); }
+  .src-tag.o { color: var(--clay); background: var(--clay-wash); }
+  .src-tag.both { color: var(--sage-deep); background: var(--sage-wash); }
+  .item .id { font-size: .86rem; color: var(--soft); margin-top: 5px; }
+  .item.del .it { color: var(--soft); }
+  .item.del .it .x { color: var(--clay); font-family: var(--mono); font-weight: 700; }
+  .item .becomes { font-size: .84rem; margin-top: 5px; color: var(--sage-deep); }
+  .item .becomes b { color: var(--sage-deep); }
+
+  /* supervisor */
+  .iface { margin-top: 28px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: var(--shadow); }
+  .iface .head { font-family: var(--mono); font-size: .72rem; letter-spacing: .04em; color: var(--faint); padding: 12px 18px; border-bottom: 1px solid var(--line); background: var(--surface); }
+  .iface pre { margin: 0; padding: 18px 20px; overflow-x: auto; font-family: var(--mono); font-size: .84rem; line-height: 1.7; color: var(--ink); }
+  .iface .k { color: var(--sage-deep); font-weight: 600; }
+  .iface .c { color: var(--faint); }
+  .waketable { margin-top: 20px; }
+  .keyline { margin-top: 22px; font-size: 1.06rem; line-height: 1.5; max-width: 78ch; padding-left: 20px; border-left: 3px solid var(--sage); }
+  .keyline b { color: var(--sage-deep); }
+
+  /* two shapes */
+  .shapes { margin-top: 30px; display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+  .shape { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 24px; box-shadow: var(--shadow); }
+  .shape .st { font-family: var(--mono); font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--sage); font-weight: 700; }
+  .shape h3 { margin: 6px 0 4px; font-size: 1.15rem; }
+  .shape .sd { color: var(--soft); font-size: .9rem; margin-bottom: 16px; }
+  .pipe { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: .8rem; }
+  .pnode { font-family: var(--mono); font-size: .74rem; background: var(--surface-2); border: 1px solid var(--line-strong); border-radius: 8px; padding: 7px 10px; }
+  .pnode.hl { background: var(--sage-wash); border-color: color-mix(in srgb, var(--sage) 30%, var(--line)); color: var(--sage-deep); font-weight: 600; }
+  .pnode.sleep { border-style: dashed; color: var(--faint); }
+  .parrow { color: var(--faint); font-family: var(--mono); }
+  .shape ul { margin: 16px 0 0; padding-left: 18px; }
+  .shape li { font-size: .86rem; color: var(--soft); margin-bottom: 5px; }
+  .shape .pkg { margin-top: 14px; font-family: var(--mono); font-size: .78rem; color: var(--sage-deep); background: var(--sage-wash); border-radius: 7px; padding: 6px 10px; display: inline-block; }
+  .oneline { margin-top: 22px; text-align: center; font-family: var(--mono); font-size: .82rem; color: var(--soft); letter-spacing: .02em; }
+  .oneline b { color: var(--sage-deep); }
+
+  /* scorecard */
+  .score { margin-top: 30px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .sc { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; box-shadow: var(--shadow); }
+  .sc .q { font-family: var(--mono); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--sage); font-weight: 700; margin-bottom: 6px; }
+  .sc .a { font-size: .92rem; color: var(--ink); }
+  .sc .a b { color: var(--sage-deep); }
+
+  /* positioning */
+  .posbox { margin-top: 28px; display: flex; flex-direction: column; gap: 14px; }
+  .pos { display: grid; grid-template-columns: 140px 1fr; gap: 20px; align-items: start; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 22px; box-shadow: var(--shadow); }
+  .pos .pk { font-family: var(--mono); font-size: .74rem; font-weight: 700; letter-spacing: .02em; color: var(--sage-deep); padding-top: 2px; }
+  .pos .pv { font-size: .93rem; color: var(--soft); }
+  .pos .pv b { color: var(--ink); }
+  .pos .pv .no { color: var(--clay); font-weight: 600; }
+  .pos .pv .yes { color: var(--sage-deep); font-weight: 600; }
+  .framing { margin-top: 22px; background: linear-gradient(160deg, var(--sage-wash), var(--surface)); border: 1px solid color-mix(in srgb, var(--sage) 32%, var(--line)); border-radius: 16px; padding: 28px; box-shadow: var(--shadow-lift); }
+  .framing .fk { font-family: var(--mono); font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; color: var(--sage-deep); font-weight: 700; margin-bottom: 12px; }
+  .framing p { font-size: 1.12rem; line-height: 1.5; margin: 0; max-width: 76ch; color: var(--ink); }
+  .framing p + p { margin-top: 12px; font-size: 1rem; color: var(--soft); }
+
+  /* build */
+  .buildgrid { margin-top: 30px; display: grid; grid-template-columns: 1.05fr .95fr; gap: 22px; align-items: start; }
+  .tier { border-radius: 16px; padding: 24px; }
+  .tier.now { background: linear-gradient(160deg, var(--sage-wash), var(--surface)); border: 1.5px solid color-mix(in srgb, var(--sage) 40%, var(--line)); box-shadow: var(--shadow-lift); }
+  .tier.never { background: var(--surface); border: 1px dashed color-mix(in srgb, var(--clay) 34%, var(--line-strong)); }
+  .tier .th { font-family: var(--mono); font-size: .74rem; letter-spacing: .08em; text-transform: uppercase; font-weight: 700; margin-bottom: 4px; }
+  .tier.now .th { color: var(--sage-deep); }
+  .tier.never .th { color: var(--clay); }
+  .tier .ts { font-size: .84rem; color: var(--soft); margin-bottom: 16px; }
+  .tier ol { margin: 0; padding-left: 0; list-style: none; counter-reset: step; display: flex; flex-direction: column; gap: 10px; }
+  .tier ol li { font-size: .91rem; display: grid; grid-template-columns: 20px 1fr; gap: 10px; align-items: start; line-height: 1.45; counter-increment: step; }
+  .tier ol li::before { content: counter(step); font-family: var(--mono); font-weight: 700; font-size: .82rem; color: var(--sage); }
+  .tier ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .tier ul li { font-size: .91rem; display: grid; grid-template-columns: 18px 1fr; gap: 9px; align-items: start; line-height: 1.45; }
+  .tier ul li .mk { font-family: var(--mono); font-weight: 700; font-size: .82rem; line-height: 1.5; color: var(--clay); }
+  .tier li b { color: var(--ink); }
+  .tier li .why { color: var(--faint); }
+  .laterstrip { margin-top: 18px; font-size: .86rem; color: var(--soft); background: var(--surface-2); border: 1px dashed var(--line-strong); border-radius: 10px; padding: 12px 16px; }
+  .laterstrip b { color: var(--sage-deep); }
+
+  /* discipline */
+  .warn { margin-top: 30px; background: var(--clay-wash); border: 1px solid color-mix(in srgb, var(--clay) 30%, var(--line)); border-left: 3px solid var(--clay); border-radius: 14px; padding: 24px 26px; }
+  .warn .kick { font-family: var(--mono); font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; color: var(--clay); font-weight: 700; display: block; margin-bottom: 10px; }
+  .warn p { margin: 0; font-size: 1rem; max-width: 82ch; color: var(--ink); }
+  .warn p + p { margin-top: 10px; color: var(--soft); }
+
+  footer { padding: 40px 0 64px; color: var(--faint); font-size: .82rem; font-family: var(--mono); border-top: 1px solid var(--line); }
+  footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+
+  @media (max-width: 900px) {
+    .premise { grid-template-columns: 1fr; }
+    .grid-2 { grid-template-columns: 1fr; }
+    .shapes { grid-template-columns: 1fr; }
+    .score { grid-template-columns: 1fr; }
+    .buildgrid { grid-template-columns: 1fr; }
+    .pos { grid-template-columns: 1fr; gap: 6px; }
+  }
+</style>
+
+<header class="hero">
+  <div class="wrap rise">
+    <span class="namebadge"><span class="d"></span> Design teardown · Delta Connect · v2</span>
+    <h1>The competition is one machine. We win by unbundling it.</h1>
+    <p class="lead">Fresh reads of Hermes and OpenClaw at today's HEAD, torn down against our own stack and the harness doctrine, then hardened by an adversarial codex review. The question was how to do the channel layer leaner, simpler, more powerful, and differentiating. The answer is architectural.</p>
+    <div class="thesis">
+      <span class="kick">The thesis</span>
+      <p>Hermes and OpenClaw are the same shape: a <strong>resident, always-on daemon that welds the channel socket to the agent and keeps session state in RAM</strong>. Because the agent holds the socket, it can never sleep. Delta unbundles the two: a <em>thin, always-on edge</em> holds the socket and a minimal durable inbox/outbox; the agent sleeps behind it and wakes on message. The socket and the RAM state come off the agent. What we do NOT delete is durable messaging - that boundary is what makes sleep safe.</p>
+    </div>
+    <div class="correx">
+      <div class="ck">↺ Hardened by adversarial review - three first-draft claims retired</div>
+      <ul>
+        <li><span class="m">✕</span><span>"Delete the durable queues, the sender owns retry." <b>Wrong for outbound</b> - Connect is the sender. Keep a minimal inbox + outbox.</span></li>
+        <li><span class="m">✕</span><span>"One lease row gives at-most-once." <b>A lease is leader election</b>, not at-most-once. Use durable occurrence rows.</span></li>
+        <li><span class="m">✕</span><span>"No shared in-process state." <b>False</b> - the engine already keeps an in-memory busy-session set. Not ours to claim.</span></li>
+      </ul>
+    </div>
+    <div class="sources">studied @ 2026-07-27 · hermes-agent d71033a40 · openclaw ee9bc9a50 · vs delta-harness + delta-agents · codex xhigh reviewed</div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">01 · The premise, and its cost</p>
+    <h2>Move the socket off the agent, keep a small durable core</h2>
+    <p class="lead">Welding the socket to the agent is what forces the always-on process. Move the socket to a thin edge and the agent can sleep. But a minimal durable inbox and outbox stay - deleting those loses or duplicates messages, and that is not resident-process bloat, it is correctness.</p>
+    <div class="premise">
+      <div class="stack them">
+        <div class="sh">Hermes &amp; OpenClaw</div>
+        <div class="ss">The resident agent holds the socket and the state, so it also carries:</div>
+        <div class="brick core"><div class="bt">Resident agent process</div><div class="bd">holds one live socket per channel, session state in RAM</div></div>
+        <div class="brick"><div class="bt">Inbound ingress spool + mirror outbound queue</div><div class="bd">two parallel durable subsystems, plus a 9-phase relay</div></div>
+        <div class="brick"><div class="bt">In-memory cron map / turn-lease / reply-fence</div><div class="bd">concurrency guards because many chats share one process</div></div>
+        <div class="brick"><div class="bt">18 facade files + plugin catalog per channel</div><div class="bd">manual code-splitting to fix a self-inflicted module graph</div></div>
+        <div class="brick"><div class="bt">Restart-survival everywhere</div><div class="bd">launchd/systemd keep-alive, min_machines = 1</div></div>
+      </div>
+      <div class="stack us">
+        <div class="sh">Delta Connect</div>
+        <div class="ss">The socket and RAM state come off the agent. A minimal durable core stays.</div>
+        <div class="brick core"><div class="bt">Thin edge / gateway</div><div class="bd">the only always-on part: socket + minimal durable core, cheap</div></div>
+        <div class="brick keep"><div class="bt">Durable inbox + dedup</div><div class="bd">small; 2xx to the platform before the agent is even up</div></div>
+        <div class="brick keep"><div class="bt">Durable outbox</div><div class="bd">small; idempotent send, retry, dead-letter. Connect is the sender</div></div>
+        <div class="brick gone"><div class="bt">Agent daemon</div><div class="bd">sleeps, wakes on message, state in SQLite by session</div></div>
+        <div class="brick dead"><div class="bt">Resident socket, RAM ownership, cron map, catalog</div><div class="bd">no pinned agent to hold them means they vanish</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">02 · Side by side</p>
+    <h2>Three runtimes, one honest comparison</h2>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Dimension</th><th>Hermes</th><th>OpenClaw</th><th class="delta">Delta Connect</th></tr>
+        </thead>
+        <tbody>
+          <tr><th>Model</th><td class="them">resident in-process adapters, optional relay</td><td class="them">resident daemon + plugin catalog</td><td class="delta">thin edge to HTTP seam; agent sleeps</td></tr>
+          <tr><th>One channel costs</th><td class="them">4-method contract, but a <span class="num">~9,900</span>-line leaf adapter</td><td class="them"><span class="num">116-634</span> files, 18 facade shims, 2 manifests</td><td class="delta">one small codec; ingress + durability shared</td></tr>
+          <tr><th>Gateway core</th><td class="them"><span class="num">run.py</span> = 24,741 lines</td><td class="them"><span class="num">src/</span> = 12,317 files</td><td class="delta">a small durable spine, reuses the turn engine</td></tr>
+          <tr><th>Always-on</th><td class="them">the agent, unless relay mode</td><td class="them">the agent, engineered against sleep</td><td class="delta">only the edge; the agent wakes on POST</td></tr>
+          <tr><th>Scale-to-zero</th><td class="them">relay mode only</td><td class="them">impossible by construction</td><td class="delta">the default, on Fly and locally</td></tr>
+          <tr><th>Durable middleware</th><td class="them">spool + relay + delivery queue (sprawl)</td><td class="them">ingress spool + outbound queue (mirror)</td><td class="delta">one small inbox + one small outbox</td></tr>
+          <tr><th>Scheduling</th><td class="them">control-plane callback</td><td class="them">3 schedulers, in-memory cron dedupe</td><td class="delta">durable occurrence rows (schedule, time)</td></tr>
+          <tr><th>The fatal flaw</th><td class="them">clean boundary rotted into accretion</td><td class="them">welded to always-on single-process</td><td class="delta">learns from both, ships neither</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">03 · The verdict</p>
+    <h2>What we steal, what we delete</h2>
+    <p class="lead">Their good ideas are all contract-shaped and small. Everything that hurts is mechanism that metastasized past a contract. We take the first and refuse the second - keeping a minimal durable core codex was right to insist on.</p>
+    <div class="grid-2">
+      <div class="panel steal">
+        <div class="ph">Steal - the good, small ideas</div>
+        <div class="psub">Each is a boundary, not a subsystem.</div>
+        <div class="item"><div class="it">Unbundle the socket from the agent <span class="src-tag h">Hermes relay</span></div><div class="id">The connector holds the socket, the credentials, and a durable buffer; the agent dials nothing and holds no tokens. This one move gives NAT'd inbound, shared-token multi-tenancy, and scale-to-zero. Their code around it is heavy; the boundary is right.</div></div>
+        <div class="item"><div class="it">Emit transport-neutral, render at the edge <span class="src-tag h">Hermes</span></div><div class="id">The agent emits structured output, the edge decides delivery, events never carry context. Needs one new engine affordance (a final-answer marker) before we stream, since today's SSE deltas can cover intermediate tool turns.</div></div>
+        <div class="item"><div class="it">Small per-channel codec + lazy load <span class="src-tag h">Hermes</span></div><div class="id">verify / parse / render / send + capabilities. SDK imported only when the channel is used. One small file, no catalog, no facade shims.</div></div>
+        <div class="item"><div class="it">The draft-stream loop <span class="src-tag o">OpenClaw</span></div><div class="id">Single-flight, newest-wins, throttled edit-in-place. ~150 correct lines - but it ships LAST, after the engine marks final output. Not copied over a raw delta stream.</div></div>
+        <div class="item"><div class="it">Supervisor mechanics <span class="src-tag o">OpenClaw</span></div><div class="id">Reserve the abort handle before the first await, crash-loop breaker, bounded stop, external health watchdog. Steal the supervisor, not the plugin catalog.</div></div>
+        <div class="item"><div class="it">Durable occurrence, run owns its outcome <span class="src-tag both">Both</span></div><div class="id">A row keyed <code>(schedule_id, scheduled_for)</code> gives effectively-once admission and missed-run catch-up. NOT at-most-once from a bare lease. We already have the shape in <code>event_deliveries</code>.</div></div>
+      </div>
+      <div class="panel delete">
+        <div class="ph">Delete - the premise-driven bloat</div>
+        <div class="psub">The sprawl goes; the small durable core stays.</div>
+        <div class="item del"><div class="it"><span class="x">✕</span> Mirror dual-queue sprawl + 9-phase relay <span class="src-tag both">Both</span></div><div class="becomes">→ <b>one small inbox + one small outbox</b>; inbound retries on a 5xx, outbound owns its own idempotent retry</div></div>
+        <div class="item del"><div class="it"><span class="x">✕</span> Resident socket per channel <span class="src-tag both">Both</span></div><div class="becomes">→ <b>webhook in, wake on POST</b> - the thing that unlocks scale-to-zero</div></div>
+        <div class="item del"><div class="it"><span class="x">✕</span> In-memory cron map <span class="src-tag o">OpenClaw</span></div><div class="becomes">→ <b>durable occurrence rows</b>, safe across suspend and instances</div></div>
+        <div class="item del"><div class="it"><span class="x">✕</span> In-RAM session ownership + reply fence <span class="src-tag both">Both</span></div><div class="becomes">→ <b>ownership in SQLite</b>; the edge stays stateless per request</div></div>
+        <div class="item del"><div class="it"><span class="x">✕</span> Fat base + facade files + plugin catalog <span class="src-tag both">Both</span></div><div class="becomes">→ small composable helpers; <b>one small codec</b> per channel</div></div>
+        <div class="item del"><div class="it"><span class="x">✕</span> Escape hatches in the agent contract <span class="src-tag h">Hermes</span></div><div class="becomes">→ typed neutral fields to the agent; a <b>raw ref kept inside the edge</b> for debug</div></div>
+        <div class="item del"><div class="it"><span class="x">✕</span> A parallel turn engine <span class="src-tag both">Both</span></div><div class="becomes">→ reuse the control plane's <b>turn.ts</b> as the single threading authority</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">04 · We are not starting from zero</p>
+    <h2>The gateway middle already exists in our stack</h2>
+    <p class="lead">Both competitors built a resident turn engine, a session-key scheme, a credential store, and a durable queue. We have all four already, in the control plane, with the correct designs. Delta Connect is a thin channel-adapter layer in front of them, not a rebuild.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>What a gateway needs</th><th>They built fresh</th><th class="delta">We already have</th></tr></thead>
+        <tbody>
+          <tr><th>Per-conversation turn engine</th><td class="them">run.py / embedded-agent-runner</td><td class="delta"><code>turn.ts</code> - per-(agent, requester) FIFO, background runs, thread by previous_response_id</td></tr>
+          <tr><th>Session keying</th><td class="them">build_session_key / conversation-route</td><td class="delta"><code>requesterKey</code> (task / thread / chat), row-authoritative, spoof-proof</td></tr>
+          <tr><th>Durable queue + lease</th><td class="them">cron map (wrong) + Workboard claims</td><td class="delta"><code>event_deliveries</code> with SKIP LOCKED - the correct model, reused for inbox &amp; occurrences</td></tr>
+          <tr><th>Credential store</th><td class="them">per-channel secret contracts</td><td class="delta"><code>app_integrations</code> - toolkit slug, config, oauth nonce, per-agent</td></tr>
+          <tr><th>Proactive wake</th><td class="them">standalone senders / 3 schedulers</td><td class="delta"><code>schedule_self</code> → schedule-ticker → agent-wake, end to end</td></tr>
+          <tr><th>Scale-to-zero</th><td class="them">relay only / impossible</td><td class="delta">suspend/resume + <code>/v1/busy</code>, already live</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-top:22px; color:var(--soft); font-size:.95rem; max-width:84ch;">The genuinely new surface is small and precise: <b>inbound channel receivers</b> (Telegram / Slack / email / webhook), <b>identity → tenant → session routing</b> with signature verification, and a <b>durable outbox with a non-approval inline-send path</b>. Everything else is wiring to rails that exist.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">05 · One contract, two deployments</p>
+    <h2>The same edge, from a single file to a fleet</h2>
+    <p class="lead">The control-plane doctrine forces the split, and it is a feature: Telegram caps 20 bots per account, so the hosted fleet cannot give each agent its own bot. Both shapes run the identical codec and durable core; only the ingress driver differs.</p>
+    <div class="shapes">
+      <div class="shape">
+        <div class="st">Shape 1 · local / OSS self-host</div>
+        <h3>One daemon, one bot, one file</h3>
+        <div class="sd">The Mac Mini case. Always-on hardware, so long-poll is free and scale-to-zero is optional.</div>
+        <div class="pipe">
+          <span class="pnode">Telegram</span><span class="parrow">→</span>
+          <span class="pnode hl">edge + inbox</span><span class="parrow">→</span>
+          <span class="pnode">local daemon</span>
+        </div>
+        <ul>
+          <li>Long-poll ingress driver; durable insert before offset advance.</li>
+          <li>Calls <code>localhost/v1/tasks</code>. No public URL. DM-only v1.</li>
+          <li>Zero production surface. Runs on a laptop.</li>
+        </ul>
+        <div class="pkg">@carrara-labs/delta-connect</div>
+      </div>
+      <div class="shape">
+        <div class="st">Shape 2 · hosted fleet</div>
+        <h3>One shared gateway, routed by tenant</h3>
+        <div class="sd">One Slack app, one bot, one email domain. Routes verified inbound by tenant tag to the right sleeping daemon and wakes it.</div>
+        <div class="pipe">
+          <span class="pnode">channels</span><span class="parrow">→</span>
+          <span class="pnode hl">central gateway</span><span class="parrow">→</span>
+          <span class="pnode sleep">daemon (asleep)</span>
+        </div>
+        <ul>
+          <li>Webhook ingress driver; 2xx after durable insert, sig-verified.</li>
+          <li>Reuses <code>turn.ts</code>, <code>app_integrations</code>, <code>event_deliveries</code>.</li>
+          <li>Per-tenant boundary is the <b>daemon</b>, not the credential.</li>
+        </ul>
+        <div class="pkg">delta-agents · same codec + core</div>
+      </div>
+    </div>
+    <div class="oneline">write the codec once · <b>the standalone package is the reference, the gateway is the multi-tenant deployment</b> · same neutral envelope, same durable core</div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">06 · The payoff</p>
+    <h2>Always on, yet scaled to zero - on Fly AND a Mac Mini</h2>
+    <p class="lead">This is the split neither competitor can make. The gateway is always on and cheap; the agent sleeps behind it. Only the wake mechanism differs between substrates, and it hides behind one small interface.</p>
+    <div class="iface">
+      <div class="head">the whole substrate abstraction</div>
+<pre><span class="k">interface</span> AgentSupervisor {
+  ensureAwake(agentId): Promise&lt;Endpoint&gt;   <span class="c">// before dispatch; returns base URL</span>
+  maybeSuspend(agentId): Promise&lt;void&gt;       <span class="c">// after a turn, iff /v1/busy is false</span>
+}</pre>
+    </div>
+    <div class="tablewrap waketable">
+      <table>
+        <thead><tr><th>Substrate</th><th>ensureAwake</th><th>maybeSuspend</th><th class="delta">First-message latency</th></tr></thead>
+        <tbody>
+          <tr><th>Fly (hosted)</th><td class="them">machine start + poll <code>/healthz</code></td><td class="them">RAM-snapshot suspend</td><td class="delta">~1-3s warm resume</td></tr>
+          <tr><th>Mac Mini · default</th><td class="them">no-op (daemon already running)</td><td class="them">no-op (~30MB idle)</td><td class="delta">instant; zero buys nothing here</td></tr>
+          <tr><th>Mac Mini · optional zero</th><td class="them">spawn the process</td><td class="them">kill after idle</td><td class="delta">slower; cold start, not warm</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="keyline">Why it is lossless on both: the <b>durable inbox returns 2xx to the platform before the agent is guaranteed up</b>, so cold-start latency never drops a message. From the user's side the agent is always reachable; from the cost side the heavy part sleeps. Hermes and OpenClaw weld those together and can never split them. <b>Delta Connect is the seam that does</b>, and the seam does not care whether it is fronting Fly or a laptop.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">07 · Your eight questions</p>
+    <h2>Why this is the better answer</h2>
+    <div class="score">
+      <div class="sc"><div class="q">Leaner?</div><div class="a">The socket, catalog, fat base, in-RAM cron map, and 9-phase relay all go. What stays is <b>one small inbox + one small outbox</b>, far below their dual-queue sprawl.</div></div>
+      <div class="sc"><div class="q">Simpler?</div><div class="a">One channel is <b>one small codec</b>. Ingress and durability are shared, not re-forked per platform. No two-manifest split, no facade files, no codegen.</div></div>
+      <div class="sc"><div class="q">More elegant?</div><div class="a">Three clean seams: <b>codec, ingress driver, durable core</b>. The agent emits neutral output; the edge renders per platform.</div></div>
+      <div class="sc"><div class="q">More useful?</div><div class="a">Bidirectional - <b>proactive rides the same outbox</b> as a reply. One codec serves a local bot and a hosted fleet.</div></div>
+      <div class="sc"><div class="q">More powerful?</div><div class="a"><b>Always-on yet scaled-to-zero on Fly and a Mac Mini</b> behind one supervisor. NAT'd inbound and shared-token multi-tenancy come free with the unbundling.</div></div>
+      <div class="sc"><div class="q">Smarter?</div><div class="a">We <b>reuse the turn engine and durable queue we already run</b> as the single authority, instead of building a parallel stack that can drift.</div></div>
+      <div class="sc"><div class="q">Better design?</div><div class="a">A thin edge in front of an existing engine, with correctness boundaries (inbox, outbox, occurrence rows) made <b>explicit, not emergent</b>.</div></div>
+      <div class="sc"><div class="q">Differentiating?</div><div class="a">They are the channel layer <b>welded</b> to the agent and can never sleep. Delta is a pure engine with an <b>optional</b> thin edge that scales to zero.</div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">08 · Positioning &amp; language</p>
+    <h2>Not in the engine. Not a plugin catalog.</h2>
+    <p class="lead">You asked whether this is an extension that makes Delta OpenClaw-capable, and how to talk about it. The words decide what leaks into the lean core.</p>
+    <div class="posbox">
+      <div class="pos"><div class="pk">In the engine?</div><div class="pv"><span class="no">No.</span> The doctrine - <em>"NOT building: channels"</em>, zero deps, &lt;10ms cold start - is the moat. Channels in the engine is how you become OpenClaw, the thing we replaced.</div></div>
+      <div class="pos"><div class="pk">Separate?</div><div class="pv"><span class="yes">Yes - a separate package</span>, <code>@carrara-labs/delta-connect</code>, same workspace, sharing only a tiny neutral-envelope + codec contract module with the engine.</div></div>
+      <div class="pos"><div class="pk">Separate repo?</div><div class="pv">Not yet. A separate <b>package</b> keeps the shared contract ergonomic; a separate <b>repo</b> is premature until it grows its own contributors.</div></div>
+      <div class="pos"><div class="pk">The word "plugin"?</div><div class="pv">Avoid it. Say <b>connectors</b> and <b>edge</b>. "Plugin catalog" is OpenClaw's framing and it drags in the registry, the manifests, and the ceremony we are deleting.</div></div>
+      <div class="pos"><div class="pk">"OpenClaw-capable"?</div><div class="pv">Reframe. You get <b>OpenClaw's reach without OpenClaw's weight</b> - every channel, none of the resident-process tax - plus scale-to-zero it structurally cannot have.</div></div>
+    </div>
+    <div class="framing">
+      <div class="fk">The framing sentence</div>
+      <p>Hermes and OpenClaw <em>are</em> the channel layer, welded to the agent. Delta is the agent; Connect is an optional, thin edge.</p>
+      <p>The same connector runs from a single-file local bot on your Mac Mini to a shared multi-tenant gateway in front of a sleeping fleet on Fly. Hot-wire a Delta agent into anything, and it still scales to zero when the conversation stops.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="sect-label">09 · The build</p>
+    <h2>Correctness boundaries first, then the polish</h2>
+    <p class="lead">Codex reordered this: the loss and duplicate boundaries come first. Streaming and scheduling sit on top of them, so shipping the pretty draft loop first would bake the loss window in.</p>
+    <div class="buildgrid">
+      <div class="tier now">
+        <div class="th">Build in this order</div>
+        <div class="ts">The durable spine before the shine.</div>
+        <ol>
+          <li><span><b>Durable spine</b> - inbox + dedup by eventId, deterministic conversation ownership, async dispatch, durable outbox with idempotent send.</span></li>
+          <li><span><b>Telegram codec + ingress driver</b> - webhook (verified) for zero, long-poll for local. DM-only.</span></li>
+          <li><span><b>Supervisor impls</b> - Fly (start/suspend) and local (keep-alive). Close the <code>/v1/busy</code> suspend race.</span></li>
+          <li><span><b>Outbound delivery + notify tool</b> - final answer send with retry + flood control; proactive.</span></li>
+          <li><span><b>Scheduling</b> - durable occurrence rows; reuse <code>event_deliveries</code>.</span></li>
+        </ol>
+        <div class="laterstrip"><b>Then, last:</b> the streaming draft loop - once the engine exposes a final-answer phase, since SSE deltas can cover intermediate tool turns.</div>
+      </div>
+      <div class="tier never">
+        <div class="th">Refuse by design</div>
+        <div class="ts">What they built that we will not.</div>
+        <ul>
+          <li><span class="mk">✕</span><span>Mirror dual-queue sprawl &amp; 9-phase relay <span class="why">- one small inbox + outbox</span></span></li>
+          <li><span class="mk">✕</span><span>Plugin catalog, two manifests, facade files <span class="why">- one codec</span></span></li>
+          <li><span class="mk">✕</span><span>Fat base class &amp; per-channel god-adapter <span class="why">- small helpers</span></span></li>
+          <li><span class="mk">✕</span><span>In-memory cron map &amp; reply fence <span class="why">- durable rows</span></span></li>
+          <li><span class="mk">✕</span><span>Resident socket per channel in the default <span class="why">- webhook first</span></span></li>
+          <li><span class="mk">✕</span><span>Group chat in v1 <span class="why">- single-owner sessions; DM-only until actor split</span></span></li>
+        </ul>
+      </div>
+    </div>
+    <div class="warn">
+      <span class="kick">The one line that keeps it lean</span>
+      <p>Both codebases prove the same law: <strong>the good ideas are contract-shaped and small; everything that hurts is mechanism that outgrew its contract.</strong> Hermes had a clean relay boundary and let it rot into 9 phases and a 1,656-line god-adapter. OpenClaw had a clean supervisor and buried it under a plugin catalog and two durable queues.</p>
+      <p>So: one channel at a time, webhook-first so scale-to-zero stays real, the codec stays small, the correctness boundaries stay explicit, and the edge never grows a god-adapter. The contract is free. The framework is what costs you.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>Delta Connect · design teardown · v2</span>
+    <span>unbundle the socket · keep the small durable core · scale to zero</span>
+  </div>
+</footer>
