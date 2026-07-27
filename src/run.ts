@@ -925,7 +925,22 @@ async function execCall(
     // (fetch/Bun.spawn); true preemption needs process isolation (backlog: exec/fs seam).
     const toolMs = tool.timeoutMs ?? deps.toolTimeoutMs ?? 0;
     try {
-      const args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
+      let args: Record<string, unknown>;
+      try {
+        args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
+      } catch (e) {
+        // An unparseable arguments string is almost always TRUNCATION: the turn hit the
+        // per-call output cap mid tool_use JSON. A raw SyntaxError sends the model into a
+        // blind retry loop (the identical call truncates identically); name the mechanism
+        // and the way out instead.
+        throw new Error(
+          `tool '${name}' arguments failed to parse (${(e as Error).message}); ` +
+            `the ${call.function.arguments?.length ?? 0}-char arguments string is likely ` +
+            `truncated at the per-call output cap - retrying the same call can never work; ` +
+            `send a smaller payload (chunk it via the tool's staging path if it has one), ` +
+            `or the operator can raise DELTA_STEP_MAX_TOKENS`,
+        );
+      }
       if (toolMs > 0) {
         // Compose the caller's cancel with a fresh timeout controller; the timer is cleared the
         // moment the tool settles, so a fast call leaves no lingering timer.

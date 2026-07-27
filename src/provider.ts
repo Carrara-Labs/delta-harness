@@ -197,6 +197,17 @@ const THINKING_BUDGET: Record<string, number> = {
 };
 const DEFAULT_THINKING_BUDGET = 16384; // unknown effort → treat as "high" on the Anthropic wire
 
+/** Per-call output ceiling on the native Anthropic wire (the OpenAI wire has a generous
+ * server-side default and sends max_tokens only when asked). 4096 was a safe cross-provider
+ * floor, but it silently TRUNCATES big tool calls: the model stops at max_tokens mid
+ * tool_use JSON, the accumulated input fails to parse, and no retry can ever succeed.
+ * Agents that write large tool payloads (artifact bodies, documents) raise it via
+ * DELTA_STEP_MAX_TOKENS. */
+const STEP_MAX_TOKENS = (() => {
+  const n = Number(process.env.DELTA_STEP_MAX_TOKENS);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 4096;
+})();
+
 /** Normalize an effort from env/metadata: trim + lowercase, pass ANY non-empty value through (the
  * model validates it). Empty / non-string → undefined (send nothing, use the provider default). */
 export function normalizeEffort(v: unknown): ReasoningEffort | undefined {
@@ -801,7 +812,7 @@ async function streamAnthropic(
   const body: Record<string, unknown> = {
     model,
     messages: msgs,
-    max_tokens: req.maxTokens ?? 4096,
+    max_tokens: req.maxTokens ?? STEP_MAX_TOKENS,
     stream: true,
   };
   // The native wire has no effort enum — extended thinking takes a token budget. Map the
@@ -814,7 +825,10 @@ async function streamAnthropic(
     const budget = THINKING_BUDGET[req.reasoningEffort] ?? DEFAULT_THINKING_BUDGET;
     if (budget > 0) {
       body.thinking = { type: "enabled", budget_tokens: budget };
-      body.max_tokens = Math.max(body.max_tokens as number, (req.maxTokens ?? 4096) + budget);
+      body.max_tokens = Math.max(
+        body.max_tokens as number,
+        (req.maxTokens ?? STEP_MAX_TOKENS) + budget,
+      );
     }
   }
   if (system) body.system = system;
