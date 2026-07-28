@@ -83,6 +83,29 @@ describe("reflect()", () => {
     expect(row.content).toContain("sources inline");
   });
 
+  test("guards a non-string body/name from the distiller — no crash, learning still stored", async () => {
+    const db = openDb(":memory:");
+    const run = seedDoneRun(db, transcript);
+    // The model returns malformed field TYPES: name as a number, body as an object. Before the fix,
+    // `name.trim()` / `body.trim()` threw and reflection silently lost the learning (found in QA).
+    const chat = async () =>
+      ok({
+        role: "assistant",
+        content:
+          '{"kind":"skill_improvement","content":"Always ship with the release CLI, never git push.","name":42,"body":{"steps":["a","b"]},"confidence":0.8}',
+      });
+    // Must resolve (not throw) AND persist the learning, falling back to `content` for the body.
+    const out = await reflect(
+      { db, events: new Events(db), chat, tools: new Map(), agentId: "delta-1" },
+      run,
+      { runId: "r" },
+      ctx,
+    );
+    expect(out).not.toBeNull();
+    const mem = db.query("SELECT content FROM memory").get() as { content: string } | null;
+    expect(mem?.content).toContain("release CLI");
+  });
+
   test("task_type audience keys on the CALLER's metadata, never the model's invented key", async () => {
     const db = openDb(":memory:");
     // The model proposes task_type AND invents a key; the run's metadata carries the real one.

@@ -183,7 +183,12 @@ export async function reflect(
   } catch {
     return null;
   }
-  if (artifact.kind === "none" || !artifact.content) return null;
+  // The distilled artifact is JSON.parse'd model output: `content`/`name`/`body` are typed string?
+  // but at runtime can be ANY type (the model can return an object or number), so they must be
+  // type-guarded like `aliases` below — an un-guarded `.trim()` throws and reflection silently loses
+  // the learning (found in QA). Capture a guaranteed-string `content` here and use it downstream.
+  const content = typeof artifact.content === "string" ? artifact.content.trim() : "";
+  if (artifact.kind === "none" || !content) return null;
 
   const meta = (JSON.parse(run.request) as { metadata?: Record<string, unknown> }).metadata ?? {};
   const sessionUser = deps.db
@@ -234,8 +239,14 @@ export async function reflect(
     : "";
   const vocab = deps.vocab ?? NEUTRAL_VOCAB;
   const namespace = deps.memoryNamespace ?? "default";
-  const name = (artifact.name?.trim() || "improved-skill").replace(/[^a-z0-9-]/gi, "-");
-  const body = artifactKind === "procedure" ? artifact.body?.trim() || artifact.content : "";
+  const name = (
+    (typeof artifact.name === "string" && artifact.name.trim()) ||
+    "improved-skill"
+  ).replace(/[^a-z0-9-]/gi, "-");
+  const body =
+    artifactKind === "procedure"
+      ? (typeof artifact.body === "string" && artifact.body.trim()) || content
+      : "";
 
   // User presence is the privacy boundary: a classifier cannot widen it. Only a
   // review bearing the explicit human authorization above can select a shared tier.
@@ -246,7 +257,7 @@ export async function reflect(
     ...(audience === "task_type" ? { taskType } : {}),
     agentId: deps.agentId ?? "",
     artifactKind,
-    content: artifact.content,
+    content,
     aliases,
     ...(typeof artifact.confidence === "number" ? { confidence: artifact.confidence } : {}),
     trust: "trusted",
@@ -290,7 +301,7 @@ export async function reflect(
             artifactKind,
             artifactKind === "procedure" ? name : "",
             body,
-            artifact.content,
+            content,
             key,
             adapterBinding(namespace, vocab, cap, cur),
             now,
