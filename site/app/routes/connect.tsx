@@ -99,11 +99,58 @@ export default function Connect() {
           </div>
         </section>
 
-        {/* ===== 01 · HOW IT WORKS ===== */}
+        {/* ===== 01 · IN THE CHAT ===== */}
+        <section id="chat">
+          <div className="page">
+            <div className="hiw-head">
+              <p className="hiw-kicker">01 · In the chat</p>
+              <h2 className="hiw-h2">What your agent can do from a message.</h2>
+              <p className="hiw-intro">
+                No app to learn. Talk to it, send it a file, or start over. The edge keeps every
+                exchange durable, and the agent stays a full Delta underneath.
+              </p>
+            </div>
+
+            <div className="connect-beats">
+              {(
+                [
+                  [
+                    "just talk",
+                    "Natural, threaded chat",
+                    "Message it like a person. It threads the conversation and, behind the trusted gateway, remembers what you tell it to.",
+                  ],
+                  [
+                    "send a file · new",
+                    "Reads what you send",
+                    "Send a photo or a document and it lands in the agent's workspace; the agent opens it with read_file and works from it. The bytes never enter a prompt.",
+                  ],
+                  [
+                    "/new · new",
+                    "Start a fresh thread",
+                    "Clears the current context so the next message begins a new conversation. No restart, no waiting.",
+                  ],
+                  [
+                    "/help · /id",
+                    "Built-in commands",
+                    "/help lists what it can do; /id returns your Telegram id for the allowlist. Both answer instantly, without spending an agent turn.",
+                  ],
+                ] as const
+              ).map(([tag, h, p]) => (
+                <div className="hiw-dbeat" key={h}>
+                  <span className="tag">{tag}</span>
+                  <h4>{h}</h4>
+                  <p>{p}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ===== 02 · HOW IT WORKS ===== */}
         <section id="how">
           <div className="page">
             <div className="hiw-head">
-              <p className="hiw-kicker">01 · How it works</p>
+              <p className="hiw-kicker">02 · How it works</p>
               <h2 className="hiw-h2">A thin edge in front of a sleeping agent.</h2>
               <p className="hiw-intro">
                 The competitors weld the chat socket to the agent, so it can never sleep. Delta
@@ -192,11 +239,11 @@ export default function Connect() {
           </div>
         </section>
 
-        {/* ===== 02 · DURABLE SPINE ===== */}
+        {/* ===== 03 · DURABLE SPINE ===== */}
         <section id="durable">
           <div className="page">
             <div className="hiw-head">
-              <p className="hiw-kicker">02 · The durable spine</p>
+              <p className="hiw-kicker">03 · The durable spine</p>
               <h2 className="hiw-h2">A sleeping agent can still never drop a message.</h2>
               <p className="hiw-intro">
                 Scaling to zero only works if nothing is lost while the agent is down. The edge owns
@@ -252,11 +299,11 @@ export default function Connect() {
           </div>
         </section>
 
-        {/* ===== 03 · TELEGRAM QUICKSTART ===== */}
+        {/* ===== 04 · TELEGRAM QUICKSTART ===== */}
         <section id="quickstart">
           <div className="page">
             <div className="hiw-head">
-              <p className="hiw-kicker">03 · Telegram quickstart</p>
+              <p className="hiw-kicker">04 · Telegram quickstart</p>
               <h2 className="hiw-h2">Talk to your agent in four steps.</h2>
               <p className="hiw-intro">
                 You need Bun, a model key, and a Telegram bot token from @BotFather. Long-poll needs
@@ -299,8 +346,9 @@ bun start`}</pre>
               <li>
                 <h3>Message your bot</h3>
                 <p>
-                  Send it anything. The round trip is Telegram to the edge, to the agent, and back,
-                  all durable.
+                  Send it anything: a question, a photo, or a document, or <code>/new</code> to start
+                  a fresh thread. The round trip is Telegram to the edge, to the agent, and back, all
+                  durable.
                 </p>
               </li>
             </ol>
