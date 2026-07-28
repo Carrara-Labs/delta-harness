@@ -32,7 +32,7 @@ import { normalizeEffort, OVERFLOW } from "./provider";
 import { childTools, runResearch } from "./research";
 import { retrieveSkills } from "./retrieval";
 import { scrubText } from "./scrub";
-import { type Charter, loadSelf, parseCharterMarkdown, writeSelf } from "./self";
+import { type Charter, currentSelf, loadSelf, parseCharterMarkdown, writeSelf } from "./self";
 import { buildSpine } from "./spine";
 import { capAndSpill, elide, type ToolCtx, type ToolDef, type Tools, toolSpecs } from "./tools";
 import { NEUTRAL_VOCAB, type Vocab } from "./vocab";
@@ -426,11 +426,22 @@ export async function executeRun(
     // identity (codex #5) — the spine already uses the run-local snapshot.
     ...(profile.allowed === "*" || profile.allowed.includes("remember")
       ? {
-          writeSelf: (content: string) => {
-            const r = writeSelf(db, resolve(deps.workspace), content, selfMaxBytes);
-            if (r.ok) deps.charter = parseCharterMarkdown(content);
-            return r;
-          },
+          // Optimistic-concurrency base: the raw DELTA.md this run last observed. Starts at the
+          // hydration read; advances to the just-written content on success, or to the current
+          // on-disk content on a conflict — so a merge-and-retry within the run lines up.
+          writeSelf: (() => {
+            let selfBase = currentSelf(resolve(deps.workspace));
+            return (content: string) => {
+              const r = writeSelf(db, resolve(deps.workspace), content, selfMaxBytes, selfBase);
+              if (r.ok) {
+                deps.charter = parseCharterMarkdown(content);
+                selfBase = content;
+              } else if (r.conflict && typeof r.current === "string") {
+                selfBase = r.current; // the model will merge from this and retry
+              }
+              return r;
+            };
+          })(),
         }
       : {}),
   };

@@ -65,17 +65,33 @@ export function looksLikeSpineEcho(content: string): boolean {
   return SPINE_HEADERS.filter((h) => lines.has(h)).length >= 2;
 }
 
-export type WriteSelfResult = { ok: boolean; error?: string; bytes?: number };
+export type WriteSelfResult = {
+  ok: boolean;
+  error?: string;
+  bytes?: number;
+  /** Set when the write was refused because DELTA.md changed since the caller read it. */
+  conflict?: boolean;
+  /** On a conflict, the CURRENT on-disk content, so the caller can merge and retry. */
+  current?: string;
+};
 
 /** Atomically replace DELTA.md with `content`, after snapshotting the current version.
  * Rejects oversized content at WRITE time (codex #16) — the always-on file can't be
  * allowed to grow the spine unbounded. Temp-file + rename means a crash mid-write can
- * never leave a truncated/empty DELTA.md (codex #7). */
+ * never leave a truncated/empty DELTA.md (codex #7).
+ *
+ * Optimistic concurrency: `remember` sends the FULL new file computed from the version the run
+ * read at hydration, so two concurrent runs would each build off the same base and the second
+ * would silently drop the first's edit (lost update). Pass `base` = the content the caller read;
+ * if DELTA.md has since diverged, the write is REFUSED with the current content so the caller can
+ * merge its change on top and retry, instead of clobbering. (writeSelf is synchronous — its own
+ * read-check-write can't interleave — so no lock is needed; the race is purely across runs.) */
 export function writeSelf(
   db: Database,
   workspace: string,
   content: string,
   maxBytes: number,
+  base?: string,
 ): WriteSelfResult {
   const bytes = Buffer.byteLength(content, "utf8");
   if (bytes > maxBytes)
@@ -88,6 +104,16 @@ export function writeSelf(
   // Idempotent (codex #2): a same-content re-fire (e.g. crash-resume of the `remember`
   // tool) is a no-op — no rewrite, no duplicate revision.
   if (before === content) return { ok: true, bytes };
+  // Lost-update guard: the file moved on under us since the caller read `base`.
+  if (base !== undefined && before !== base)
+    return {
+      ok: false,
+      conflict: true,
+      current: before,
+      error:
+        "DELTA.md was updated by another run since you read it — your change was NOT saved to avoid overwriting theirs. Re-apply your change on top of the CURRENT version below, then call remember again:\n\n" +
+        before,
+    };
   // Collision-resistant temp (codex #4): Date.now() alone collides under a same-ms double
   // write; add randomness and create it EXCLUSIVELY so two writers can't share a temp.
   const tmp = `${abs}.${Date.now()}.${Math.floor(Math.random() * 1e9)}.tmp`;

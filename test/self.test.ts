@@ -87,6 +87,40 @@ describe("writeSelf — the remember tool's hands", () => {
     expect(currentSelf(dir)).toBe("v1 content"); // restored
     db.close();
   });
+  test("optimistic concurrency: a diverged base is refused (lost-update guard), not clobbered", () => {
+    const dir = ws({ "DELTA.md": "v1" });
+    const db = openDb(":memory:");
+    // Run A read v1 and wrote v2 (A's lesson). Run B ALSO read v1 and now tries to write its own
+    // full doc built off v1 — which would drop A's lesson. With base='v1' but disk now 'v2', refuse.
+    expect(writeSelf(db, dir, "v2 (A lesson)", 10_000, "v1").ok).toBe(true);
+    const conflict = writeSelf(db, dir, "v1 + B lesson", 10_000, "v1");
+    expect(conflict.ok).toBe(false);
+    expect(conflict.conflict).toBe(true);
+    expect(conflict.current).toBe("v2 (A lesson)"); // hands back the current version to merge from
+    expect(currentSelf(dir)).toBe("v2 (A lesson)"); // A's write is NOT clobbered
+    // B merges its lesson onto the current version and retries with the fresh base → succeeds.
+    const retry = writeSelf(db, dir, "v2 (A lesson) + B lesson", 10_000, conflict.current);
+    expect(retry.ok).toBe(true);
+    expect(currentSelf(dir)).toBe("v2 (A lesson) + B lesson"); // BOTH lessons preserved
+    db.close();
+  });
+  test("a same-content re-fire is still an idempotent no-op even against a stale base", () => {
+    const dir = ws({ "DELTA.md": "v2" });
+    const db = openDb(":memory:");
+    // Crash-resume replays the SAME remember; base is stale ('v1') but content already equals disk.
+    const r = writeSelf(db, dir, "v2", 10_000, "v1");
+    expect(r.ok).toBe(true);
+    expect(r.conflict).toBeUndefined();
+    expect(listRevisions(db).length).toBe(0); // no duplicate revision
+    db.close();
+  });
+  test("no base supplied → writes unconditionally (back-compat, e.g. operator cockpit edit)", () => {
+    const dir = ws({ "DELTA.md": "v1" });
+    const db = openDb(":memory:");
+    expect(writeSelf(db, dir, "operator override", 10_000).ok).toBe(true);
+    expect(currentSelf(dir)).toBe("operator override");
+    db.close();
+  });
   test("rejects oversized content at WRITE time (never touches the file)", () => {
     const dir = ws();
     const db = openDb(":memory:");
