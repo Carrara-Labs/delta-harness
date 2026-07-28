@@ -221,8 +221,23 @@ const shutdown = (code: number, relinquish = true): void => {
 
 heartbeat = setInterval(
   () => {
-    if (renewLease(deps.db, leaseHolder, cfg.leaseTtlMs)) return;
-    console.error(`delta: write lease lost on ${cfg.dbPath} — exiting to avoid concurrent writes`);
+    // Renew our lease; if renewal fails because it lapsed — the classic case is a Fly
+    // suspend/resume across a wall-clock jump that pushed expires_at into the past while
+    // the VM (and this interval) were frozen — try to REACQUIRE our own machine-scoped
+    // lease before giving up. acquireLease's "expires_at <= now OR holder_id = me" branch
+    // reclaims an expired-or-own lease atomically, so we recover from suspend instead of
+    // exiting into Fly's restart-cap stall. This is RECOVERY, not fencing (the lease is
+    // unfenced and machine-scoped, see lease.ts): we exit only when a *different* live
+    // holder genuinely owns a non-expired lease — real split-brain, the one case worth
+    // dying for. A duplicate holder id across machines still defeats this (documented).
+    if (
+      renewLease(deps.db, leaseHolder, cfg.leaseTtlMs) ||
+      acquireLease(deps.db, leaseHolder, cfg.leaseTtlMs)
+    )
+      return;
+    console.error(
+      `delta: write lease held by a different live holder on ${cfg.dbPath} — exiting to avoid concurrent writes`,
+    );
     shutdown(1, false);
   },
   Math.floor(cfg.leaseTtlMs / 3),

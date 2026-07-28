@@ -23,8 +23,11 @@ export function acquireLease(
   now: () => number = Date.now,
 ): boolean {
   try {
-    const at = now();
     return db.transaction(() => {
+      // Sample the clock AFTER transaction admission (BEGIN IMMEDIATE), not before, so we
+      // never commit an already-expired lease against a clock that moved while we queued
+      // for the write lock (codex P1).
+      const at = now();
       // Take the lease iff it's unheld (INSERT), expired, OR already ours. The
       // same-holder branch is the crash-restart path: a killed daemon's fast restart
       // on the same machine reclaims AND refreshes its own lease atomically, instead of
@@ -55,15 +58,19 @@ export function renewLease(
   now: () => number = Date.now,
 ): boolean {
   try {
-    const at = now();
-    return (
-      db
-        .query(
-          `UPDATE lease SET expires_at = ?, heartbeat_at = ?
-           WHERE name = 'writer' AND holder_id = ? AND expires_at > ?`,
-        )
-        .run(at + ttlMs, at, holderId, at).changes === 1
-    );
+    return db.transaction(() => {
+      // Sample the clock inside the transaction (see acquireLease) so the `expires_at > at`
+      // guard tests against the same instant the write commits at.
+      const at = now();
+      return (
+        db
+          .query(
+            `UPDATE lease SET expires_at = ?, heartbeat_at = ?
+             WHERE name = 'writer' AND holder_id = ? AND expires_at > ?`,
+          )
+          .run(at + ttlMs, at, holderId, at).changes === 1
+      );
+    })();
   } catch {
     return false;
   }

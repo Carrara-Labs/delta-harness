@@ -94,6 +94,76 @@ describe("writer lease", () => {
   });
 });
 
+describe("writer lease — suspend/resume recovery (S3)", () => {
+  // The heartbeat (index.ts) decision, modeled directly: renew, else reacquire our own
+  // machine-scoped lease. Recovery, not fencing.
+  const renewOrReacquire = (db: Database, holder: string, ttl: number, now: () => number) =>
+    renewLease(db, holder, ttl, now) || acquireLease(db, holder, ttl, now);
+
+  test("a suspend past the TTL is recovered: renew fails, reacquire (own holder) succeeds", () => {
+    const db = openDb(":memory:");
+    let time = 1_000;
+    const now = () => time;
+
+    expect(acquireLease(db, "me", 100, now)).toBe(true); // expires 1_100
+    time = 5_000; // VM frozen across a wall-clock jump — the interval never fired
+
+    expect(renewLease(db, "me", 100, now)).toBe(false); // lapsed → renew can't
+    expect(renewOrReacquire(db, "me", 100, now)).toBe(true); // but we reclaim our own lease
+    expect(row(db)).toEqual({
+      holder_id: "me",
+      acquired_at: 5_000,
+      expires_at: 5_100,
+      heartbeat_at: 5_000,
+    });
+    db.close();
+  });
+
+  test("split-brain: a different live holder took the lease during suspend → we exit", () => {
+    const db = openDb(":memory:");
+    let time = 1_000;
+    const now = () => time;
+
+    expect(acquireLease(db, "me", 100, now)).toBe(true);
+    time = 5_000; // suspended long past expiry
+    expect(acquireLease(db, "peer", 100, now)).toBe(true); // a peer legitimately took over
+
+    time = 5_010; // we wake; peer's lease (expires 5_100) is still live
+    expect(renewOrReacquire(db, "me", 100, now)).toBe(false); // → heartbeat exits
+    expect(row(db).holder_id).toBe("peer");
+    db.close();
+  });
+
+  test("distinct daemons cannot both reacquire one expired lease (SQLite serializes)", () => {
+    const db = openDb(":memory:");
+    let time = 1_000;
+    const now = () => time;
+
+    expect(acquireLease(db, "old", 100, now)).toBe(true);
+    time = 9_000; // "old" long gone; its lease expired at 1_100
+    expect(acquireLease(db, "A", 100, now)).toBe(true); // first contender wins
+    expect(acquireLease(db, "B", 100, now)).toBe(false); // A is now live → B loses
+    expect(row(db).holder_id).toBe("A");
+    db.close();
+  });
+
+  test("documented limitation: a DUPLICATE holder id across machines both reacquire", () => {
+    // The accepted bound (lease.ts header): DELTA_LEASE_HOLDER must be unique per machine.
+    // Two daemons sharing an id both match the same-holder branch — this is why the default
+    // holder is FLY_MACHINE_ID/hostname, and same-machine double-start is caught by the port
+    // bind instead. This test pins the limitation so a future change is a conscious one.
+    const db = openDb(":memory:");
+    let time = 1_000;
+    const now = () => time;
+
+    expect(acquireLease(db, "dup", 100, now)).toBe(true);
+    time = 9_000;
+    expect(acquireLease(db, "dup", 100, now)).toBe(true); // machine 1 reacquires
+    expect(acquireLease(db, "dup", 100, now)).toBe(true); // machine 2, same id, also "succeeds"
+    db.close();
+  });
+});
+
 describe("lease migration", () => {
   const path = join(tmpdir(), `delta-lease-${process.pid}-${Math.floor(performance.now())}.db`);
 
