@@ -18,6 +18,8 @@ export type InboxRow = {
   actor_id: string;
   chat_id: string;
   text: string;
+  /** JSON-encoded AttachmentRef[], or null. Fetched + uploaded at dispatch. */
+  attachments: string | null;
   status: string;
   received_at: number;
 };
@@ -52,6 +54,7 @@ export class Store {
         actor_id        TEXT NOT NULL,
         chat_id         TEXT NOT NULL,
         text            TEXT NOT NULL,
+        attachments     TEXT,
         status          TEXT NOT NULL DEFAULT 'pending',
         received_at     INTEGER NOT NULL
       );
@@ -83,10 +86,11 @@ export class Store {
         value TEXT NOT NULL
       );
     `);
-    // Migrate an older outbox table (pre grouping/backoff) in place.
+    // Migrate older tables in place (add columns absent on a pre-existing DB).
     for (const alter of [
       "ALTER TABLE outbox ADD COLUMN group_key TEXT NOT NULL DEFAULT ''",
       "ALTER TABLE outbox ADD COLUMN next_attempt_at INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE inbox ADD COLUMN attachments TEXT",
     ]) {
       try {
         this.db.exec(alter);
@@ -105,10 +109,18 @@ export class Store {
   insertInbox(e: Inbound): boolean {
     const r = this.db
       .query(
-        `INSERT OR IGNORE INTO inbox (event_id, conversation_id, actor_id, chat_id, text, received_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT OR IGNORE INTO inbox (event_id, conversation_id, actor_id, chat_id, text, attachments, received_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(e.eventId, e.conversationId, e.actorId, e.chatId, e.text, Date.now());
+      .run(
+        e.eventId,
+        e.conversationId,
+        e.actorId,
+        e.chatId,
+        e.text,
+        e.attachments?.length ? JSON.stringify(e.attachments) : null,
+        Date.now(),
+      );
     return r.changes > 0;
   }
 

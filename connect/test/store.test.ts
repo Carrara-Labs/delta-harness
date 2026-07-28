@@ -37,6 +37,22 @@ describe("durable inbox", () => {
     commit(s, "tg:1", ["ok"]);
     expect(s.nextPending()?.text).toBe("second");
   });
+
+  test("attachments round-trip; a plain message stores null", () => {
+    const s = new Store(":memory:");
+    s.insertInbox(evt("tg:1")); // no attachments
+    expect(s.nextPending()?.attachments).toBeNull();
+    s.markInboxDone("tg:1");
+    s.insertInbox({
+      ...evt("tg:2", "caption"),
+      attachments: [{ fileId: "AAA", name: "report.pdf", mime: "application/pdf" }],
+    });
+    const row = s.nextPending();
+    expect(row?.event_id).toBe("tg:2");
+    expect(JSON.parse(row?.attachments ?? "[]")).toEqual([
+      { fileId: "AAA", name: "report.pdf", mime: "application/pdf" },
+    ]);
+  });
 });
 
 describe("atomic turn commit", () => {

@@ -28,6 +28,39 @@ describe("parseUpdate (untrusted input)", () => {
     });
   });
 
+  test("a document message -> event carrying the attachment ref", () => {
+    const r = parseUpdate(
+      msg({
+        text: undefined,
+        document: { file_id: "AAA", file_name: "report.pdf", mime_type: "application/pdf" },
+      }),
+      open,
+    );
+    expect(r?.event?.text).toBe(""); // no caption
+    expect(r?.event?.attachments).toEqual([
+      { fileId: "AAA", name: "report.pdf", mime: "application/pdf" },
+    ]);
+  });
+
+  test("a photo message -> the largest size, caption becomes the text", () => {
+    const r = parseUpdate(
+      msg({ text: undefined, caption: "look at this", photo: [{ file_id: "small" }, { file_id: "big" }] }),
+      open,
+    );
+    expect(r?.event?.text).toBe("look at this");
+    expect(r?.event?.attachments).toEqual([{ fileId: "big", name: "photo.jpg", mime: "image/jpeg" }]);
+  });
+
+  test("a message with neither text nor a file (sticker) -> skip (event null)", () => {
+    const r = parseUpdate(msg({ text: undefined, sticker: { file_id: "z" } }), open);
+    expect(r?.event).toBeNull();
+  });
+
+  test("a plain text message still has no attachments key", () => {
+    const r = parseUpdate(msg(), open);
+    expect(r?.event && "attachments" in r.event).toBe(false);
+  });
+
   test("allowlist: allowed user passes, others become a no-event skip", () => {
     expect(parseUpdate(msg(), gated)?.event?.text).toBe("hi");
     const other = {

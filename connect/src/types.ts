@@ -2,6 +2,15 @@
 // core and the agent only ever see these typed fields. Platform specifics
 // (the raw update) stay at the edge in `raw` and never reach the agent.
 
+/** A file the user sent, referenced by its channel-native id. The bytes are
+ *  fetched (codec.download) and handed to the daemon file seam at dispatch,
+ *  never buffered in the durable inbox - only this small ref is. */
+export type AttachmentRef = {
+  fileId: string;
+  name: string;
+  mime?: string;
+};
+
 export type Inbound = {
   /** Platform-unique id for this event. Powers dedup. e.g. "tg:8021" */
   eventId: string;
@@ -11,8 +20,10 @@ export type Inbound = {
   actorId: string;
   /** Where a reply is delivered. Channel-native. */
   chatId: string;
-  /** The message text handed to the agent. */
+  /** The message text handed to the agent (the caption, for a file-only message). */
   text: string;
+  /** Files the user attached, if any. Fetched + uploaded to the daemon at dispatch. */
+  attachments?: AttachmentRef[];
   /** Raw platform payload, kept at the edge for debugging only. Never sent to the agent. */
   raw?: unknown;
 };
@@ -25,11 +36,16 @@ export type OutboundResult = {
   retryAfterMs?: number;
 };
 
+/** Bytes fetched for an attachment, ready to hand to the daemon file seam. */
+export type DownloadedFile = { bytes: Uint8Array; name: string; mime: string };
+
 /** Per-channel, pure transport. Small on purpose. */
 export interface ChannelCodec {
   name: string;
   send(chatId: string, text: string): Promise<OutboundResult>;
   typing?(chatId: string): Promise<void>;
+  /** Fetch an attachment's bytes. Returns null on any failure (error-as-value). */
+  download?(ref: AttachmentRef): Promise<DownloadedFile | null>;
 }
 
 /** Fills the durable inbox. Webhook or long-poll; durable insert before ack. */
@@ -52,4 +68,6 @@ export interface AgentClient {
     input: string,
     opts: { previousResponseId?: string; userId: string },
   ): Promise<{ responseId: string; outputText: string }>;
+  /** Upload files to the daemon workspace (POST /v1/files). Returns their saved paths. */
+  uploadFiles?(files: DownloadedFile[]): Promise<Array<{ path: string; mime: string }>>;
 }

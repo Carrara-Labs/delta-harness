@@ -1,5 +1,5 @@
-import type { Store } from "./store";
-import type { AgentClient, AgentSupervisor, ChannelCodec } from "./types";
+import type { InboxRow, Store } from "./store";
+import type { AgentClient, AgentSupervisor, AttachmentRef, ChannelCodec } from "./types";
 
 // The dispatch loop. Drains the durable inbox oldest-first, one at a time
 // (serial per process = ordered, no session fork). The per-turn durable writes
@@ -94,7 +94,8 @@ export class Connector {
       await this.sup.ensureAwake();
       await this.codec.typing?.(row.chat_id);
       const session = this.store.getSession(row.conversation_id);
-      const out = await this.agent.run(text, {
+      const input = await this.prepareInput(row, text);
+      const out = await this.agent.run(input, {
         previousResponseId: session?.prev_response_id ?? undefined,
         userId: row.actor_id,
       });
@@ -120,6 +121,44 @@ export class Connector {
     await this.flushOutbox();
     await this.sup.maybeSuspend();
     return true;
+  }
+
+  /** Build the agent's turn input. For a file message, the attachments are
+   *  fetched from the channel and handed to the daemon workspace HERE, at
+   *  dispatch (the daemon is awake), and the turn input references their saved
+   *  paths so the agent can read_file them. Any fetch/upload failure degrades to
+   *  a note instead of crashing the turn (error-as-value). */
+  private async prepareInput(row: InboxRow, caption: string): Promise<string> {
+    if (!row.attachments) return caption;
+    let refs: AttachmentRef[];
+    try {
+      refs = JSON.parse(row.attachments) as AttachmentRef[];
+    } catch {
+      return caption;
+    }
+    if (!refs.length) return caption;
+
+    try {
+      const blobs = [];
+      for (const ref of refs) {
+        const dl = this.codec.download ? await this.codec.download(ref) : null;
+        if (dl) blobs.push(dl);
+      }
+      if (blobs.length && this.agent.uploadFiles) {
+        const saved = await this.agent.uploadFiles(blobs);
+        const list = saved.map((s) => `- ${s.path}${s.mime ? ` (${s.mime})` : ""}`).join("\n");
+        const note =
+          `[The user sent ${saved.length === 1 ? "a file" : `${saved.length} files`}, saved to ` +
+          `your workspace. Open ${saved.length === 1 ? "it" : "them"} with read_file:\n${list}]`;
+        return [note, caption].filter(Boolean).join("\n\n");
+      }
+    } catch (e) {
+      this.log(`attachment handling failed for ${row.event_id}: ${String(e)}`);
+    }
+    // Download or upload failed: tell the agent so it can respond naturally.
+    return ["[The user attached a file, but it could not be retrieved.]", caption]
+      .filter(Boolean)
+      .join("\n\n");
   }
 
   /** Deliver queued replies in order. At-least-once; backs off on retryable failures. */

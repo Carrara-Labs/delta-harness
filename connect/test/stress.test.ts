@@ -5,7 +5,14 @@ import { join } from "node:path";
 
 import { Connector, chunkText } from "../src/core";
 import { Store } from "../src/store";
-import type { AgentClient, AgentSupervisor, ChannelCodec, Inbound } from "../src/types";
+import type {
+  AgentClient,
+  AgentSupervisor,
+  AttachmentRef,
+  ChannelCodec,
+  DownloadedFile,
+  Inbound,
+} from "../src/types";
 
 // --- fakes -------------------------------------------------------------
 
@@ -147,6 +154,83 @@ describe("dispatch loop", () => {
     store.insertInbox(evt("tg:3", "second"));
     await drain(c);
     expect(seen[1]).toBeUndefined(); // the next turn threads from nothing
+  });
+
+  test("a file message is fetched, uploaded to the daemon, and referenced in the turn", async () => {
+    const store = new Store(tmpDb());
+    const sent: string[] = [];
+    const uploaded: DownloadedFile[] = [];
+    let seenInput = "";
+    const codec: ChannelCodec = {
+      name: "fake",
+      async send(_c, t) {
+        sent.push(t);
+        return { ok: true, retryable: false };
+      },
+      async download(ref: AttachmentRef) {
+        return { bytes: new Uint8Array([1, 2, 3]), name: ref.name, mime: ref.mime ?? "application/octet-stream" };
+      },
+    };
+    const agent: AgentClient = {
+      async run(input) {
+        seenInput = input;
+        return { responseId: "resp_1", outputText: "got your file" };
+      },
+      async uploadFiles(files) {
+        uploaded.push(...files);
+        return files.map((f) => ({ path: `/data/bundle/inbox/${f.name}`, mime: f.mime }));
+      },
+    };
+    const c = new Connector(store, codec, agent, noopSup);
+    store.insertInbox({
+      eventId: "tg:1",
+      conversationId: "tg:100",
+      actorId: "tg:7",
+      chatId: "100",
+      text: "check this",
+      attachments: [{ fileId: "AAA", name: "report.pdf", mime: "application/pdf" }],
+    });
+    await drain(c);
+
+    expect(uploaded.length).toBe(1);
+    expect(uploaded[0]?.name).toBe("report.pdf");
+    expect(seenInput).toContain("/data/bundle/inbox/report.pdf"); // path handed to the agent
+    expect(seenInput).toContain("check this"); // caption preserved
+    expect(sent).toEqual(["got your file"]);
+  });
+
+  test("a file that can't be fetched degrades to a note, still answers", async () => {
+    const store = new Store(tmpDb());
+    let seenInput = "";
+    const codec: ChannelCodec = {
+      name: "fake",
+      async send() {
+        return { ok: true, retryable: false };
+      },
+      async download() {
+        return null; // fetch failed
+      },
+    };
+    const agent: AgentClient = {
+      async run(input) {
+        seenInput = input;
+        return { responseId: "resp_1", outputText: "hmm" };
+      },
+      async uploadFiles(files) {
+        return files.map((f) => ({ path: f.name, mime: f.mime }));
+      },
+    };
+    const c = new Connector(store, codec, agent, noopSup);
+    store.insertInbox({
+      eventId: "tg:1",
+      conversationId: "tg:100",
+      actorId: "tg:7",
+      chatId: "100",
+      text: "",
+      attachments: [{ fileId: "AAA", name: "x.bin" }],
+    });
+    await drain(c);
+    expect(seenInput).toContain("could not be retrieved");
   });
 
   test("duplicate delivery is answered once", async () => {

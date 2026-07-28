@@ -1,5 +1,12 @@
 import type { Store } from "./store";
-import type { ChannelCodec, Inbound, IngressDriver, OutboundResult } from "./types";
+import type {
+  AttachmentRef,
+  ChannelCodec,
+  DownloadedFile,
+  Inbound,
+  IngressDriver,
+  OutboundResult,
+} from "./types";
 
 // Telegram codec + long-poll ingress. Zero deps: raw Bot API over fetch.
 // Long-poll is the right default for a home box - no public URL, just outbound
@@ -56,6 +63,63 @@ export class TelegramCodec implements ChannelCodec {
       // typing is best-effort UX; never fail a turn over it
     }
   }
+
+  /** Resolve a file_id to bytes: getFile -> file_path -> download. Null on any
+   *  failure, so a bad attachment degrades the turn instead of crashing it. */
+  async download(ref: AttachmentRef): Promise<DownloadedFile | null> {
+    try {
+      const meta = await fetch(API(this.token, "getFile"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ file_id: ref.fileId }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const data = (await meta.json().catch(() => ({}))) as {
+        ok?: boolean;
+        result?: { file_path?: string };
+      };
+      const filePath = data.ok ? data.result?.file_path : undefined;
+      if (typeof filePath !== "string" || !filePath) return null;
+      const bin = await fetch(
+        `https://api.telegram.org/file/bot${this.token}/${filePath}`,
+        { signal: AbortSignal.timeout(60000) },
+      );
+      if (!bin.ok) return null;
+      return {
+        bytes: new Uint8Array(await bin.arrayBuffer()),
+        name: ref.name,
+        mime: ref.mime ?? "application/octet-stream",
+      };
+    } catch {
+      return null;
+    }
+  }
+}
+
+/** Pull attachment refs (document, or the largest photo size) off an untrusted
+ *  message. Only a string file_id is trusted; everything else is best-effort. */
+function extractAttachments(msg: Record<string, unknown> | undefined): AttachmentRef[] {
+  const out: AttachmentRef[] = [];
+  const doc = msg?.document as Record<string, unknown> | undefined;
+  if (doc && typeof doc.file_id === "string") {
+    out.push({
+      fileId: doc.file_id,
+      name: typeof doc.file_name === "string" && doc.file_name ? doc.file_name : "file",
+      mime: typeof doc.mime_type === "string" ? doc.mime_type : undefined,
+    });
+  }
+  const photo = msg?.photo;
+  if (Array.isArray(photo) && photo.length) {
+    // Telegram sends ascending sizes; take the largest with a valid file_id.
+    for (let i = photo.length - 1; i >= 0; i--) {
+      const p = photo[i] as Record<string, unknown> | undefined;
+      if (p && typeof p.file_id === "string") {
+        out.push({ fileId: p.file_id, name: "photo.jpg", mime: "image/jpeg" });
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 /** Validate one untrusted update into a normalized Inbound, or null to skip it. */
@@ -71,14 +135,18 @@ export function parseUpdate(
   const msg = upd.message as Record<string, unknown> | undefined;
   const chat = msg?.chat as Record<string, unknown> | undefined;
   const from = msg?.from as Record<string, unknown> | undefined;
-  const text = msg?.text;
+  // A file message carries its caption as the text; a plain message its text.
+  const rawText = typeof msg?.text === "string" ? msg.text : msg?.caption;
+  const text = typeof rawText === "string" ? rawText : "";
+  const attachments = extractAttachments(msg);
 
-  // Not a private text message we handle -> valid update, but no event (advance past it).
+  // Handle it only if it's a private message with text OR a file. Otherwise it's
+  // a valid update with no event (advance past it), never a poison-loop.
   if (
-    typeof text !== "string" ||
     typeof chat?.id !== "number" ||
     chat.type !== "private" ||
-    typeof from?.id !== "number"
+    typeof from?.id !== "number" ||
+    (text === "" && attachments.length === 0)
   ) {
     return { updateId, event: null };
   }
@@ -94,6 +162,7 @@ export function parseUpdate(
       actorId: `tg:${userId}`,
       chatId: String(chat.id),
       text,
+      ...(attachments.length ? { attachments } : {}),
       raw: u,
     },
   };
