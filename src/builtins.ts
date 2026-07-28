@@ -243,6 +243,7 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
 
   add({
     name: "web_search",
+    readonly: true,
     description: "Search the web (Exa). Returns titles, URLs, and text snippets.",
     parameters: {
       type: "object",
@@ -279,6 +280,7 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
 
   add({
     name: "web_fetch",
+    readonly: true,
     description: "Fetch a URL and return its text content (HTML is stripped to text).",
     parameters: {
       type: "object",
@@ -329,6 +331,7 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
 
   add({
     name: "read_file",
+    readonly: true,
     description:
       "Read a file from the workspace. Text pages with offset/limit; images attach to your context; docx/xlsx/ipynb extract to text.",
     parameters: {
@@ -458,6 +461,7 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
 
   add({
     name: "grep",
+    readonly: true,
     description:
       "Search workspace files for a regex. Returns path:line matches. This is the workspace index — grep first, read second.",
     parameters: {
@@ -516,6 +520,7 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
 
   add({
     name: "recall",
+    readonly: true,
     description:
       "Search this conversation's earlier turns — including ones compacted out of the live window — for text/results you saw before. Returns matching snippets + the disk path of any spilled result. Use to pull back context that scrolled off before you finish.",
     parameters: {
@@ -651,6 +656,7 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
 
   add({
     name: "list_dir",
+    readonly: true,
     description: "List files in a workspace directory (recursive, relative paths).",
     parameters: {
       type: "object",

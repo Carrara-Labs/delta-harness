@@ -1,7 +1,8 @@
-// W4: in-process, parallel sub-agents with the SAME rights as the parent. Prove children get the
-// parent's full registry minus the delegation trio (one-level nesting cap), the pinned + search_tools
-// resident model, that a child can ACT (write) like its parent, the bounded parallel loop,
-// parent-written artifacts, a single usage charge, and model-driven end-to-end through `research`.
+// W4: in-process, parallel research sub-agents that are READ-ONLY (S6). Prove children get only the
+// parent's read-only tools (positive, fail-closed admission — a mutating or unmarked tool never
+// reaches a child), the pinned + search_tools resident model, that a child CANNOT mutate, the
+// bounded parallel loop, parent-written artifacts, a single usage charge, and model-driven
+// end-to-end through `research`.
 
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
@@ -22,28 +23,29 @@ const U = (): Usage => ({
   total: 10,
   costUsd: 0.001,
 });
-const fakeTool = (name: string, exec?: ToolDef["execute"]): ToolDef => ({
+const fakeTool = (name: string, exec?: ToolDef["execute"], readonly = false): ToolDef => ({
   name,
   description: "",
   parameters: { type: "object", properties: {} },
   idempotent: true,
+  ...(readonly ? { readonly: true } : {}), // default: mutating (fail-closed), as in production
   execute: exec ?? (async () => "ok"),
 });
 
-describe("childTools — the parent's registry minus the withheld set", () => {
-  test("keeps read/write/code/remember/kb tools; drops delegation + scheduling tools", () => {
+describe("childTools — read-only tools only (positive, fail-closed admission, S6)", () => {
+  test("admits ONLY read-only tools; drops every mutating/unmarked tool by default", () => {
     const allowed: Tools = new Map();
+    // Read-only tools (marked): the child's whole legitimate universe.
+    for (const n of ["web_search", "web_fetch", "read_file", "grep", "list_dir", "kb__search_text"])
+      allowed.set(n, fakeTool(n, undefined, true));
+    // Mutating tools (unmarked = default mutating): must NEVER reach a child — write, move,
+    // delete, arbitrary code, self-file rewrite, a KB write, and the delegation/scheduling set.
     for (const n of [
-      "web_search",
-      "web_fetch",
-      "read_file",
-      "grep",
-      "list_dir",
       "write_file",
       "move_file",
+      "delete_file",
       "code",
       "remember",
-      "kb__search_text",
       "kb__delete_entity",
       "research",
       "spawn_subagent",
@@ -55,24 +57,15 @@ describe("childTools — the parent's registry minus the withheld set", () => {
       allowed.set(n, fakeTool(n));
 
     const child = childTools(allowed);
-    // Same rights as the parent — every non-withheld tool rides along, guards intact.
+    for (const n of ["web_search", "web_fetch", "read_file", "grep", "list_dir", "kb__search_text"])
+      expect(child.has(n)).toBe(true);
     for (const n of [
-      "web_search",
-      "web_fetch",
-      "read_file",
-      "grep",
-      "list_dir",
       "write_file",
       "move_file",
+      "delete_file",
       "code",
       "remember",
-      "kb__search_text",
       "kb__delete_entity",
-    ])
-      expect(child.has(n)).toBe(true);
-    // Withheld: the delegation trio (in-process recursion) AND the scheduling tools (a child could
-    // queue a fresh ROOT run that re-delegates — escaping the one-level cap by a side door).
-    for (const n of [
       "research",
       "spawn_subagent",
       "eval_n",
@@ -81,8 +74,15 @@ describe("childTools — the parent's registry minus the withheld set", () => {
       "cancel_schedule",
     ])
       expect(child.has(n)).toBe(false);
-    // The child def is the parent's exact def (same guards ride along).
-    expect(child.get("write_file")).toBe(allowed.get("write_file"));
+    // The admitted def is the parent's exact def (guards ride along), and NOTHING mutating slipped
+    // through — the child universe is a strict subset of the read-only tools.
+    expect(child.get("read_file")).toBe(allowed.get("read_file"));
+    for (const def of child.values()) expect(def.readonly).toBe(true);
+  });
+
+  test("an unmarked NEW tool is excluded by default (a forgotten flag can't leak a write)", () => {
+    const allowed: Tools = new Map([["some_new_tool", fakeTool("some_new_tool")]]);
+    expect(childTools(allowed).has("some_new_tool")).toBe(false);
   });
 });
 
@@ -162,19 +162,29 @@ describe("runResearch — bounded parallel loop", () => {
     }
   });
 
-  test("a child can ACT — write a file — with the parent's own write tool (same rights)", async () => {
+  test("a child CANNOT mutate — childTools strips the write tool before it can run (S6)", async () => {
     const dir = ws();
     try {
       const written: Record<string, string> = {};
-      const tools: Tools = new Map();
-      tools.set(
+      // The parent's registry has a real write tool (mutating, unmarked) plus a read tool.
+      const parent: Tools = new Map();
+      parent.set(
         "write_file",
         fakeTool("write_file", async (args) => {
-          written[String(args.path)] = String(args.content);
+          written[String(args.path)] = String(args.content); // must NEVER fire from a child
           return "wrote";
         }),
       );
-      // Child model: write once, then answer.
+      parent.set(
+        "read_file",
+        fakeTool("read_file", async () => "file contents", true),
+      );
+      // Production builds the child universe through childTools — the security boundary.
+      const universe = childTools(parent);
+      expect(universe.has("write_file")).toBe(false); // stripped: not read-only
+      expect(universe.has("read_file")).toBe(true);
+
+      // A (misbehaving) child model tries to write anyway; it must be refused.
       const writeChild = async (req: ChatRequest): Promise<ModelResult> => {
         if (!req.messages.some((m) => m.role === "tool"))
           return {
@@ -198,10 +208,11 @@ describe("runResearch — bounded parallel loop", () => {
             finishReason: "tool_calls",
             latencyMs: 1,
           } as ModelResult;
+        // It sees the refusal in the tool result and gives up.
         return {
           ok: true,
           model: "t",
-          message: { role: "assistant", content: "SUMMARY: wrote the note." },
+          message: { role: "assistant", content: "SUMMARY: could not write; reported findings." },
           usage: U(),
           finishReason: "stop",
           latencyMs: 1,
@@ -213,15 +224,15 @@ describe("runResearch — bounded parallel loop", () => {
         remainingBudget: () => ({ maxTokens: 100_000, maxCostUsd: 10 }),
       } as unknown as ToolCtx;
       const out = await runResearch(
-        ["write a note"],
-        { tools, pinned: ["write_file"] },
+        ["try to write a note"],
+        { tools: universe, pinned: ["read_file"] },
         writeChild,
         ctx,
         "w",
         "0",
       );
-      expect(out).toContain("wrote the note");
-      expect(written["note.md"]).toBe("hi from a child");
+      expect(out).toContain("could not write");
+      expect(written["note.md"]).toBeUndefined(); // the write never happened
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

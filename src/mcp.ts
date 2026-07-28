@@ -29,7 +29,15 @@ type JsonRpcResponse = {
   error?: { code: number; message: string };
 };
 
-type McpTool = { name: string; description?: string; inputSchema?: Record<string, unknown> };
+type McpTool = {
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+  // MCP tool annotations (spec). `readOnlyHint` is the authoritative "this tool does not
+  // mutate its environment" signal — we honor it fail-closed for the read-only capability
+  // marker, never the name heuristic (a mutating tool named `..._file` must not pass).
+  annotations?: { readOnlyHint?: boolean };
+};
 
 const PROTOCOL_VERSION = "2025-06-18";
 const CALL_TIMEOUT_MS = 60_000;
@@ -280,6 +288,10 @@ export class McpConnection {
       description: tool.description ?? `${tool.name} (via ${this.config.name})`,
       parameters: tool.inputSchema ?? { type: "object", properties: {} },
       idempotent: readOnly,
+      // Capability marker for restricted (research-subagent) contexts — fail closed: ONLY an
+      // explicit server `readOnlyHint: true` admits an MCP tool to a child. The name heuristic
+      // above is fine for journal/retry semantics but must NOT grant a child write access.
+      readonly: tool.annotations?.readOnlyHint === true,
       execute: async (args, ctx) => {
         try {
           if (ctx.signal?.aborted) return "[tool error] cancelled";

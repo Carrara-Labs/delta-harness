@@ -25,19 +25,6 @@ import { elide, type ToolCtx, type ToolDef, type Tools, toolSpecs } from "./tool
 const RESEARCH_ROLE =
   "You are a sub-agent working one task in isolation for the agent that spawned you. Use whatever of your tools the task needs. You run CONCURRENTLY with sibling sub-agents in the SAME workspace: prefer reads, and if you must write, use a unique path so you don't clobber a sibling. Be thorough, then finish with a tight, outcome-first answer: a one-paragraph SUMMARY, then detailed FINDINGS (facts, numbers, sources, file paths). Your full answer is saved to a file but only the SUMMARY returns to your parent — put the signal in the summary.\n\nYour task:";
 
-// Withheld from children so the "one level of nesting" invariant actually holds: the delegation
-// trio would let an in-process child recurse; the scheduling tools would let a child queue a FRESH
-// ROOT run (depth 0) that can itself delegate — escaping the cap by a side door (codex). These are
-// the ONLY capabilities a child loses relative to the parent.
-const WITHHELD = new Set([
-  "research",
-  "spawn_subagent",
-  "eval_n",
-  "schedule_self",
-  "list_schedules",
-  "cancel_schedule",
-]);
-
 /** A child's callable universe + its resident set + the parent's spine layers (self / rendered policy
  * / boot-stable context). Passing the spine layers means a child is built from the SAME buildSpine as
  * the parent — same identity, same engine safety norms, same policy — so it inherits the parent's
@@ -78,13 +65,16 @@ function addUsage(a: Usage, b: Usage) {
 }
 const billed = (u: Usage): number => Math.max(0, u.input - u.cacheRead) + u.output;
 
-/** A child's callable universe: the parent's full tool registry minus the withheld set (delegation +
- * run-scheduling). Same rights as the parent — the parent's own per-tool guards ride along on each
- * def — and exactly one level of nesting. `search_tools` is added per-child (not here); it is never
- * in the parent registry. */
+/** A child's callable universe: ONLY the parent's read-only tools. Positive, fail-closed
+ * admission (`def.readonly === true`) — a research child reads and synthesizes; it can never
+ * write_file, remember, move/delete, run `code`, or delegate/schedule (none of those are
+ * read-only, so the old blocklist is subsumed). Crucially this is safe by DEFAULT: any tool —
+ * builtin, MCP, or future — that isn't explicitly marked read-only simply never reaches a child,
+ * so a mislabeled or forgotten write can't leak in (a name blocklist fails open; this fails
+ * closed). `search_tools` is added per-child (not here) and is itself read-only. */
 export function childTools(allowed: Tools): Tools {
   const out: Tools = new Map();
-  for (const [name, def] of allowed) if (!WITHHELD.has(name)) out.set(name, def);
+  for (const [name, def] of allowed) if (def.readonly === true) out.set(name, def);
   return out;
 }
 
@@ -293,17 +283,18 @@ export async function runResearch(
   if (perChildTokens < MIN_CHILD_TOKENS)
     return `[tool error] not enough token budget left for research (${rem.maxTokens} remaining) — narrow the task or run fewer`;
 
-  // The child ctx carries the parent's capabilities MINUS delegation (no research/chat → no
-  // recursion) and MINUS the parent-thread-bound hands (history/todo → a child is isolated, no
-  // session). `activate` is replaced per-child in researchOne so a child's search_tools mutates its
-  // own resident set, never the parent's. writeSelf rides along for `remember` parity.
+  // The child ctx carries a READ-ONLY slice of the parent's capabilities (see childTools):
+  // no delegation (no recursion), no parent-thread-bound hands (history/todo → a child is
+  // isolated, no session), and NO writeSelf — a research child can never rewrite DELTA.md,
+  // even if a write tool ever leaked into its registry (defense in depth, codex). `activate`
+  // is replaced per-child in researchOne so a child's search_tools mutates its own resident
+  // set, never the parent's.
   const baseCtx: ToolCtx = {
     workspace: ctx.workspace,
     activate: () => {},
     ...(ctx.authToken ? { authToken: ctx.authToken } : {}),
     ...(ctx.signal ? { signal: ctx.signal } : {}),
     ...(ctx.vision !== undefined ? { vision: ctx.vision } : {}),
-    ...(ctx.writeSelf ? { writeSelf: ctx.writeSelf } : {}),
   };
 
   const settled = await Promise.allSettled(

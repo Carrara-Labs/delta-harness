@@ -62,6 +62,12 @@ export type ToolDef = {
   description: string;
   parameters: Record<string, unknown>;
   idempotent: boolean;
+  /** True iff this tool cannot mutate workspace / self-file / knowledge-base / external
+   * state — a positive, fail-closed capability marker (distinct from `idempotent`, which
+   * is retry-safety). Read-only tools are the ONLY tools a restricted context (a research
+   * subagent) may call; anything unmarked defaults to mutating and is excluded. Adding a
+   * new tool without this flag is safe by construction — it simply won't reach children. */
+  readonly?: boolean;
   execute: (args: Record<string, unknown>, ctx: ToolCtx) => Promise<string>;
   /** Per-tool wall-clock ceiling (ms). Overrides the run default. Set `0` for tools that
    * legitimately run long (the `code`/`codex` CLI, sub-agents) so they're never guillotined
