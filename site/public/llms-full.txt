@@ -593,7 +593,7 @@ Set a daemon default for extended reasoning:
 DELTA_REASONING_EFFORT=high
 ```
 
-Or override it for one run with `metadata.reasoning_effort`. Delta lowercases and trims the value. OpenRouter and Responses receive `reasoning.effort`; a directly compatible Chat Completions endpoint receives `reasoning_effort`. Native Anthropic maps `none`, `minimal`, `low`, `medium`, `high`, and `xhigh` to disabled, 1,024, 4,096, 8,192, 16,384, and 32,768 thinking tokens. An unknown Anthropic value uses the 16,384-token mapping. Other providers validate their own accepted values and can return a clean `4xx`.
+Or override it for one run with `metadata.reasoning_effort`. Delta lowercases and trims the value. OpenRouter and Responses receive `reasoning.effort`; a directly compatible Chat Completions endpoint receives `reasoning_effort`. Native Anthropic picks the wire by model. Claude 4.6+ and every Claude 5 model use `thinking:{type:"adaptive"}` with `output_config.effort` — they reject the older `thinking:{type:"enabled"}` budget wire; on this path the OpenAI-only `none` and `minimal` map to `low` (an always-on reasoning model cannot disable thinking), and Delta raises the request's `max_tokens` by an effort-based headroom so adaptive thinking has room. Claude 4.5 and earlier keep the legacy budget wire, mapping `none`, `minimal`, `low`, `medium`, `high`, and `xhigh` to disabled, 1,024, 4,096, 8,192, 16,384, and 32,768 thinking tokens, with an unknown value using the 16,384-token mapping. Other providers validate their own accepted values and can return a clean `4xx`.
 
 ## Run and call the agent
 
@@ -704,6 +704,8 @@ Inspect status:
 ```sh
 curl -sS http://127.0.0.1:8080/v1/tasks/resp_...
 ```
+
+The task view carries lifecycle metadata for a polling host: `created_at` (accepted and enqueued), `started_at` (dequeued and began executing), and `finished_at` (terminal), which separate queue wait from execution time. A failed or cancelled run also exposes a first-class `error` field with the run's last error — the provider or fatal error that ended it — so a plain poller learns why a run failed before its first token, without shelling in. Per-tool errors remain in the message stream.
 
 Follow live task events:
 
@@ -1619,7 +1621,7 @@ curl -sS http://127.0.0.1:8080/healthz
 ```
 
 ```json
-{"ok":true,"version":"0.2.1","build":"optional-commit"}
+{"ok":true,"version":"0.2.3","build":"optional-commit"}
 ```
 
 `build` appears only when `DELTA_BUILD` is set. This endpoint does not test the model, MCP servers, telemetry, or other dependencies. It is liveness and version metadata, not readiness.

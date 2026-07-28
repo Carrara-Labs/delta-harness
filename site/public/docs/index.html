@@ -1956,7 +1956,7 @@ MODEL_HEADERS={&quot;originator&quot;:&quot;codex_cli_rs&quot;}
 <p>Set a daemon default for extended reasoning:</p>
 <div class="code-block"><div class="code-toolbar"><span>dotenv</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-dotenv">DELTA_REASONING_EFFORT=high
 </code></pre></div>
-<p>Or override it for one run with <code>metadata.reasoning_effort</code>. Delta lowercases and trims the value. OpenRouter and Responses receive <code>reasoning.effort</code>; a directly compatible Chat Completions endpoint receives <code>reasoning_effort</code>. Native Anthropic maps <code>none</code>, <code>minimal</code>, <code>low</code>, <code>medium</code>, <code>high</code>, and <code>xhigh</code> to disabled, 1,024, 4,096, 8,192, 16,384, and 32,768 thinking tokens. An unknown Anthropic value uses the 16,384-token mapping. Other providers validate their own accepted values and can return a clean <code>4xx</code>.</p>
+<p>Or override it for one run with <code>metadata.reasoning_effort</code>. Delta lowercases and trims the value. OpenRouter and Responses receive <code>reasoning.effort</code>; a directly compatible Chat Completions endpoint receives <code>reasoning_effort</code>. Native Anthropic picks the wire by model. Claude 4.6+ and every Claude 5 model use <code>thinking:{type:&quot;adaptive&quot;}</code> with <code>output_config.effort</code> - they reject the older <code>thinking:{type:&quot;enabled&quot;}</code> budget wire; on this path the OpenAI-only <code>none</code> and <code>minimal</code> map to <code>low</code> (an always-on reasoning model cannot disable thinking), and Delta raises the request's <code>max_tokens</code> by an effort-based headroom so adaptive thinking has room. Claude 4.5 and earlier keep the legacy budget wire, mapping <code>none</code>, <code>minimal</code>, <code>low</code>, <code>medium</code>, <code>high</code>, and <code>xhigh</code> to disabled, 1,024, 4,096, 8,192, 16,384, and 32,768 thinking tokens, with an unknown value using the 16,384-token mapping. Other providers validate their own accepted values and can return a clean <code>4xx</code>.</p>
 <h3 id="guide-run-and-call-the-agent">Run and call the agent<a class="heading-link" href="#guide-run-and-call-the-agent" aria-label="Link to this section">#</a></h3>
 <h4 id="guide-cli-reference">CLI reference<a class="heading-link" href="#guide-cli-reference" aria-label="Link to this section">#</a></h4>
 <div class="table-scroll"><table>
@@ -2040,6 +2040,7 @@ MODEL_HEADERS={&quot;originator&quot;:&quot;codex_cli_rs&quot;}
 <p>Inspect status:</p>
 <div class="code-block"><div class="code-toolbar"><span>sh</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-sh">curl -sS http://127.0.0.1:8080/v1/tasks/resp_...
 </code></pre></div>
+<p>The task view carries lifecycle metadata for a polling host: <code>created_at</code> (accepted and enqueued), <code>started_at</code> (dequeued and began executing), and <code>finished_at</code> (terminal), which separate queue wait from execution time. A failed or cancelled run also exposes a first-class <code>error</code> field with the run's last error - the provider or fatal error that ended it - so a plain poller learns why a run failed before its first token, without shelling in. Per-tool errors remain in the message stream.</p>
 <p>Follow live task events:</p>
 <div class="code-block"><div class="code-toolbar"><span>sh</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-sh">curl -N http://127.0.0.1:8080/v1/tasks/resp_.../events
 </code></pre></div>
@@ -2733,7 +2734,7 @@ export DELTA_INSPECT_TOKEN=replace-with-a-different-long-random-token
 <p>Check liveness and build identity:</p>
 <div class="code-block"><div class="code-toolbar"><span>sh</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-sh">curl -sS http://127.0.0.1:8080/healthz
 </code></pre></div>
-<div class="code-block"><div class="code-toolbar"><span>json</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-json">{&quot;ok&quot;:true,&quot;version&quot;:&quot;0.2.1&quot;,&quot;build&quot;:&quot;optional-commit&quot;}
+<div class="code-block"><div class="code-toolbar"><span>json</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-json">{&quot;ok&quot;:true,&quot;version&quot;:&quot;0.2.3&quot;,&quot;build&quot;:&quot;optional-commit&quot;}
 </code></pre></div>
 <p><code>build</code> appears only when <code>DELTA_BUILD</code> is set. This endpoint does not test the model, MCP servers, telemetry, or other dependencies. It is liveness and version metadata, not readiness.</p>
 <h4 id="guide-run-a-production-acceptance-smoke">Run a production acceptance smoke<a class="heading-link" href="#guide-run-a-production-acceptance-smoke" aria-label="Link to this section">#</a></h4>

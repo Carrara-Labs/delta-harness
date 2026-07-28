@@ -62,11 +62,60 @@ const kindLabel: Record<Kind, string> = {
 // exactly. Update this alongside the root CHANGELOG.md when a release ships.
 const releases: Release[] = [
   {
+    version: "0.2.3",
+    date: "July 28, 2026",
+    iso: "2026-07-28",
+    tagline: "Failure-visibility, from the field.",
+    latest: true,
+    note: "Driven by Aperture's production field report — two prod agents, the harness's heaviest real consumer. Every item ships with a test.",
+    groups: [
+      {
+        kind: "added",
+        items: [
+          "A first-class `error` field on `GET /v1/tasks/:id`. It carries the run's last error — the provider or fatal error that ended it — so a plain HTTP poller learns *why* a run failed before its first token instead of seeing a merely-dead run. Both incidents that motivated it were provider errors that failed the run before its first token (Opus 5 rejecting `thinking.type=enabled`; an untranslated fallback id). Per-tool errors stay in the message stream.",
+          "Run lifecycle timestamps on `GET /v1/tasks/:id`: `created_at` (accepted), `started_at` (dequeued and began executing), and `finished_at` (terminal), so a host can measure queue wait separately from execution time instead of one faith-based spinner.",
+          'Native Anthropic adaptive thinking. `DELTA_REASONING_EFFORT` now maps to `thinking:{type:"adaptive"}` + `output_config.effort` on Claude 4.6+ and every Claude 5 model, which reject the legacy `thinking:{type:"enabled"}`; the budget wire is kept for Claude ≤4.5. On the adaptive path `none`/`minimal` map to `low`, and Delta raises `max_tokens` by an effort-based headroom. Effort control now works on frontier models.',
+          "Baked `claude-opus-5` pricing, so the native and subscription paths meter real dollars without a `DELTA_MODEL_PRICES` override.",
+          "The four hosting lifecycle contracts are now documented guarantees in `docs/hosting.md` — idempotency keys freed on terminal runs, `recover()` resumes mid-flight runs on boot, `/v1/busy` reports the durable queued-or-running truth, and seeding never touches an existing `DELTA.md` — each pinned by a named guard test so it can't silently regress.",
+        ],
+      },
+      {
+        kind: "changed",
+        items: [
+          "Categorical-failure breaker. A tool that returns the same categorical `[tool error]` on three consecutive turns (a missing CLI, a persistent schema reject) is quarantined for the rest of the run and the model is told to try another approach — a success, transient, or different error resets the count. This caps the field report's worst case (a missing `code` CLI that burned ~$3.50 of a $5.17 run by looping ~17 turns): a live replay spent pennies on the dead end and still filed its output.",
+          "The `code` tool self-disables when its CLI isn't an executable file — probed once at boot via `Bun.which` (bare name) or `accessSync(X_OK)` (explicit path), so a capability the daemon can't back is never offered. A CLI that passes the probe but fails at runtime is caught by the breaker instead; the two layers are complementary.",
+          "All native-wire model ids are normalized (prefix stripped, dotted versions → dashes) for the primary *and* every fallback, not just the utility model. An untranslated fallback id was one of the two silent zero-token failures the release targets.",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.2.2",
+    date: "July 27, 2026",
+    iso: "2026-07-27",
+    tagline: "Self-write, budgets, and a channel edge.",
+    groups: [
+      {
+        kind: "added",
+        items: [
+          "`DELTA_ALLOW_SELF_WRITE` — trusted-gateway self-write. Off by default. When set, the `remember` self-write tool is granted (and pinned) even on the restricted `chat` profile, for a daemon fronted by a trusted, authenticated gateway. This is what lets a chat agent learn safely.",
+          "`DELTA_STEP_MAX_TOKENS` — cap the tokens a single tool call may emit, with an honest truncation error for oversized tool calls instead of silent corruption.",
+          "Companion package [`@carrara-labs/delta-connect`](https://www.npmjs.com/package/@carrara-labs/delta-connect) — a thin, always-on edge that plugs a Delta agent into a chat channel (Telegram first). The agent scales to zero between messages; the edge holds the conversation. See [/connect](https://deltaharness.dev/connect).",
+        ],
+      },
+      {
+        kind: "changed",
+        items: [
+          "`DELTA_MAX_TOKENS` / `DELTA_MAX_COST_USD` now override the profile budget instead of only narrowing it, so an operator can raise as well as lower a profile's budget explicitly.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.2.1",
     date: "July 22, 2026",
     iso: "2026-07-22",
     tagline: "Scale-to-zero, made safe.",
-    latest: true,
     groups: [
       {
         kind: "added",

@@ -15,12 +15,8 @@ function GitHubMark() {
 }
 
 export function SiteHeader() {
-  // On the home page the section links are in-page anchors; on any other route they must jump
-  // back to the home page first, so we prefix them with "/". Keeps a section link landing on the
-  // right page AND the right section from anywhere.
   const pathname = useLocation().pathname;
   const onHome = pathname === "/";
-  const to = (id: string) => (onHome ? `#${id}` : `/#${id}`);
   // Full-page nav links (not in-page anchors) get an active state when their route is open.
   const active = (path: string) => (pathname === path ? "is-active" : undefined);
   const current = (path: string) => (pathname === path ? ("page" as const) : undefined);
