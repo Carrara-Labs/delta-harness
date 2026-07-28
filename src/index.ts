@@ -85,6 +85,7 @@ function buildDeps(cfg: Config, dbPath: string): Deps {
     reflect: cfg.reflect,
     vocab: cfg.vocab,
     memoryNamespace: cfg.memoryNamespace,
+    isolateAgentMemory: cfg.isolateAgentMemory,
     promoteMinRuns: cfg.promoteMinRuns,
     promoteClaimTtlMs: cfg.promoteClaimTtlMs,
     capabilitySearchK: cfg.capabilitySearchK,

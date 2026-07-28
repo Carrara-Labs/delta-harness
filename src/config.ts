@@ -88,6 +88,9 @@ export type Config = {
    * DELTA_VOCAB overrides fields for another product. */
   vocab: Vocab;
   memoryNamespace: string;
+  /** DELTA_ISOLATE_AGENT_MEMORY=1 — exclude the anonymous (agent_id='') memory bucket from recall
+   * on a shared multi-agent DB (S5b). Off by default (single-agent-per-DB is the norm). */
+  isolateAgentMemory: boolean;
   promoteMinRuns: number;
   promoteClaimTtlMs: number;
   capabilitySearchK: number;
@@ -260,6 +263,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-|-$/g, "") ||
       "default",
+    isolateAgentMemory: env.DELTA_ISOLATE_AGENT_MEMORY === "1",
     promoteMinRuns: positiveInt(env.DELTA_PROMOTE_MIN_RUNS, 2),
     promoteClaimTtlMs: positiveInt(env.DELTA_PROMOTE_CLAIM_TTL_MS, 60_000),
     capabilitySearchK: positiveInt(env.DELTA_CAPABILITY_SEARCH_K, 5),

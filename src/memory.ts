@@ -281,6 +281,10 @@ export function recallAgentMemory(
    *  caller can surface *which* learnings were recalled (provenance) without changing
    *  the formatted-string return. Non-breaking — existing callers pass nothing. */
   sink?: RecalledMemory[],
+  /** Include the anonymous (`agent_id=''`) bucket — the dev daemon + legacy pre-v3.1 rows.
+   *  Default true (single-agent DB: they're this agent's). A shared MULTI-agent DB sets this
+   *  false so one agent can't recall another's unbound rows (codex S5b). */
+  includeAnonymous = true,
 ): string | null {
   // Error-as-value (codex #13): recall runs before the first model call — a
   // SQLITE_BUSY must degrade to "no memory block", never fail the user's run.
@@ -300,15 +304,17 @@ export function recallAgentMemory(
     };
     // Per-audience slices, each with its OWN limit (codex P2: a shared LIMIT let
     // agent rows crowd out every user row before scoring). agent_id matches this
-    // agent OR '' — the latter is the dev daemon AND legacy pre-v3.1 rows (migrated
-    // user memories carry no agent binding; on a single-agent DB they're this
-    // agent's, and new rows always carry the real agent_id, so no live bleed).
+    // agent — and, unless isolation is requested, the '' bucket (the dev daemon AND
+    // legacy pre-v3.1 rows: migrated user memories carry no agent binding; on a
+    // single-agent DB they're this agent's, and new rows always carry the real
+    // agent_id, so no live bleed there).
+    const agentClause = includeAnonymous ? "(agent_id = ? OR agent_id = '')" : "agent_id = ?";
     const slice = (audience: "agent" | "user" | "task_type", extra: string, args: string[]) =>
       (
         db
           .query(
             `SELECT id, artifact_kind, content, aliases, created_at, hits, confidence FROM memory
-             WHERE namespace = ? AND (agent_id = ? OR agent_id = '') AND audience = ? ${extra}
+             WHERE namespace = ? AND ${agentClause} AND audience = ? ${extra}
                AND coalesce(last_used, created_at) >= ?
              ORDER BY created_at DESC LIMIT ?`,
           )
@@ -331,12 +337,15 @@ export function recallAgentMemory(
         const recency = age < 7 * 24 * 3_600_000 ? 2 : age < 30 * 24 * 3_600_000 ? 1 : 0;
         // aliases widen the lexical haystack (recall only; not dedup — honest).
         const hay = r.aliases ? `${r.content} ${r.aliases}` : r.content;
-        return {
-          r,
-          score: 3 * overlap(q, hay) + Math.min(r.hits, 5) + recency + (r.confidence ?? 0.4),
-        };
+        // Deterministic score: overlap + coarse recency bucket + confidence, all immutable for a
+        // given row at a given instant. `hits` is DELIBERATELY excluded — it's mutated by this very
+        // recall (below), so ranking on it made an identical repeated query drift; usefulness is
+        // preserved through last_used extending the row's TTL, not through rank (codex P2/S5b).
+        return { r, score: 3 * overlap(q, hay) + recency + (r.confidence ?? 0.4) };
       })
-      .sort((a, b) => b.score - a.score || b.r.created_at - a.r.created_at);
+      // Ties break on newest-first, then a stable id tiebreak, so equal-score rows always order the
+      // same way (created_at can collide on same-ms inserts) — "same query → same set" holds.
+      .sort((a, b) => b.score - a.score || b.r.created_at - a.r.created_at || b.r.id - a.r.id);
 
     // Budget by chars (≈ tokens/4), not row count.
     const picked: typeof scored = [];

@@ -366,7 +366,7 @@ describe("recallAgentMemory() — the read side", () => {
     expect(typeof sink[0]?.kind).toBe("string");
   });
 
-  test("recall bumps hits/last_used, and usage then boosts rank", () => {
+  test("recall bumps hits/last_used (which extend the row's TTL, not its rank — S5b)", () => {
     const db = openDb(":memory:");
     seed(db, "a useful lesson");
     recallAgentMemory(db, "delta-1");
@@ -377,6 +377,56 @@ describe("recallAgentMemory() — the read side", () => {
     };
     expect(row.hits).toBe(2);
     expect(row.last_used).toBeGreaterThan(0);
+  });
+
+  test("deterministic ranking: an identical query returns the SAME order across repeated recalls (S5b)", () => {
+    const db = openDb(":memory:");
+    const now = Date.now();
+    // Several rows with overlapping relevance + identical created_at (same-ms inserts) — the case
+    // where a hits-boosted, tie-unstable sort used to drift between calls.
+    for (let i = 0; i < 6; i++)
+      seed(db, `deploy lesson number ${i} about the release CLI`, { createdAt: now });
+    const sinkOf = () => {
+      const s: { content: string; kind: string; audience: string }[] = [];
+      recallAgentMemory(
+        db,
+        "delta-1",
+        undefined,
+        "how do I deploy the release CLI?",
+        2_000,
+        "default",
+        undefined,
+        s,
+      );
+      return s.map((x) => x.content);
+    };
+    const first = sinkOf();
+    // Recall three more times (each bumps hits on the picked rows) — order must NOT change.
+    sinkOf();
+    sinkOf();
+    expect(sinkOf()).toEqual(first);
+  });
+
+  test("agent-memory isolation: the anonymous '' bucket is excluded when isolation is on (S5b)", () => {
+    const db = openDb(":memory:");
+    seed(db, "this agent's own lesson", { agentId: "delta-1" });
+    seed(db, "a legacy unbound lesson", { agentId: "" });
+    // Default: the '' bucket surfaces (single-agent DB — legacy/migrated rows are this agent's).
+    expect(recallAgentMemory(db, "delta-1")).toContain("legacy unbound");
+    // Isolated (shared multi-agent DB): the '' bucket is withheld, own rows still surface.
+    const isolated = recallAgentMemory(
+      db,
+      "delta-1",
+      undefined,
+      undefined,
+      2_000,
+      "default",
+      undefined,
+      undefined,
+      false, // includeAnonymous = false
+    );
+    expect(isolated).toContain("this agent's own lesson");
+    expect(isolated).not.toContain("legacy unbound");
   });
 
   test("decay by disuse: a 91-day-old never-recalled row stops surfacing; a recently-USED old row survives", () => {
@@ -522,5 +572,58 @@ describe("migration — legacy scope rows rebuild into the orthogonal model", ()
       (db.query("PRAGMA user_version").get() as { user_version: number }).user_version,
     ).toBeGreaterThanOrEqual(9);
     db.close();
+  });
+});
+
+describe("recall/write scope symmetry (S5b) — recall reads the exact keys remember writes", () => {
+  const write = (db: ReturnType<typeof openDb>, o: Partial<Parameters<typeof remember>[1]>) =>
+    remember(db, {
+      artifactKind: "fact",
+      confidence: 0.9,
+      source: "review",
+      content: "x",
+      audience: "agent",
+      ...o,
+    } as Parameters<typeof remember>[1]);
+
+  test("namespace: recall in the write namespace finds it; another namespace is blind to it", () => {
+    const db = openDb(":memory:");
+    write(db, { audience: "agent", agentId: "a", content: "ns-bound lesson", namespace: "kb" });
+    expect(recallAgentMemory(db, "a", undefined, undefined, 2_000, "kb")).toContain("ns-bound");
+    expect(recallAgentMemory(db, "a", undefined, undefined, 2_000, "other")).toBeNull();
+  });
+
+  test("user_id: recall as the owning user finds it; another user never does", () => {
+    const db = openDb(":memory:");
+    write(db, {
+      audience: "user",
+      agentId: "a",
+      userId: "alice",
+      content: "alice preference",
+      namespace: "kb",
+    });
+    expect(recallAgentMemory(db, "a", "alice", undefined, 2_000, "kb")).toContain(
+      "alice preference",
+    );
+    const bob = recallAgentMemory(db, "a", "bob", undefined, 2_000, "kb");
+    expect(bob ?? "").not.toContain("alice preference");
+  });
+
+  test("task_type: recall with the write task_type finds it; another (or none) doesn't", () => {
+    const db = openDb(":memory:");
+    write(db, {
+      audience: "task_type",
+      agentId: "a",
+      taskType: "triage",
+      content: "triage tip",
+      namespace: "kb",
+    });
+    expect(recallAgentMemory(db, "a", undefined, undefined, 2_000, "kb", "triage")).toContain(
+      "triage tip",
+    );
+    const other = recallAgentMemory(db, "a", undefined, undefined, 2_000, "kb", "other");
+    expect(other ?? "").not.toContain("triage tip");
+    // No task_type declared at recall → the task_type tier isn't queried at all.
+    expect(recallAgentMemory(db, "a", undefined, undefined, 2_000, "kb")).toBeNull();
   });
 });

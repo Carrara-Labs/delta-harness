@@ -140,6 +140,9 @@ export type Deps = {
   /** Reasoning effort for the main model (extended thinking); per-run metadata overrides. */
   reasoningEffort?: ReasoningEffort;
   memoryNamespace?: string;
+  /** Shared multi-agent DB: exclude the anonymous (agent_id='') memory bucket from recall so one
+   *  agent can't read another's unbound rows (DELTA_ISOLATE_AGENT_MEMORY, S5b). Default off. */
+  isolateAgentMemory?: boolean;
   promoteMinRuns?: number;
   promoteClaimTtlMs?: number;
   /** Per-tool wall-clock ceiling (ms) when a tool sets none; 0/unset = unbounded.
@@ -523,6 +526,9 @@ export async function executeRun(
         deps.memoryNamespace,
         taskType,
         recalled, // provenance sink — which learnings were surfaced
+        // Exclude the anonymous agent bucket on a shared multi-agent DB so this agent can't
+        // recall another's unbound rows (S5b). Default keeps the '' bucket (single-agent DB).
+        !deps.isolateAgentMemory,
       );
       block = [kbBlock, localBlock].filter(Boolean).join("\n\n") || null;
     }
