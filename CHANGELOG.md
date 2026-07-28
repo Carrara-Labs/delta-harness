@@ -58,6 +58,12 @@ validated end-to-end on a real compiled binary against OpenRouter (Sonnet 5) and
   from, so it can't drift.
 - **New config flags:** `DELTA_STRICT_TENANT`, `DELTA_TRUST_REVIEW_METADATA`, and
   `DELTA_ISOLATE_AGENT_MEMORY` (below). All default off (current single-tenant behavior).
+- **Configurable run concurrency** (`DELTA_MAX_CONCURRENCY`, clamped 1–256). The number of
+  concurrent cross-session runs was a hardcoded 4; it is now a config knob whose **default is 8**.
+  Each run is IO-bound async work on one event loop (not a thread), and sessions stay serial, so the
+  practical ceiling is the provider's concurrent-request tolerance (keep it low on a subscription
+  key; a high-limit API key can run 25+), then per-run context memory (~4–15 MB/run). The queue
+  mechanism is tested correct to 128 concurrent runs.
 
 ### Changed
 

@@ -19,6 +19,11 @@ import { parseVocab, type Vocab } from "./vocab";
 export type Config = {
   port: number;
   dbPath: string;
+  /** Max concurrent RUNS (one per active session) the queue dispatches at once
+   * (DELTA_MAX_CONCURRENCY, default 4, clamped 1-256). Runs are IO-bound async work on one event
+   * loop, so this is really "how many provider calls in flight"; the real ceilings are the provider
+   * rate limit, per-run context memory, and simultaneous-compaction CPU. */
+  maxConcurrency: number;
   leaseTtlMs: number;
   /** Stable single-writer identity for the run-lease (F0.5). Machine-scoped, NOT
    *  per-process: it matches the act-as-token principal the lease protects (one writer
@@ -207,6 +212,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   return {
     port: Number(env.PORT ?? 8080),
     dbPath: env.DELTA_DB ?? "data/delta.db",
+    maxConcurrency: Math.min(256, positiveInt(env.DELTA_MAX_CONCURRENCY, 8)),
     leaseTtlMs: Number.isFinite(leaseTtl) ? Math.max(5_000, leaseTtl) : 30_000,
     // Machine-scoped, stable across restarts: Fly's per-machine id in prod, hostname
     // otherwise; DELTA_LEASE_HOLDER overrides (tests, or to simulate a second machine).

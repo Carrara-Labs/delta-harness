@@ -66,3 +66,13 @@ describe("DELTA_MCP_SERVERS parsing", () => {
     expect(servers.map((s) => s.name)).toEqual(["ok"]);
   });
 });
+
+describe("DELTA_MAX_CONCURRENCY", () => {
+  test("defaults to 8, parses a valid value, clamps to [1, 256], ignores garbage", () => {
+    expect(loadConfig({}).maxConcurrency).toBe(8);
+    expect(loadConfig({ DELTA_MAX_CONCURRENCY: "24" }).maxConcurrency).toBe(24);
+    expect(loadConfig({ DELTA_MAX_CONCURRENCY: "1000" }).maxConcurrency).toBe(256); // hard ceiling
+    expect(loadConfig({ DELTA_MAX_CONCURRENCY: "0" }).maxConcurrency).toBe(1); // floored to 1 (never a halted queue)
+    expect(loadConfig({ DELTA_MAX_CONCURRENCY: "nope" }).maxConcurrency).toBe(8); // garbage → default
+  });
+});

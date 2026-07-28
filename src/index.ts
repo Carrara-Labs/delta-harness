@@ -307,7 +307,7 @@ for (const server of cfg.mcpServers) {
 
 await loadIdentity(deps, cfg); // DELTA.md self-file + POLICY.md contract
 
-const queue = new Queue(deps);
+const queue = new Queue(deps, cfg.maxConcurrency);
 // Bind the port BEFORE resuming any work. On a single machine the port is the real
 // second-writer guard: the lease is machine-scoped, so a same-machine double-start
 // self-reacquires it (that path is what lets a crashed daemon's restart reclaim

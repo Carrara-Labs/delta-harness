@@ -45,7 +45,12 @@ export class Queue {
 
   constructor(
     private deps: Deps,
-    private concurrency = 4,
+    // Max concurrent RUNS (one per active session). Runs are IO-bound async work on ONE event
+    // loop — this is really "how many provider calls in flight", not threads. The daemon sets it
+    // from DELTA_MAX_CONCURRENCY (default 8); the mechanism itself is proven correct to 128+. The
+    // practical ceiling is the provider's concurrent-request tolerance (a subscription key wants a
+    // LOW value; a high-limit API key can go to 25+), then per-run context memory (~4-15MB/run).
+    private concurrency = 8,
   ) {}
 
   /** Durable-before-ack: the row is committed before this returns. */

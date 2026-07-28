@@ -716,7 +716,7 @@ curl -N http://127.0.0.1:8080/v1/tasks/resp_.../events
 
 This task event endpoint is live-only. If the task is already terminal, it immediately emits the final `done` frame. Use `/v1/dev/stream?since=<event-id>` when replayable inspection is required.
 
-The shipped queue has four cross-session workers and no admission or backlog cap. Put capacity limits and backpressure in the gateway. For long work, prefer `/v1/tasks` over keeping a synchronous request open. Delta disables Bun's server idle timeout, but proxies and load balancers still need suitable request, read, and SSE timeouts. Task and response streams do not bound queued frames for slow consumers, so clients must consume promptly and gateways should cap concurrent or abandoned streams.
+The shipped queue runs up to `DELTA_MAX_CONCURRENCY` cross-session runs at once (**default 8**, clamped 1–256), with no admission or backlog cap. Each run is IO-bound async work on one event loop — this is "how many provider calls in flight", not threads — and sessions stay serial (one run per session). The mechanism itself is proven correct well past this; the practical ceiling is your provider's concurrent-request tolerance (a subscription key wants a **low** value; a high-limit API key can run 25+), then per-run context memory (~4–15 MB per active run). Raise it for a high-throughput agent; lower it to 1–2 to be gentle on a rate-limited subscription. Put hard capacity limits and backpressure in the gateway. For long work, prefer `/v1/tasks` over keeping a synchronous request open. Delta disables Bun's server idle timeout, but proxies and load balancers still need suitable request, read, and SSE timeouts. Task and response streams do not bound queued frames for slow consumers, so clients must consume promptly and gateways should cap concurrent or abandoned streams.
 
 Cancel a queued or running task:
 
@@ -730,7 +730,7 @@ Task status has five values:
 
 | Status | Meaning |
 |---|---|
-| `queued` | Durable and waiting for an available daemon worker. Sessions stay serial; different sessions use up to four workers by default. |
+| `queued` | Durable and waiting for a free run slot. Sessions stay serial; different sessions run concurrently up to `DELTA_MAX_CONCURRENCY` (default 8). |
 | `running` | The worker owns the run. |
 | `done` | Completed successfully. |
 | `failed` | Reached a terminal provider, tool-loop, or budget failure. |

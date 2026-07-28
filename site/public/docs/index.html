@@ -2046,7 +2046,7 @@ MODEL_HEADERS={&quot;originator&quot;:&quot;codex_cli_rs&quot;}
 <div class="code-block"><div class="code-toolbar"><span>sh</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-sh">curl -N http://127.0.0.1:8080/v1/tasks/resp_.../events
 </code></pre></div>
 <p>This task event endpoint is live-only. If the task is already terminal, it immediately emits the final <code>done</code> frame. Use <code>/v1/dev/stream?since=&lt;event-id&gt;</code> when replayable inspection is required.</p>
-<p>The shipped queue has four cross-session workers and no admission or backlog cap. Put capacity limits and backpressure in the gateway. For long work, prefer <code>/v1/tasks</code> over keeping a synchronous request open. Delta disables Bun's server idle timeout, but proxies and load balancers still need suitable request, read, and SSE timeouts. Task and response streams do not bound queued frames for slow consumers, so clients must consume promptly and gateways should cap concurrent or abandoned streams.</p>
+<p>The shipped queue runs up to <code>DELTA_MAX_CONCURRENCY</code> cross-session runs at once (<strong>default 8</strong>, clamped 1–256), with no admission or backlog cap. Each run is IO-bound async work on one event loop - this is &quot;how many provider calls in flight&quot;, not threads - and sessions stay serial (one run per session). The mechanism itself is proven correct well past this; the practical ceiling is your provider's concurrent-request tolerance (a subscription key wants a <strong>low</strong> value; a high-limit API key can run 25+), then per-run context memory (~4–15 MB per active run). Raise it for a high-throughput agent; lower it to 1–2 to be gentle on a rate-limited subscription. Put hard capacity limits and backpressure in the gateway. For long work, prefer <code>/v1/tasks</code> over keeping a synchronous request open. Delta disables Bun's server idle timeout, but proxies and load balancers still need suitable request, read, and SSE timeouts. Task and response streams do not bound queued frames for slow consumers, so clients must consume promptly and gateways should cap concurrent or abandoned streams.</p>
 <p>Cancel a queued or running task:</p>
 <div class="code-block"><div class="code-toolbar"><span>sh</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-sh">curl -sS -X DELETE http://127.0.0.1:8080/v1/tasks/resp_...
 </code></pre></div>
@@ -2057,7 +2057,7 @@ MODEL_HEADERS={&quot;originator&quot;:&quot;codex_cli_rs&quot;}
 <tr><th>Status</th><th>Meaning</th></tr>
 </thead>
 <tbody>
-<tr><td><code>queued</code></td><td>Durable and waiting for an available daemon worker. Sessions stay serial; different sessions use up to four workers by default.</td></tr>
+<tr><td><code>queued</code></td><td>Durable and waiting for a free run slot. Sessions stay serial; different sessions run concurrently up to <code>DELTA_MAX_CONCURRENCY</code> (default 8).</td></tr>
 <tr><td><code>running</code></td><td>The worker owns the run.</td></tr>
 <tr><td><code>done</code></td><td>Completed successfully.</td></tr>
 <tr><td><code>failed</code></td><td>Reached a terminal provider, tool-loop, or budget failure.</td></tr>
