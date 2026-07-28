@@ -400,4 +400,64 @@ describe("pre-send gate + long-run durability (W2 integration)", () => {
     expect(done.error).toContain("6/6 steps");
     expect(done.steps).toBe(6);
   }, 20_000);
+
+  test("provider-anchored projection compacts when the byte estimate alone would not (S7)", async () => {
+    // A moderate history: ~16k chars, whose byte-estimate (~6.5k tokens) stays UNDER the 10k budget.
+    // The provider reports turn 1's REAL gross input as sitting just under the budget (framing /
+    // tokenization the byte rule can't see). Old behavior: neither the byte-estimate NOR the raw
+    // lastInput crosses → no pre-send compaction → we'd overflow a call later. New behavior: turn 2's
+    // projection = lastInput(9990) + the estimated growth of the appended tool result → crosses →
+    // compaction fires a call earlier. The history is large enough that maybeCompact actually sheds.
+    const nearBudget = {
+      input: 9_990,
+      output: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: 9_995,
+      costUsd: 0.001,
+    };
+    let mainCalls = 0;
+    let compactions = 0;
+    const sizes: number[] = [];
+    const deps = makeDeps(async (req: ChatRequest) => {
+      const sys = req.messages[0]?.content;
+      if (typeof sys === "string" && sys.startsWith("You compact")) {
+        compactions++;
+        return ok({ role: "assistant", content: "Goal: g\nProgress: p\nNext: n\nArtifacts: a" });
+      }
+      mainCalls++;
+      sizes.push(req.messages.reduce((n, m) => n + JSON.stringify(m).length, 0));
+      if (mainCalls === 1)
+        return { ...toolCallResult("add", { a: 1, b: 1 }, "c1"), usage: { ...nearBudget } };
+      return textResult("done");
+    }, testTools());
+    deps.compactAtTokens = 10_000;
+    const now = Date.now();
+    const { db } = deps;
+    db.query(
+      "INSERT INTO sessions (id, user_id, created_at, updated_at) VALUES ('s', NULL, ?, ?)",
+    ).run(now, now);
+    db.query(
+      "INSERT INTO runs (id, session_id, seq, status, request, created_at, finished_at) VALUES ('r1','s',1,'done',?,?,?)",
+    ).run(JSON.stringify({ input: "the original ask" }), now, now);
+    const ins = db.query(
+      "INSERT INTO messages (run_id, session_id, msg, created_at) VALUES ('r1','s',?,?)",
+    );
+    for (let i = 0; i < 16; i++)
+      ins.run(
+        JSON.stringify({ role: i % 2 ? "assistant" : "user", content: "x".repeat(1000) }),
+        now,
+      );
+
+    const queue = new Queue(deps);
+    const done = await queue.wait(
+      queue.enqueue({ input: "continue", previous_response_id: "r1" }).id,
+    );
+    expect(done.status).toBe("done");
+    // Every real prompt stayed under ~22k chars → byte-estimate < ~9k tokens < the 10k budget, so the
+    // byte signal never crossed; the raw lastInput (9990) is also under budget. Only the provider
+    // anchor projection could have triggered the compaction that fired.
+    expect(Math.max(...sizes)).toBeLessThan(22_000);
+    expect(compactions).toBeGreaterThan(0);
+  }, 20_000);
 });

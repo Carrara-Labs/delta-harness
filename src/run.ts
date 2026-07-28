@@ -557,6 +557,11 @@ export async function executeRun(
   // maxSteps guard can't reset and the compaction trigger survives resume.
   let stepCount = run.steps;
   let lastInputTokens = run.last_input;
+  // Byte-estimate of the request the last model call actually sent — paired with lastInputTokens
+  // (the provider's REAL gross input for it) to project the next call's size (W2/S7). In-memory
+  // only: 0 means "no anchor from this process yet" (fresh run OR resume), which degrades the
+  // pre-send gate to its prior behavior. Reset to 0 whenever lastInputTokens is (post-compaction).
+  let lastEstimate = 0;
   // One context-overflow rescue per turn: reset after each successful call, so a recoverable
   // "prompt too long" triggers a forced compaction + retry instead of a terminal failure.
   let overflowRetried = false;
@@ -690,13 +695,24 @@ export async function executeRun(
     // Gross-input semantics: cached tokens still occupy the model's window.
     let history = activeSessionMessages(db, run.session_id);
     const imgs = () => (deps.vision ? countImages(history) : 0);
-    // Compact when EITHER the byte-estimate OR the last call's real gross prompt size crossed the
-    // budget — bytes/3 can undercount high-entropy text or provider framing, so the gross signal
-    // is a belt-and-suspenders backstop that the pre-send estimate alone would miss (codex).
-    if (
-      estimateTokens([...nonHistory, ...history], specs, imgs()) > deps.compactAtTokens ||
-      lastInputTokens > deps.compactAtTokens
-    ) {
+    const estimate = () => estimateTokens([...nonHistory, ...history], specs, imgs());
+    // Compact BEFORE sending when the projected next-call input crosses the budget. Two signals,
+    // maxed: (1) the full serialized byte-estimate (already conservative — it tends to OVER-count
+    // — and the only signal that sees tool-schema growth); and (2) a PROVIDER-ANCHORED projection:
+    // the last call's REAL gross input (lastInputTokens) plus a byte-estimate of only what's been
+    // appended since it (byteEstimate - lastEstimate). The anchor corrects the byte rule's per-token
+    // bias on the bulk the provider already measured, so we catch "the prior call sat just under
+    // budget and this turn's tool results pushed it over" a call earlier, instead of leaning on the
+    // post-provider overflow retry (codex). We project only with a real anchor from THIS process
+    // (lastEstimate>0); on resume this degrades to the prior max(byte-estimate, persisted lastInput)
+    // with no risk of over-compacting, and the clamp keeps a post-compaction shrink from going
+    // negative.
+    const byteEstimate = estimate();
+    const projected = Math.max(
+      byteEstimate,
+      lastInputTokens + (lastEstimate > 0 ? Math.max(0, byteEstimate - lastEstimate) : 0),
+    );
+    if (projected > deps.compactAtTokens) {
       // Dynamic recent-tail budget: the space actually LEFT for history after the fixed parts
       // (spine + tools + ephemeral) and the ask-pin + summary the compaction will insert. Clamp to
       // 0 (never a floor above the real remainder) — a fixed floor could exceed the budget when
@@ -724,13 +740,14 @@ export async function executeRun(
         if (cu.shrank) {
           history = activeSessionMessages(db, run.session_id); // re-fetch the shrunken history
           lastInputTokens = 0; // the gross backstop measured the pre-compaction prompt; reset it
+          lastEstimate = 0; // and its paired byte-anchor — the next call re-establishes both
           db.query("UPDATE runs SET usage = ?, last_input = 0 WHERE id = ?").run(
             JSON.stringify(usage),
             run.id,
           );
           // If it STILL won't fit, compaction can't help (fixed parts too big / irreducible tail).
           // Warn and proceed — the post-provider overflow path is the final backstop.
-          if (estimateTokens([...nonHistory, ...history], specs, imgs()) > deps.compactAtTokens)
+          if (estimate() > deps.compactAtTokens)
             events.emit("error", spine, {
               "error.type": "context_irreducible",
               message: "assembled request still exceeds the context budget after compaction",
@@ -790,6 +807,7 @@ export async function executeRun(
           // worse (codex). If it didn't shrink, fall through and fail honestly.
           if (cu.shrank) {
             lastInputTokens = 0;
+            lastEstimate = 0;
             db.query("UPDATE runs SET last_input = 0 WHERE id = ?").run(run.id);
             events.emit(
               "error",
@@ -806,6 +824,10 @@ export async function executeRun(
 
     model = result.model;
     lastInputTokens = result.usage.input;
+    // Pair the real gross input with a byte-estimate of the SAME (final, post-compaction) request,
+    // so next turn can project growth off a provider-measured anchor (S7). `history` is unchanged
+    // between the send above and here (tool results are appended later in the loop).
+    lastEstimate = estimate();
     stepCount++;
     overflowRetried = false; // fresh overflow budget for the next turn
     addUsage(usage, result.usage);
