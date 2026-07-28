@@ -1,4 +1,4 @@
-import { Fragment, useEffect } from "react";
+import { Fragment, type ReactNode, useEffect } from "react";
 
 import { SiteFooter, SiteHeader } from "~/components/landing";
 import "~/styles/landing.css";
@@ -67,32 +67,32 @@ const releases: Release[] = [
     iso: "2026-07-28",
     tagline: "Harden what shipped; close the gaps.",
     latest: true,
-    note: "Five audits of the 0.2.3 binary plus a three-way competitor teardown found the two roadmap 'big blocks' already shipped, so this is targeted correctness, security, and observability — each with a test. The two security surfaces were codex-gated to a GO, and every change is provider-agnostic (no wire changes), validated end-to-end on a real binary against OpenRouter (Sonnet 5) and native Anthropic (Opus 5).",
+    note: "Security, observability, and performance hardening. No wire changes, so upgrading is a one-line version bump — every change is provider-agnostic and lands with tests.",
     groups: [
-      {
-        kind: "changed",
-        items: [
-          "**Task-route tenancy.** `GET`/`DELETE /v1/tasks/:id` and `…/events` checked only that a run existed, so any control-token holder could read, poll, or cancel any run. They now enforce that the caller owns it: the tenancy principal is the gateway-asserted `x-delta-user` header (never a request-body field), a cross-tenant hit and a miss return the same `404`, and the header is canonicalized into the stored run so recall, reflection, and event identity all key on the same owner. The idempotency dedupe is owner-scoped, and `previous_response_id` no longer leaks existence via a `400`-vs-`403` split. New `DELTA_STRICT_TENANT` requires every run to be owned, for a daemon serving multiple users behind one control token.",
-          "**Memory-widening can't be self-asserted.** Reflection widens a user-scoped memory to a broader audience only on `review_kind` + `widen_authorized` — both read from caller-controlled metadata. Those fields are now stripped from every request body by default (a shared control token isn't proof a human reviewer set them); `DELTA_TRUST_REVIEW_METADATA=1` is the single-tenant opt-in.",
-          "**Suspend-safe resume.** The write-lease heartbeat exited the daemon on a failed renewal — which, after a Fly suspend across a wall-clock jump, meant it exited *without releasing* and the restart cap turned that into a minutes-long stall. It now reclaims its own machine-scoped lease and stays up, exiting only on a genuine different live holder. A scale-to-zero host can flip `stop` → `suspend` and cut cold start ~4.7s → ~1.1s.",
-          "**Research subagents are genuinely read-only.** A research child inherited the parent's full rights and could write, remember, or run code mid-run. Tools now carry a positive, fail-closed `readonly` marker and a research child is admitted only read-only tools (MCP tools from the authoritative `readOnlyHint`, never a name heuristic); anything unmarked defaults to mutating, so a new tool can't leak a write into a child.",
-          "**Provider-anchored pre-send sizing.** The compaction gate could sit just under budget on its byte estimate while the provider's real input was over, wasting a frontier call before the overflow retry corrected it. It now also projects off the last call's real gross input, so a long run compacts a call earlier — no tokenizer, never below the existing floor.",
-          "**Deterministic memory recall.** Recall ranked partly on a `hits` counter the recall itself mutates, so an identical query drifted its order; `hits` is dropped from ranking (usefulness survives via TTL) with a stable id tiebreak. New `DELTA_ISOLATE_AGENT_MEMORY` excludes the anonymous `agent_id=''` bucket on a shared multi-agent DB.",
-        ],
-      },
       {
         kind: "added",
         items: [
-          "Pollable per-task event feed. `GET /v1/tasks/:id/events?since=<id>` returns a bounded, cursor-paged JSON page (`events`, `cursor`, `done`) for hosts that can't hold an SSE connection; the live SSE tail takes `?coarse=1` to drop per-token deltas and keep the structural heartbeat. `model.call` events now carry `cache_hit_pct`, so a host watches per-turn cache warmth live instead of deriving it.",
-          "`delta bundle apply` — a first-class command (also run on every container boot) that re-seeds the FIXED operator files (`POLICY.md`, `vocab.json`, `PROMPT_CONTEXT.md`) from their base64 env, validating each first and never touching the learned `DELTA.md`. Updating operator config on a live machine is one safe step instead of the old multi-step dance.",
-          "Configurable run concurrency. The number of concurrent cross-session runs was a hardcoded 4; it is now a config knob, `DELTA_MAX_CONCURRENCY` (clamped 1–256), whose default is 8. Each run is IO-bound async work on one event loop (not a thread) and sessions stay serial, so the practical ceiling is the provider's concurrent-request tolerance (keep it low on a subscription key; a high-limit API key can run 25+), then per-run context memory (~4–15 MB/run). The queue mechanism is tested correct to 128 concurrent runs.",
+          "**Tunable concurrency.** `DELTA_MAX_CONCURRENCY` sets how many sessions run at once — default **8** (up from 4), clamped 1–256. Sessions stay serial and the queue is tested correct to **128** concurrent runs; the practical ceiling is your provider's rate limit, so keep it low on a subscription key and 25+ on a high-limit API key. Budget roughly **4–15 MB per active run**.",
+          "**Live progress without a stream.** `GET /v1/tasks/:id/events?since=<id>` returns a cursor-paged JSON page for hosts that can't hold an SSE connection, and `model.call` events now carry `cache_hit_pct` so you can watch per-turn prompt-cache warmth live instead of reconstructing it after the fact.",
+          "**One-step operator-config updates.** The new `delta bundle apply` command (also run on every boot) re-seeds the fixed operator files, validating each first and never touching the agent's learned `DELTA.md`.",
+        ],
+      },
+      {
+        kind: "changed",
+        items: [
+          "**Faster cold starts on scale-to-zero.** A host can now flip `stop` → `suspend` and cut cold start from **~4.7s to ~1.1s**. The write-lease reclaims itself across a suspend instead of exiting and stalling on the platform's restart cap.",
+          "**Per-tenant task access.** `GET`/`DELETE /v1/tasks/:id` and `…/events` now enforce that the caller owns the run — a cross-tenant or unknown id both return `404`. Ownership comes from the gateway `x-delta-user` header, never a request body. Set `DELTA_STRICT_TENANT` to require an owner on every run.",
+          "**Memory-widening can't be self-asserted.** The metadata that widens a private memory to a broader audience is stripped from every request body by default, so a caller can't self-authorize it. `DELTA_TRUST_REVIEW_METADATA=1` opts a single-tenant daemon back in.",
+          "**Read-only research subagents.** A research child is admitted only read-only tools; anything unmarked defaults to mutating, so it can never write, `remember`, or run code mid-run.",
+          "**Earlier, cheaper compaction.** The pre-send size gate now projects off the provider's real last-call input, so a long run compacts before it wastes a frontier call on an over-budget request.",
+          "**Deterministic memory recall.** An identical query returns the same set every time (ranking no longer drifts on a self-mutating counter). `DELTA_ISOLATE_AGENT_MEMORY` keeps agents on a shared database from reading each other's rows.",
         ],
       },
       {
         kind: "fixed",
         items: [
-          "Concurrent self-writes no longer clobber each other. Two runs on one daemon both calling `remember` wrote `DELTA.md` last-write-wins, silently dropping one run's lesson. The self-write now uses optimistic concurrency: a write carries the base revision it read, a diverged base is refused with the current content, and the run re-reads, re-merges, and retries — so both concurrent lessons survive. An idempotent re-fire still no-ops. This is the one file-level compare-and-swap layer; other file writes remain last-write-wins.",
-          "A distilled learning could be silently dropped. When the utility model returned a non-string field in a distilled artifact (a numeric name, an object body), reflection threw while persisting and the whole learning was lost — latent since 0.1.0. The artifact's content, name, and body are now type-guarded with safe fallbacks, so a malformed distiller response degrades to a best-effort learning instead of none.",
+          "**Concurrent self-writes no longer clobber each other.** Two runs calling `remember` at once used to overwrite each other's `DELTA.md`, silently dropping one lesson. A compare-and-swap now lets both survive.",
+          "**No more silently dropped lessons.** A malformed learning could throw and be lost entirely (latent since 0.1.0); it now degrades to a best-effort learning instead of none.",
         ],
       },
     ],
@@ -256,18 +256,56 @@ const releases: Release[] = [
 ];
 
 function renderInline(text: string) {
-  // Lightweight inline-code rendering so change entries can name identifiers naturally
-  // with backticks (`/v1/busy`) without hand-writing <code> in the data. Keyed by the
-  // part's character offset in the source string — stable and unique, never the array index.
+  // Lightweight inline Markdown so change entries can be authored naturally: backticks for
+  // identifiers (`/v1/busy`), `**bold**` for the lead phrase, `*italic*` for emphasis. Flat
+  // tokenizer (no nesting) — code is matched first so backticks are never re-parsed. Keyed by
+  // the part's character offset in the source string — stable and unique, never the array index.
   let offset = 0;
-  return text.split(/(`[^`]+`)/g).map((part) => {
+  return text.split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/g).map((part) => {
     const key = `${offset}:${part}`;
     offset += part.length;
-    if (part.startsWith("`") && part.endsWith("`") && part.length > 1) {
+    if (part.length > 1 && part.startsWith("`") && part.endsWith("`")) {
       return <code key={key}>{part.slice(1, -1)}</code>;
+    }
+    if (part.length > 4 && part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={key}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.length > 2 && part.startsWith("*") && part.endsWith("*")) {
+      return <em key={key}>{part.slice(1, -1)}</em>;
     }
     return <Fragment key={key}>{part}</Fragment>;
   });
+}
+
+// A small line icon per change category, drawn in the category's own colour (inherits
+// currentColor from the label). Added/Fixed read as positive (sage +/check); Changed/Removed
+// read as mutating (clay swap/minus) — two accents, on-system with the rest of the page.
+function KindIcon({ kind }: { kind: Kind }) {
+  const paths: Record<Kind, ReactNode> = {
+    added: <path d="M8 3.4v9.2M3.4 8h9.2" />,
+    fixed: <path d="M3.6 8.4l2.9 2.9 5.9-6" />,
+    changed: (
+      <>
+        <path d="M3 6h9M10 4l2 2-2 2" />
+        <path d="M13 10H4M6 8l-2 2 2 2" />
+      </>
+    ),
+    removed: <path d="M3.4 8h9.2" />,
+  };
+  return (
+    <svg
+      className="chg-ico"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {paths[kind]}
+    </svg>
+  );
 }
 
 export default function Changelog() {
@@ -342,7 +380,10 @@ export default function Changelog() {
 
                     {release.groups.map((group) => (
                       <div className="chg-group" data-kind={group.kind} key={group.kind}>
-                        <span className="chg-group-label">{kindLabel[group.kind]}</span>
+                        <span className="chg-group-label">
+                          <KindIcon kind={group.kind} />
+                          {kindLabel[group.kind]}
+                        </span>
                         <ul className="chg-items">
                           {group.items.map((item) => (
                             <li key={item.slice(0, 48)}>{renderInline(item)}</li>

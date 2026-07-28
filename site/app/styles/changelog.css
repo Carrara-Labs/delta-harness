@@ -220,33 +220,21 @@
   text-transform: uppercase;
   color: var(--muted-foreground);
 }
-.chg .chg-group-label::before {
-  content: "";
-  width: 7px;
-  height: 7px;
-  border-radius: 2px;
-  background: var(--faint);
+/* Per-category line icon. The SVG strokes with currentColor, so it takes the label's
+   category colour set below (sage for added/fixed, clay for changed/removed). */
+.chg .chg-ico {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--faint);
 }
-.chg .chg-group[data-kind="added"] .chg-group-label {
+.chg .chg-group[data-kind="added"] .chg-group-label,
+.chg .chg-group[data-kind="fixed"] .chg-group-label {
   color: var(--sage);
-}
-.chg .chg-group[data-kind="added"] .chg-group-label::before {
-  background: var(--sage);
 }
 .chg .chg-group[data-kind="changed"] .chg-group-label,
 .chg .chg-group[data-kind="removed"] .chg-group-label {
   color: var(--clay);
-}
-.chg .chg-group[data-kind="changed"] .chg-group-label::before,
-.chg .chg-group[data-kind="removed"] .chg-group-label::before {
-  background: var(--clay);
-}
-.chg .chg-group[data-kind="removed"] .chg-group-label::before {
-  border-radius: 50%;
-  background: transparent;
-  border: 1.5px solid var(--clay);
-  width: 8px;
-  height: 8px;
 }
 
 .chg .chg-items {
@@ -276,6 +264,13 @@
 }
 .chg .chg-items li code {
   color: var(--foreground);
+}
+.chg .chg-items li strong {
+  color: var(--foreground);
+  font-weight: 600;
+}
+.chg .chg-items li em {
+  font-style: italic;
 }
 
 /* ============ FOOTNOTE ============ */
