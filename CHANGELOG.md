@@ -93,6 +93,20 @@ validated end-to-end on a real compiled binary against OpenRouter (Sonnet 5) and
   (`agent_id=''`) memory bucket from recall on a shared multi-agent DB, so one agent can't read
   another's unbound rows.
 
+### Fixed
+
+- **Concurrent self-writes no longer clobber each other.** Two runs on one daemon both calling
+  `remember` wrote `DELTA.md` last-write-wins, silently dropping one run's lesson. `writeSelf` now
+  uses optimistic concurrency: a write carries the base revision it read, a diverged base is refused
+  (returning the current content), and the run re-reads, re-merges, and retries — so both concurrent
+  lessons survive. An idempotent re-fire (the content already on disk) still no-ops. This is the one
+  documented file-level compare-and-swap layer; other file writes remain last-write-wins.
+- **A distilled learning could be silently dropped.** When the utility model returned a non-string
+  field in a distilled artifact (a numeric `name`, an object `body`), reflection threw while
+  persisting and the whole learning was lost — latent since 0.1.0. The artifact's `content`, `name`,
+  and `body` are now type-guarded with safe fallbacks before use, so a malformed distiller response
+  degrades to a best-effort learning instead of none.
+
 ## [0.2.3] — 2026-07-28
 
 Failure-visibility + native-wire batch, driven by Aperture's production field report (two prod

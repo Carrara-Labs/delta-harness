@@ -85,6 +85,14 @@ const releases: Release[] = [
         items: [
           "Pollable per-task event feed. `GET /v1/tasks/:id/events?since=<id>` returns a bounded, cursor-paged JSON page (`events`, `cursor`, `done`) for hosts that can't hold an SSE connection; the live SSE tail takes `?coarse=1` to drop per-token deltas and keep the structural heartbeat. `model.call` events now carry `cache_hit_pct`, so a host watches per-turn cache warmth live instead of deriving it.",
           "`delta bundle apply` — a first-class command (also run on every container boot) that re-seeds the FIXED operator files (`POLICY.md`, `vocab.json`, `PROMPT_CONTEXT.md`) from their base64 env, validating each first and never touching the learned `DELTA.md`. Updating operator config on a live machine is one safe step instead of the old multi-step dance.",
+          "Configurable run concurrency. The number of concurrent cross-session runs was a hardcoded 4; it is now a config knob, `DELTA_MAX_CONCURRENCY` (clamped 1–256), whose default is 8. Each run is IO-bound async work on one event loop (not a thread) and sessions stay serial, so the practical ceiling is the provider's concurrent-request tolerance (keep it low on a subscription key; a high-limit API key can run 25+), then per-run context memory (~4–15 MB/run). The queue mechanism is tested correct to 128 concurrent runs.",
+        ],
+      },
+      {
+        kind: "fixed",
+        items: [
+          "Concurrent self-writes no longer clobber each other. Two runs on one daemon both calling `remember` wrote `DELTA.md` last-write-wins, silently dropping one run's lesson. The self-write now uses optimistic concurrency: a write carries the base revision it read, a diverged base is refused with the current content, and the run re-reads, re-merges, and retries — so both concurrent lessons survive. An idempotent re-fire still no-ops. This is the one file-level compare-and-swap layer; other file writes remain last-write-wins.",
+          "A distilled learning could be silently dropped. When the utility model returned a non-string field in a distilled artifact (a numeric name, an object body), reflection threw while persisting and the whole learning was lost — latent since 0.1.0. The artifact's content, name, and body are now type-guarded with safe fallbacks, so a malformed distiller response degrades to a best-effort learning instead of none.",
         ],
       },
     ],

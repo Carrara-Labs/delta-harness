@@ -212,7 +212,7 @@ The stable prefix is deliberately cache-friendly. Volatile values such as time a
 
 ### Sessions and runs
 
-One API response ID identifies one run. Passing that ID as `previous_response_id` appends another run to the same session and preserves the full current conversation. It is a session lookup, not a branch pointer: passing an older response ID does not fork or rewind the conversation, so pass the latest response ID. Runs in one session execute serially. The shipped daemon executes up to four different sessions concurrently.
+One API response ID identifies one run. Passing that ID as `previous_response_id` appends another run to the same session and preserves the full current conversation. It is a session lookup, not a branch pointer: passing an older response ID does not fork or rewind the conversation, so pass the latest response ID. Runs in one session execute serially. The shipped daemon executes up to `DELTA_MAX_CONCURRENCY` different sessions concurrently (default 8, clamped 1–256; see [Run and call the agent](#run-and-call-the-agent)).
 
 Do not invent or reuse an unknown response ID. Delta returns `400` instead of silently starting a new session.
 
@@ -908,7 +908,7 @@ Subagents share the workspace. A subagent can also receive the `remember` tool u
 
 Each child prints a `DELTA_USAGE` marker. Valid parsed usage is added to the parent and constrained by the remaining fresh-token and dollar budget. Missing or malformed child usage fails open as zero. External spend by a coding CLI or subscription route is not discovered through this marker. The current `eval_n` judge call is not charged to the parent usage total.
 
-All tool calls returned by one model turn execute concurrently, including mutations, and four different sessions can run concurrently. There is no compare-and-swap layer for files or external resources. Same-session serialization does not serialize sibling tool calls within one turn. Design mutating tools to be idempotent and conflict-aware, and avoid parallel tasks that can touch the same state.
+All tool calls returned by one model turn execute concurrently, including mutations, and up to `DELTA_MAX_CONCURRENCY` different sessions can run concurrently (default 8). The `DELTA.md` self-file is guarded by optimistic concurrency — a write that raced a diverged base is refused and the run re-reads, re-merges, and retries — but there is no compare-and-swap layer for other files or external resources. Same-session serialization does not serialize sibling tool calls within one turn. Design mutating tools to be idempotent and conflict-aware, and avoid parallel tasks that can touch the same state.
 
 ### Scheduling
 
@@ -1271,7 +1271,7 @@ Events and all run-state transitions are not one atomic log. A crash at a bounda
 
 ### Single writer
 
-Delta uses a renewable writer lease to reject a different machine holder. The lease defaults to 30 seconds and never goes below 5 seconds. A process exits if it loses renewal.
+Delta uses a renewable writer lease to reject a different machine holder. The lease defaults to 30 seconds and never goes below 5 seconds. On a renewal miss the heartbeat renews-or-reacquires: it reclaims the lease when it is free or already self-held — so a Fly suspend/resume across a wall-clock jump no longer tears the daemon down without releasing — and the process exits only when a genuinely different live holder owns it.
 
 The holder ID defaults to `FLY_MACHINE_ID`, then the host name. A process with the same holder can immediately reacquire the lease so a crash restart does not wait for expiry. That also means the lease does not distinguish two live processes on the same machine. Do not set one manual `DELTA_LEASE_HOLDER` across different machines, because that defeats cross-machine exclusion too.
 
