@@ -59,10 +59,15 @@ seed_ws_file() { # $1 = filename under DELTA_WORKSPACE, $2 = base64 payload (emp
   fi
   return 0
 }
+# DELTA.md is the agent's LEARNED self-file: write-if-absent only, so its self-edits (via
+# `remember`) survive reboots and a config change never clobbers evolved state.
 seed_ws_file DELTA.md "${DELTA_SELF_MD_B64:-}"
-seed_ws_file POLICY.md "${DELTA_POLICY_MD_B64:-}"
-seed_ws_file PROMPT_CONTEXT.md "${DELTA_CONTEXT_MD_B64:-}"
-seed_ws_file vocab.json "${DELTA_VOCAB_JSON_B64:-}"
+# The FIXED operator files (POLICY.md / vocab.json / PROMPT_CONTEXT.md) are reconciled from env on
+# EVERY boot through the VALIDATED bundle-apply path (A12) — so a redeploy with updated operator
+# config takes effect, while DELTA.md above is never touched. Best-effort: a refused/invalid payload
+# leaves the existing files in place and never blocks boot (a genuinely bad POLICY boot-fails loudly
+# at load either way; an unset var is simply skipped).
+delta bundle apply || echo "delta: WARN bundle apply did not reconcile the fixed files — using existing" >&2
 
 if [ -f "$config" ]; then
   echo "delta: backup ON — litestream config $config" >&2

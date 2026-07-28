@@ -8,7 +8,8 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import cockpitHtml from "../assets/cockpit.html" with { type: "text" };
 import { builtinTools } from "./builtins";
-import { cliDev, cliInit, cliSend, cliWatch } from "./cli";
+import { FIXED_OPERATOR_FILES, SELF_FILE } from "./bundle";
+import { cliBundle, cliDev, cliInit, cliSend, cliWatch } from "./cli";
 import { type Config, devConfigView, loadConfig } from "./config";
 import { openDb } from "./db";
 import { Events } from "./events";
@@ -147,6 +148,8 @@ Usage:
   delta init <dir>      scaffold a bundle
   delta dev <dir>       boot a bundle in the local Cockpit
   delta run "<task>"    execute one task and print the answer
+  delta bundle apply    re-seed the fixed bundle files (POLICY/vocab/context) from
+                        their base64 env — never DELTA.md
   delta --version       print the version
 
 Docs: https://deltaharness.dev`);
@@ -158,6 +161,8 @@ if (process.argv[2] === "send") process.exit(await cliSend(process.argv.slice(3)
 if (process.argv[2] === "watch") process.exit(await cliWatch(process.argv.slice(3)));
 
 const cfg = loadConfig();
+
+if (process.argv[2] === "bundle") process.exit(await cliBundle(process.argv.slice(3), cfg));
 
 if (process.argv[2] === "run") {
   // Oneshot: fresh in-memory state, one run, answer on stdout, exit code = status.
@@ -324,7 +329,7 @@ try {
     db: deps.db,
     // Exact-name allowlist for /v1/dev/files?path=operator/<name> — the bundle's
     // viewable files (the self-file + the fixed operator files).
-    operatorFiles: ["DELTA.md", "POLICY.md", "vocab.json", "PROMPT_CONTEXT.md"],
+    operatorFiles: [SELF_FILE, ...FIXED_OPERATOR_FILES],
     selfMaxBytes: cfg.selfMaxTokens * 4,
     config: devConfigView(cfg, [...deps.tools.keys()]),
     // `with { type: "text" }` makes this a string at runtime (and embeds it in the

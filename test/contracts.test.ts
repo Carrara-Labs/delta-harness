@@ -11,6 +11,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { applyBundle, FIXED_OPERATOR_FILES } from "../src/bundle";
 import { cliInit } from "../src/cli";
 import { Queue } from "../src/queue";
 import { testTools } from "../src/tools";
@@ -129,5 +130,56 @@ describe("hosting contracts (do not weaken without a major bump)", () => {
     // A re-seed (as a POLICY/vocab refresh would trigger) must leave DELTA.md byte-identical.
     expect(await cliInit([dir])).toBe(0);
     expect(readFileSync(join(dir, "DELTA.md"), "utf8")).toBe(learned);
+  });
+});
+
+describe("bundle apply (A12) — the fixed files reconcile, DELTA.md never does", () => {
+  const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64");
+
+  test("re-seeds the fixed files from env and leaves a learned DELTA.md byte-identical", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "delta-bundle-"));
+    expect(await cliInit([dir])).toBe(0);
+    const learned = "# Learned self\n\n## Learned\n- an insight the agent earned in prod";
+    writeFileSync(join(dir, "DELTA.md"), learned);
+
+    const newPolicy = "# Policy\n\n- the updated operating contract";
+    const newVocab = JSON.stringify({ writeNoun: "candidate" });
+    const res = applyBundle(dir, 100_000, {
+      DELTA_POLICY_MD_B64: b64(newPolicy),
+      DELTA_VOCAB_JSON_B64: b64(newVocab),
+      // A DIFFERENT self payload in the env must NOT overwrite the agent's learned DELTA.md.
+      DELTA_SELF_MD_B64: b64("# a different self the operator tried to push"),
+    });
+
+    expect(res.applied.sort()).toEqual(["POLICY.md", "vocab.json"]);
+    expect(readFileSync(join(dir, "DELTA.md"), "utf8")).toBe(learned); // untouched
+    expect(readFileSync(join(dir, "POLICY.md"), "utf8")).toBe(newPolicy);
+    expect(readFileSync(join(dir, "vocab.json"), "utf8")).toBe(newVocab);
+    // Structural: DELTA.md is not a member of the fixed set by construction.
+    expect(FIXED_OPERATOR_FILES.has("DELTA.md")).toBe(false);
+  });
+
+  test("all-or-nothing: a bad payload is refused and NOTHING is written", () => {
+    const dir = mkdtempSync(join(tmpdir(), "delta-bundle-"));
+    writeFileSync(join(dir, "POLICY.md"), "# good existing policy");
+    writeFileSync(join(dir, "vocab.json"), '{"writeNoun":"kept"}');
+    expect(() =>
+      applyBundle(dir, 100_000, {
+        DELTA_POLICY_MD_B64: b64("# a valid new policy"), // valid, but…
+        DELTA_VOCAB_JSON_B64: b64("{not json"), // …invalid → the whole apply must abort
+      }),
+    ).toThrow(/vocab\.json/);
+    // Validate-all precedes any swap, so the valid POLICY payload must NOT have landed.
+    expect(readFileSync(join(dir, "POLICY.md"), "utf8")).toBe("# good existing policy");
+    expect(readFileSync(join(dir, "vocab.json"), "utf8")).toBe('{"writeNoun":"kept"}');
+  });
+
+  test("refuses a POLICY over the token budget (would boot-loop) — nothing written", () => {
+    const dir = mkdtempSync(join(tmpdir(), "delta-bundle-"));
+    const huge = "x".repeat(50_000); // ~12.5k tokens
+    expect(() => applyBundle(dir, 4_000, { DELTA_POLICY_MD_B64: b64(huge) })).toThrow(
+      /budget|boot-loop/,
+    );
+    expect(existsSync(join(dir, "POLICY.md"))).toBe(false);
   });
 });

@@ -14,6 +14,7 @@ import {
   statSync,
 } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
+import { FIXED_OPERATOR_FILES, SELF_FILE } from "./bundle";
 import {
   confine,
   extractDocText,
@@ -91,8 +92,6 @@ const codeCliResolves = (bin: string, workspace: string): boolean =>
 //     or deleted without a backup (codex #8).
 //   • .env* / delta.env / .delta hold secrets + daemon state (incl. the revision store) —
 //     off-limits to file tools entirely (codex #6).
-const SELF_FILE = "DELTA.md";
-const FIXED_OPERATOR_FILES = new Set(["POLICY.md", "vocab.json", "PROMPT_CONTEXT.md"]);
 const OPERATOR_FILE_ERROR =
   "[tool error] that file is operator-owned (it steers your system prompt) — propose the change to your operator instead of writing it yourself";
 const SELF_FILE_ERROR =

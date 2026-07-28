@@ -145,6 +145,15 @@ would break one, that test fails before it ever reaches you.
    protecting the agent's learned state. Re-seeding `POLICY.md` / `vocab.json` on a live
    machine leaves `DELTA.md` byte-for-byte intact.
 
+   To *update* the fixed operator files (not just seed missing ones), run
+   **`delta bundle apply`** (also run automatically on every container boot). It re-seeds
+   `POLICY.md` / `vocab.json` / `PROMPT_CONTEXT.md` from their base64 env vars and never
+   touches `DELTA.md` — the write set is the bundle manifest's fixed entries, which exclude
+   the self-file by construction. It validates every payload first (a bad `vocab.json` or an
+   over-budget `POLICY.md` is refused and *nothing* is written), so you can change a Fly
+   secret and redeploy — or `fly ssh console -C "delta bundle apply"` on a live machine —
+   instead of the old hand-edit dance.
+
 ## Boot gotchas
 
 Three things that are easy to get wrong when you first stand up a production daemon.

@@ -9,6 +9,8 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { applyBundle } from "./bundle";
+import type { Config } from "./config";
 import { NEUTRAL_VOCAB } from "./vocab";
 
 type Argv = { flags: Set<string>; opts: Record<string, string>; positional: string[] };
@@ -290,6 +292,34 @@ export async function cliInit(argv: string[]): Promise<number> {
       : `delta init · ${dir} — already scaffolded (nothing overwritten).`,
   );
   return 0;
+}
+
+/** `delta bundle apply` — re-seed the FIXED operator files (POLICY.md / vocab.json /
+ * PROMPT_CONTEXT.md) from their base64 env vars on a live machine, without the fragile
+ * fly-machine dance and WITHOUT ever touching the agent's learned DELTA.md (A12). Validate-all
+ * then swap-all; a bad payload is refused with a clear reason and nothing is written. */
+export async function cliBundle(argv: string[], cfg: Config): Promise<number> {
+  if (argv[0] !== "apply") {
+    console.error("usage: delta bundle apply");
+    return 2;
+  }
+  try {
+    const { applied, skipped } = applyBundle(cfg.workspace, cfg.policyMaxTokens);
+    if (applied.length === 0)
+      console.error(
+        `delta bundle apply — nothing to apply (no fixed bundle env vars set; ${skipped.join(", ")} left as-is).`,
+      );
+    else
+      console.error(
+        `delta bundle apply — re-seeded ${applied.join(", ")} from env (DELTA.md untouched).`,
+      );
+    return 0;
+  } catch (e) {
+    console.error(
+      `delta bundle apply — refused, nothing written: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    return 1;
+  }
 }
 
 const DELTA_ENV_TEMPLATE = `# delta bundle — the local config for ONE agent. Fill these, then: delta dev .
