@@ -6,6 +6,87 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-07-28
+
+Harden what shipped + close the remaining Aperture field-report gaps. Five code audits of the 0.2.3
+binary plus a three-way competitor teardown (openclaw / hermes / pi) found that the two roadmap "big
+blocks" — context management and scoped memory — were already shipped, so this release is targeted
+correctness, security, and observability, each with tests. The two security surfaces (task tenancy,
+memory widening) were codex-gated to a GO. Every change is provider-agnostic (no wire changes);
+validated end-to-end on a real compiled binary against OpenRouter (Sonnet 5) and native Anthropic
+(Opus 5).
+
+### Security
+
+- **Task-route tenancy + identity boundary.** `GET`/`DELETE /v1/tasks/:id` and `…/events` checked
+  only that a run *existed*, so any control-token holder could read, poll, or cancel any run. They
+  now enforce that the caller owns the run: the tenancy principal is the gateway-asserted
+  `x-delta-user` header (never a request-body field), a cross-tenant hit and a miss return the same
+  `404` (no existence disclosure), and the header is canonicalized into the stored run at ingress so
+  memory recall, reflection, and event identity all key on the same owner — a body `user_id` can no
+  longer point them at another tenant. The idempotency dedupe is scoped to the run's owner (a shared
+  key can't return another tenant's live run or its streamed result), and the `previous_response_id`
+  continuation check no longer leaks existence via a `400`-vs-`403` split. New `DELTA_STRICT_TENANT`
+  requires every run to be owned (creation without a principal is `401`, unowned runs are
+  inaccessible, `/v1/queue` is principal-scoped with tenant-local positions) for a daemon that serves
+  multiple users behind one control token. `/v1/busy` stays global by design — it is the host's
+  whole-machine suspend gate, control-token-gated and host-only.
+- **Memory-widening authorization can't be self-asserted.** Reflection widens a `user`-scoped memory
+  to a broader audience only on `review_kind = submission_disposition` + `widen_authorized`, both
+  read from run metadata — which a caller controls. A shared control token authenticates the gateway,
+  not that a body field came from a human reviewer, so those fields are now stripped from **every**
+  request body by default (an untrusted body could otherwise widen its memory into a cross-user
+  audience). `DELTA_TRUST_REVIEW_METADATA=1` is the single-tenant opt-in; a durable trusted
+  challenge path is planned separately.
+
+### Added
+
+- **Pollable per-task event feed + per-turn cache-hit%** (Aperture A1). `GET /v1/tasks/:id/events`
+  now also serves a bounded, cursor-paged JSON poll when given `?since=<id>` (with a `cursor` and a
+  `done` flag), for hosts that can't hold an SSE connection; the live SSE tail takes an opt-in
+  `?coarse=1` that drops the per-token deltas, leaving the structural heartbeat. `model.call` events
+  carry a pre-computed `cache_hit_pct`, so a host sees live per-turn cache warmth (the 0–99%
+  oscillation that previously could only be diagnosed forensically) instead of deriving it. Both
+  surfaces inherit the task-tenancy gate above.
+- **`delta bundle apply`** (Aperture A12). A first-class command (also run on every container boot)
+  that re-seeds the FIXED operator files — `POLICY.md`, `vocab.json`, `PROMPT_CONTEXT.md` — from
+  their base64 env vars and **never** touches the agent's learned `DELTA.md`. It validates every
+  payload first (a `vocab.json` that isn't a JSON object, or a `POLICY.md` over the byte or token
+  budget, is refused and *nothing* is written), so updating operator config on a live machine is one
+  safe step instead of the old five-step `fly machine update` dance. The FIXED/self file split now
+  lives in one manifest (`src/bundle.ts`) that the write-guard and cockpit allowlist also derive
+  from, so it can't drift.
+- **New config flags:** `DELTA_STRICT_TENANT`, `DELTA_TRUST_REVIEW_METADATA`, and
+  `DELTA_ISOLATE_AGENT_MEMORY` (below). All default off (current single-tenant behavior).
+
+### Changed
+
+- **Suspend-safe resume** (Aperture A2). The write-lease heartbeat exited the daemon when renewal
+  failed — which, after a Fly suspend/resume across a wall-clock jump, meant the daemon exited
+  *without releasing* and Fly's restart cap turned that into a minutes-long stall. It now
+  `renew-or-reacquire`s: it reclaims its own machine-scoped lease and stays up, exiting only when a
+  *different* live holder genuinely owns it. Both lease functions now sample the clock inside the
+  write transaction. This is recovery, not fencing (the lease is unfenced and machine-scoped, as
+  documented); it lets a scale-to-zero host flip `stop` → `suspend` and cut cold-start ~4.7s → ~1.1s.
+- **Research subagents are genuinely read-only.** A research sub-agent inherited the parent's full
+  rights, so it could `write_file` / `remember` / mutate via a mis-named MCP tool mid-run. Tools now
+  carry a positive, fail-closed `readonly` marker and a research child is admitted **only** read-only
+  tools; MCP tools are classed read-only from the authoritative `readOnlyHint` annotation, never a
+  name heuristic. Anything unmarked defaults to mutating, so a new or forgotten tool can never leak a
+  write into a child.
+- **Pre-send context estimate is provider-anchored.** The pre-send compaction gate estimated the
+  request with a byte rule that could sit just under budget while the provider's real input was over,
+  wasting a frontier call before the post-provider overflow retry corrected it. It now also projects
+  off the last call's *real* gross input plus the estimated growth since, taking the max with the
+  byte estimate — so a long run compacts a call earlier without a tokenizer dependency, and never
+  estimates below the existing floor.
+- **Deterministic memory recall + agent isolation.** Recall ranked partly on a `hits` counter that
+  the recall itself mutates, so an identical repeated query drifted its order; `hits` is dropped from
+  ranking (usefulness now survives via TTL, not rank) and the sort gets a stable `id` tiebreak, so
+  the same query returns the same set. New `DELTA_ISOLATE_AGENT_MEMORY=1` excludes the anonymous
+  (`agent_id=''`) memory bucket from recall on a shared multi-agent DB, so one agent can't read
+  another's unbound rows.
+
 ## [0.2.3] — 2026-07-28
 
 Failure-visibility + native-wire batch, driven by Aperture's production field report (two prod
