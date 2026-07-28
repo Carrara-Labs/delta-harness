@@ -62,11 +62,38 @@ const kindLabel: Record<Kind, string> = {
 // exactly. Update this alongside the root CHANGELOG.md when a release ships.
 const releases: Release[] = [
   {
+    version: "0.2.4",
+    date: "July 28, 2026",
+    iso: "2026-07-28",
+    tagline: "Harden what shipped; close the gaps.",
+    latest: true,
+    note: "Five audits of the 0.2.3 binary plus a three-way competitor teardown found the two roadmap 'big blocks' already shipped, so this is targeted correctness, security, and observability — each with a test. The two security surfaces were codex-gated to a GO, and every change is provider-agnostic (no wire changes), validated end-to-end on a real binary against OpenRouter (Sonnet 5) and native Anthropic (Opus 5).",
+    groups: [
+      {
+        kind: "changed",
+        items: [
+          "**Task-route tenancy.** `GET`/`DELETE /v1/tasks/:id` and `…/events` checked only that a run existed, so any control-token holder could read, poll, or cancel any run. They now enforce that the caller owns it: the tenancy principal is the gateway-asserted `x-delta-user` header (never a request-body field), a cross-tenant hit and a miss return the same `404`, and the header is canonicalized into the stored run so recall, reflection, and event identity all key on the same owner. The idempotency dedupe is owner-scoped, and `previous_response_id` no longer leaks existence via a `400`-vs-`403` split. New `DELTA_STRICT_TENANT` requires every run to be owned, for a daemon serving multiple users behind one control token.",
+          "**Memory-widening can't be self-asserted.** Reflection widens a user-scoped memory to a broader audience only on `review_kind` + `widen_authorized` — both read from caller-controlled metadata. Those fields are now stripped from every request body by default (a shared control token isn't proof a human reviewer set them); `DELTA_TRUST_REVIEW_METADATA=1` is the single-tenant opt-in.",
+          "**Suspend-safe resume.** The write-lease heartbeat exited the daemon on a failed renewal — which, after a Fly suspend across a wall-clock jump, meant it exited *without releasing* and the restart cap turned that into a minutes-long stall. It now reclaims its own machine-scoped lease and stays up, exiting only on a genuine different live holder. A scale-to-zero host can flip `stop` → `suspend` and cut cold start ~4.7s → ~1.1s.",
+          "**Research subagents are genuinely read-only.** A research child inherited the parent's full rights and could write, remember, or run code mid-run. Tools now carry a positive, fail-closed `readonly` marker and a research child is admitted only read-only tools (MCP tools from the authoritative `readOnlyHint`, never a name heuristic); anything unmarked defaults to mutating, so a new tool can't leak a write into a child.",
+          "**Provider-anchored pre-send sizing.** The compaction gate could sit just under budget on its byte estimate while the provider's real input was over, wasting a frontier call before the overflow retry corrected it. It now also projects off the last call's real gross input, so a long run compacts a call earlier — no tokenizer, never below the existing floor.",
+          "**Deterministic memory recall.** Recall ranked partly on a `hits` counter the recall itself mutates, so an identical query drifted its order; `hits` is dropped from ranking (usefulness survives via TTL) with a stable id tiebreak. New `DELTA_ISOLATE_AGENT_MEMORY` excludes the anonymous `agent_id=''` bucket on a shared multi-agent DB.",
+        ],
+      },
+      {
+        kind: "added",
+        items: [
+          "Pollable per-task event feed. `GET /v1/tasks/:id/events?since=<id>` returns a bounded, cursor-paged JSON page (`events`, `cursor`, `done`) for hosts that can't hold an SSE connection; the live SSE tail takes `?coarse=1` to drop per-token deltas and keep the structural heartbeat. `model.call` events now carry `cache_hit_pct`, so a host watches per-turn cache warmth live instead of deriving it.",
+          "`delta bundle apply` — a first-class command (also run on every container boot) that re-seeds the FIXED operator files (`POLICY.md`, `vocab.json`, `PROMPT_CONTEXT.md`) from their base64 env, validating each first and never touching the learned `DELTA.md`. Updating operator config on a live machine is one safe step instead of the old multi-step dance.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.2.3",
     date: "July 28, 2026",
     iso: "2026-07-28",
     tagline: "Failure-visibility, from the field.",
-    latest: true,
     note: "Driven by Aperture's production field report — two prod agents, the harness's heaviest real consumer. Every item ships with a test.",
     groups: [
       {

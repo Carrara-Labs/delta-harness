@@ -607,6 +607,7 @@ Or override it for one run with `metadata.reasoning_effort`. Delta lowercases an
 | `delta send [--port N] --json "<input>"` | Make a sync request and print final `output_text`. |
 | `delta watch [--port N] [--run <id>] [--since <event-id>]` | Replay and follow the Cockpit event stream without starting work. |
 | `delta run <task>` | Run one task with an in-memory database and persistent workspace. Primarily used for delegated subagents. |
+| `delta bundle apply` | Re-seed the FIXED operator files (`POLICY.md`, `vocab.json`, `PROMPT_CONTEXT.md`) from their base64 env vars, validating each first; never touches `DELTA.md`. Also run automatically on container boot. |
 
 `delta run` reads configuration from the process environment and bundle files from `DELTA_WORKSPACE`. It does not load `delta.env`, connect configured MCP servers, start HTTP or Cockpit, or provide crash recovery. Its conversation database is in memory, but file writes and `DELTA.md` changes persist in the workspace.
 
@@ -737,6 +738,8 @@ Task status has five values:
 
 `GET /v1/tasks/:id` includes `result` only for `done`, `failed`, or `cancelled`. Handled outcomes store a complete Responses-compatible object with `status`, `output_text`, `output`, model, previous response ID, and usage. Failed and cancelled output begins with a Delta status marker rather than pretending to be a successful answer. An unexpected exception outside Delta's handled run path can currently mark a task `failed` with an empty `{}` result and no normal `run.finished` event. A task or response SSE client waiting for that event can continue receiving heartbeats, so clients need their own terminal-status polling and timeout. Operators must alert on structured errors and malformed terminal results.
 
+**Progress events.** `GET /v1/tasks/:id/events` follows the live run as Server-Sent Events; add `?coarse=1` to drop the per-token `output_text.delta` / `reasoning.delta` frames and keep only the structural heartbeat (run/turn/tool lifecycle, `model.call`, `checkpoint`, `error`). For a host that can't hold an SSE connection, `GET /v1/tasks/:id/events?since=<id>` returns a bounded JSON page `{ "events": [...], "cursor": N, "done": bool }` — pass the returned `cursor` as the next `since` and stop when `done` is true (`limit` defaults to 200, max 500). `model.call` events carry `cache_hit_pct`, the share of that turn's input served from the prompt cache, so a host can watch cache warmth live. Both surfaces require the run's owner (see identity, below).
+
 Handled non-streaming API errors use this shape:
 
 ```json
@@ -778,11 +781,13 @@ Useful metadata:
 | `reflect` | Set `true` to run post-task reflection even when the daemon default is off. |
 | `authToken` | Replace static authorization for this run's HTTP MCP calls. Treat it as a sensitive, short-lived user credential. |
 | `context` | Supply bounded values for `{{request.*}}` prompt context. |
-| `review_kind` | Set exactly `submission_disposition` for a human-review correction turn. |
+| `review_kind` | Set exactly `submission_disposition` for a human-review correction turn. **Stripped from the body by default** (0.2.4); honored only when `DELTA_TRUST_REVIEW_METADATA=1`. |
 | `submission_id` | Caller correlation only. Delta does not look up, authenticate, or validate a submission with it. |
-| `widen_authorized` | Allow reviewed user-derived learning to widen beyond private user memory when explicitly `true`. |
+| `widen_authorized` | Allow reviewed user-derived learning to widen beyond private user memory when explicitly `true`. **Stripped from the body by default** (0.2.4); honored only when `DELTA_TRUST_REVIEW_METADATA=1`. |
 
-Delta does not authenticate these identity or privilege claims, and it does not enforce ownership of task IDs. It does enforce **session ownership**: continuing a session with `previous_response_id` is rejected when the session is owned by a different user, so a caller cannot join or read another user's transcript by guessing a response ID. A session with no asserted owner stays open, which is the single-tenant path. Both `user_id` and `userId` are recognized when a session's owner is set, so the alias does not create an unowned session. Per-run metadata can still affect recall, reflection, event identity, MCP authorization, and review widening. End users must never send these fields directly to Delta. A trusted gateway must authenticate the caller, authorize every task and prior response ID, inject one canonical `user_id`, reject identity mismatches, strip or replace `agent_id`, `authToken`, `review_kind`, and `widen_authorized`, and construct review metadata only from verified control-plane state. Missing identity can route learning into shared scopes.
+The trust model: the control token authenticates the *gateway*; the gateway asserts which of its users a request is for via the `x-delta-user` header, which is the sole tenancy authority — Delta never takes ownership from a request-body field. As of 0.2.4 Delta **enforces ownership of task IDs**: `GET`/`DELETE /v1/tasks/:id` and `…/events` are served only to the run's owner, and a cross-tenant ID and an unknown ID return the same `404` so existence isn't disclosed. The `x-delta-user` principal is canonicalized into the stored run at ingress, so recall, reflection, and event identity all key on that owner — a body `user_id` can no longer point them at another tenant — and the idempotency dedupe is scoped to the owner. Session ownership is still enforced too: continuing with `previous_response_id` is rejected across owners (a `404`, indistinguishable from an unknown ID). A run with no asserted owner stays open, which is the single-tenant path. Review-widening authorization (`review_kind`, `widen_authorized`) is **stripped from every request body by default** — a shared control token is not proof a human reviewer set them — so a caller can't self-authorize widening a user-scoped memory; `DELTA_TRUST_REVIEW_METADATA=1` opts a single-tenant operator back in.
+
+For a daemon that serves **multiple users behind one control token**, set `DELTA_STRICT_TENANT=1`: every run must then be owned (creating a task without `x-delta-user` is `401`), unowned runs are inaccessible, a null-owned session can't be continued by another principal, and `/v1/queue` requires a principal and numbers positions only among the caller's own entries. A trusted gateway should still authenticate the caller and inject one canonical `x-delta-user`; end users must never reach Delta directly.
 
 ### Queue visibility
 
