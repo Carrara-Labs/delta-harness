@@ -40,6 +40,19 @@ agents, the harness's heaviest real consumer). Every item ships with a test.
 - **All native-wire model ids are normalized** (provider prefix stripped, dotted versions →
   dashes), for the primary *and* every fallback — not just the utility model. `claude-opus-4.8`
   and `claude-opus-4-8` both reach the Anthropic wire correctly now.
+- **`DELTA_MCP_SERVERS` parsing fails loud, never silent.** Malformed JSON, a non-array, or an
+  unusable entry is dropped with a specific boot-log warning instead of booting a tool-less agent
+  in silence; a missing `transport` is inferred from the entry shape (`url` → http, `command` →
+  stdio) so the common omission just works.
+
+### Documented
+
+- **The four hosting lifecycle contracts are now documented guarantees** (`docs/hosting.md`):
+  idempotency keys are freed on terminal runs, `recover()` resumes mid-flight runs on boot,
+  `/v1/busy` reports the durable queued-or-running truth, and seeding never touches an existing
+  `DELTA.md`. Each is pinned by a named guard test (`test/contracts.test.ts`) so it can't silently
+  regress. Hosts (Aperture) already build their reconcilers on these; they now change semantics
+  only with a major-version note.
 
 ## [0.2.2] — 2026-07-27
 

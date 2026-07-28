@@ -3,9 +3,10 @@
 // tool — not mocks, so a green run proves the daemon can't be wedged by a stuck provider/tool.
 
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { loadConfig } from "../src/config";
 import { PROFILES } from "../src/profiles";
 import { chat, type ModelResult, OVERFLOW, type ProviderConfig } from "../src/provider";
 import { Queue } from "../src/queue";
@@ -406,6 +407,80 @@ describe("A4: categorical-failure breaker (integration)", () => {
     // Never quarantined: the turn-3 success vetoed the third strike, so no norm was injected.
     expect(toolMsgs.some((m) => /\[norm\]/.test(m.content))).toBe(false);
     expect(toolMsgs.some((m) => m.content === "worked")).toBe(true);
+  });
+
+  test("bc8e877e replay: a dead tool that spills a giant blob is quarantined, size-capped, and still files output", async () => {
+    // The literal A4 acceptance (field report): replay the first prod intake incident. The
+    // `code` tool's CLI is missing, and its failure is a 100k+ single-line blob (an ENOENT
+    // wrapped around a huge stack). In 0.2.1 the agent retried ~17 turns, re-injecting the blob
+    // each time → context 140k, cache 6%, ~$3.50 burned, then it gave up WITHOUT filing output.
+    // With the breaker + result cap: 3 strikes, each capped, then the run adapts and files.
+    PROFILES.breaker4 = {
+      name: "breaker4",
+      allowed: "*",
+      pinned: "*",
+      budget: { maxSteps: 30, maxTokens: 400_000, maxCostUsd: 1 },
+    };
+    const ws = mkdtempSync(join(tmpdir(), "delta-bc-"));
+    const blob = `[tool error] ENOENT: spawn 'code' — {"stack":"${"x".repeat(100_000)}"}`;
+    const codeTool: ToolDef = {
+      name: "code",
+      description: "delegates to a coding CLI that isn't in this image",
+      parameters: { type: "object", properties: {} },
+      idempotent: true,
+      execute: async () => blob,
+    };
+    let calls = 0;
+    const chat = async (req: { tools?: { function: { name: string } }[] }) => {
+      const advertised = new Set((req.tools ?? []).map((t) => t.function.name));
+      if (advertised.has("code")) {
+        calls++;
+        return toolCallResult("code", {}, `c${calls}`);
+      }
+      return textResult(
+        "code was unavailable this run, so I built it by hand and filed the result",
+      );
+    };
+    // Use the REAL production cap (DELTA_TOOL_RESULT_MAX_BYTES) so this test tracks the actual
+    // wiring, not a hardcoded guess that could drift from config.ts.
+    const cap = loadConfig({ DELTA_WORKSPACE: ws }).toolResultCap;
+    const deps = makeDeps(chat as never, new Map([["code", codeTool]]), {
+      workspace: ws,
+      toolResultCap: cap,
+    });
+    const queue = new Queue(deps);
+    const done = await queue.wait(
+      queue.enqueue({
+        input: "build the widget with the code tool",
+        metadata: { profile: "breaker4" },
+      }).id,
+    );
+
+    expect(done.status).toBe("done"); // it FILED output — no orphaned dead-end run
+    expect(JSON.parse(done.result ?? "{}").output_text).toContain("built it by hand");
+    expect(calls).toBe(3); // 3 strikes, not ~17 — the retry loop is broken
+
+    const codeErrs = (
+      deps.db.query("SELECT msg FROM messages WHERE run_id = ?").all(done.id) as { msg: string }[]
+    )
+      .map((r) => JSON.parse(r.msg))
+      .filter(
+        (m) => m.role === "tool" && typeof m.content === "string" && m.content.includes("ENOENT"),
+      );
+    expect(codeErrs.length).toBe(3); // bounded COUNT: three failures, no 17-turn amplification
+    // Each injected blob is capped to the cap (+ a short spill notice) — never re-injected whole.
+    for (const m of codeErrs) expect(m.content.length).toBeLessThan(cap + 2_000);
+    // 3 × ~20KB of dead-end context, not 17 × 100KB — the < $0.50 acceptance.
+    expect(codeErrs.some((m) => /\[norm\] 'code' has failed identically 3×/.test(m.content))).toBe(
+      true,
+    );
+    // ...and the truncation is non-lossy: the FULL blob is recoverable from a spill file, so the
+    // agent could still `recall` it if it mattered. Capping without a recoverable spill would be
+    // data loss; this pins the difference.
+    const spillDir = join(ws, ".delta/spill");
+    const spills = readdirSync(spillDir);
+    expect(spills.length).toBe(3); // one recoverable spill per failed call
+    for (const f of spills) expect(readFileSync(join(spillDir, f), "utf8")).toBe(blob); // full text intact
   });
 });
 

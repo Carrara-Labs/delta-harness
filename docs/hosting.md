@@ -114,6 +114,36 @@ quiet point. If `/v1/busy` ever races (you suspend a machine that took a task a 
 later), the worst case is that the task waits, frozen and intact, until the next wake — no
 work is dropped. Suspend on idle and trust the WAL.
 
+## Stable contracts you can build on
+
+A host's reconciler and lifecycle code end up depending on more than the three hooks. The
+four behaviors below are now **documented guarantees**, not incidental implementation
+details — they do not change semantics without a major-version note. Each is pinned by a
+named guard test in [`test/contracts.test.ts`](../test/contracts.test.ts); if a change
+would break one, that test fails before it ever reaches you.
+
+1. **Idempotency keys are freed on terminal runs.** `POST /v1/tasks` with an
+   `idempotency_key` dedupes only against runs still `queued` or `running`. Once a run
+   reaches a terminal state, the key is free and a later dispatch starts fresh. This is
+   what makes a resume-is-the-dispatch pattern — re-POSTing the same key with a resume
+   preamble — safe rather than a silent no-op.
+
+2. **`recover()` resumes mid-flight runs on daemon boot.** A run left `running` when the
+   process stopped is picked up and continued from its last checkpointed turn when the
+   daemon comes back. The only true zombies are machines that never return — a staleness
+   detector can rely on that.
+
+3. **`/v1/busy` tells the durable truth.** `busy` is `true` whenever a run is `queued` OR
+   `running` in the table, not merely when a session is in flight in memory. It is the
+   don't-suspend gate: durable work is owed, so keep the machine awake. (It reports durable
+   status, not live progress — a host's stuck-run detector watches for the *mismatch*,
+   `busy:false` while its own record still says a run is live.)
+
+4. **Seeding never touches an existing `DELTA.md`.** Bundle seeding is write-if-absent: it
+   creates missing bundle files but never overwrites a `DELTA.md` that already exists,
+   protecting the agent's learned state. Re-seeding `POLICY.md` / `vocab.json` on a live
+   machine leaves `DELTA.md` byte-for-byte intact.
+
 ## Boot gotchas
 
 Three things that are easy to get wrong when you first stand up a production daemon.

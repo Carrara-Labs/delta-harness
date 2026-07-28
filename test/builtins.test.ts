@@ -181,3 +181,18 @@ describe("spawn_subagent", () => {
     }
   }, 20_000);
 });
+
+describe("grep tool", () => {
+  test("a pathological single-line file is truncated per match — no blob re-injection", async () => {
+    // The bc8e877e incident hypothesis: a failing tool spilled a 100k+ single-line JSON, and
+    // line-oriented grep re-injected the whole line every retry, driving context to 140k. The
+    // grep tool caps EACH match line (600 chars, since 0.1.0), so even a pathological one-line
+    // file returns a bounded result. This pins that so it can never silently regress.
+    const huge = `{"blob":"${"A".repeat(100_000)}NEEDLE"}`;
+    await run("write_file", { path: "spill.json", content: huge });
+    const out = String(await run("grep", { pattern: "NEEDLE" }));
+    expect(out).toContain("spill.json"); // it DID find the match
+    expect(out).toContain("…"); // ...but the line was truncated at the per-match marker
+    expect(out.length).toBeLessThan(1000); // the 100k blob was never injected whole
+  });
+});
