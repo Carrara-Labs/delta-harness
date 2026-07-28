@@ -65,6 +65,54 @@ describe("queue + run", () => {
     await queue.wait(a.id);
   });
 
+  test("idempotency_key is scoped per owner — a shared key can't steal another tenant's run (S1)", async () => {
+    const deps = makeDeps(async () => textResult("filed"));
+    const queue = new Queue(deps);
+    // Same tick, same key, DIFFERENT owners: bob must NOT be deduped onto alice's live run (which
+    // would hand him her streamed result on the sync route — codex P0).
+    const a = queue.enqueue({ input: "t", store: false, idempotency_key: "k" }, "alice");
+    const b = queue.enqueue({ input: "t", store: false, idempotency_key: "k" }, "bob");
+    expect(b.id).not.toBe(a.id);
+    expect(queue.owner(a.id)).toBe("alice");
+    expect(queue.owner(b.id)).toBe("bob");
+    await Promise.all([queue.wait(a.id), queue.wait(b.id)]);
+  });
+
+  test("strict mode: a null-owned (legacy) session can't be continued by a tenant (S1)", async () => {
+    const deps = makeDeps(async () => textResult("ok"));
+    const queue = new Queue(deps);
+    const legacy = queue.enqueue({ input: "legacy" }); // null owner
+    await queue.wait(legacy.id);
+    // Non-strict continuation of a null-owned session is allowed (back-compat)…
+    expect(() =>
+      queue.enqueue({ input: "c", previous_response_id: legacy.id }, "alice"),
+    ).not.toThrow();
+    // …but in STRICT mode the previous owner must equal the principal, null included.
+    expect(() =>
+      queue.enqueue({ input: "c", previous_response_id: legacy.id }, "alice", true),
+    ).toThrow(SessionOwnershipError);
+  });
+
+  test("idempotency dedupe scopes to the session owner a continuation inherits, not the principal (S1)", async () => {
+    const deps = makeDeps(async () => textResult("filed"));
+    const queue = new Queue(deps);
+    const legacy = queue.enqueue({ input: "legacy" }); // null-owned session
+    await queue.wait(legacy.id);
+    // Continue the null-owned session with a key while asserting a principal, twice in one tick.
+    // The continued run inherits the null owner, so the retry must dedupe onto it — not miss and
+    // start a duplicate because it searched under the asserted principal (codex P2).
+    const c1 = queue.enqueue(
+      { input: "c", previous_response_id: legacy.id, store: false, idempotency_key: "ck" },
+      "alice",
+    );
+    const c2 = queue.enqueue(
+      { input: "c", previous_response_id: legacy.id, store: false, idempotency_key: "ck" },
+      "alice",
+    );
+    expect(c2.id).toBe(c1.id);
+    await queue.wait(c1.id);
+  });
+
   test("idempotency_key: a terminal run frees the key — a later dispatch starts fresh", async () => {
     const deps = makeDeps(async () => textResult("done"));
     const queue = new Queue(deps);

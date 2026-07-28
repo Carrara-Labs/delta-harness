@@ -5,11 +5,25 @@ import { Queue } from "../src/queue";
 import { createServer } from "../src/server";
 import { makeDeps, textResult } from "./helpers";
 
-function serverWith(chat: Parameters<typeof makeDeps>[0]) {
+function serverWith(
+  chat: Parameters<typeof makeDeps>[0],
+  opts?: Parameters<typeof createServer>[3],
+) {
   const deps = makeDeps(chat);
-  const server = createServer(new Queue(deps), deps.events, 0);
+  const server = createServer(new Queue(deps), deps.events, 0, opts);
   return { base: `http://localhost:${server.port}`, server, deps };
 }
+
+const post = (base: string, body: unknown, user?: string) =>
+  fetch(`${base}/v1/tasks`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(user ? { "x-delta-user": user } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+const hdr = (user?: string) => (user ? { headers: { "x-delta-user": user } } : {});
 
 let stopFns: Array<() => void> = [];
 afterEach(() => {
@@ -308,5 +322,131 @@ describe("GET /v1/queue", () => {
     release = [];
     await Bun.sleep(50);
     for (const r of release) r();
+  });
+});
+
+describe("task-route tenancy (S1)", () => {
+  // A run owned by one user is invisible to another on status, events, AND cancel — and a miss
+  // looks identical to a cross-tenant hit (both 404), so a probe can't confirm a task exists.
+  test("an owned run is 404 to another user on GET / events / DELETE; its owner sees it", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const { base, server } = serverWith(async () => {
+      await gate;
+      return textResult("done");
+    });
+    stopFns.push(() => server.stop());
+
+    const { id } = (await (await post(base, { input: "alice task" }, "alice")).json()) as {
+      id: string;
+    };
+    await Bun.sleep(20);
+
+    // Bob is denied everywhere, with a 404 (not 403).
+    expect((await fetch(`${base}/v1/tasks/${id}`, hdr("bob"))).status).toBe(404);
+    expect((await fetch(`${base}/v1/tasks/${id}/events`, hdr("bob"))).status).toBe(404);
+    const bobCancel = await fetch(`${base}/v1/tasks/${id}`, { method: "DELETE", ...hdr("bob") });
+    expect(bobCancel.status).toBe(404);
+    // Bob's forbidden cancel did NOT touch the run.
+    expect(
+      ((await (await fetch(`${base}/v1/tasks/${id}`, hdr("alice"))).json()) as { status: string })
+        .status,
+    ).toBe("running");
+
+    // Alice sees and controls her own run.
+    expect((await fetch(`${base}/v1/tasks/${id}`, hdr("alice"))).status).toBe(200);
+    const aliceCancel = await fetch(`${base}/v1/tasks/${id}`, {
+      method: "DELETE",
+      ...hdr("alice"),
+    });
+    expect(aliceCancel.status).toBe(200);
+    release();
+  });
+
+  test("the x-delta-user header overrides body metadata AND canonicalizes the stored identity", async () => {
+    const { base, server, deps } = serverWith(async () => textResult("ok"));
+    stopFns.push(() => server.stop());
+    // A client behind the gateway sets the header to alice but tries to claim bob in the body.
+    const { id } = (await (
+      await post(base, { input: "t", metadata: { user_id: "bob", userId: "bob" } }, "alice")
+    ).json()) as { id: string };
+    // Route ownership is alice (the header): bob is denied, alice allowed.
+    expect((await fetch(`${base}/v1/tasks/${id}`, hdr("bob"))).status).toBe(404);
+    expect((await fetch(`${base}/v1/tasks/${id}`, hdr("alice"))).status).toBe(200);
+    // AND the stored body is canonicalized to alice, so downstream recall/reflection/event identity
+    // can't be pointed at bob's memory via the body (codex P0).
+    const row = deps.db.query("SELECT request FROM runs WHERE id = ?").get(id) as {
+      request: string;
+    };
+    const meta = (JSON.parse(row.request) as { metadata?: Record<string, unknown> }).metadata ?? {};
+    expect(meta.user_id).toBe("alice");
+    expect(meta.userId).toBeUndefined();
+  });
+
+  test("an unowned run stays open by default (single-tenant-per-daemon)", async () => {
+    const { base, server } = serverWith(async () => textResult("ok"));
+    stopFns.push(() => server.stop());
+    const { id } = (await (await post(base, { input: "t" })).json()) as { id: string };
+    // No owner asserted → any caller (with or without a header) may read it.
+    expect((await fetch(`${base}/v1/tasks/${id}`)).status).toBe(200);
+    expect((await fetch(`${base}/v1/tasks/${id}`, hdr("whoever"))).status).toBe(200);
+  });
+
+  test("strict mode: creation requires a principal, and unowned runs are inaccessible", async () => {
+    const { base, server } = serverWith(async () => textResult("ok"), { strictTenant: true });
+    stopFns.push(() => server.stop());
+    // No principal → creation refused (never stamped null-owner).
+    expect((await post(base, { input: "t" })).status).toBe(401);
+    // With a principal → owned; only that principal may read it, and an anonymous read is denied.
+    const { id } = (await (await post(base, { input: "t" }, "alice")).json()) as { id: string };
+    expect((await fetch(`${base}/v1/tasks/${id}`, hdr("alice"))).status).toBe(200);
+    expect((await fetch(`${base}/v1/tasks/${id}`)).status).toBe(404);
+    expect((await fetch(`${base}/v1/tasks/${id}`, hdr("bob"))).status).toBe(404);
+  });
+});
+
+describe("widen-authorization ingress (S5a)", () => {
+  const authzBody = {
+    input: "t",
+    metadata: {
+      review_kind: "submission_disposition",
+      widen_authorized: true,
+      review: { widen_authorized: true },
+    },
+  };
+  const storedMeta = (
+    deps: { db: { query: (s: string) => { get: (id: string) => unknown } } },
+    id: string,
+  ) => {
+    const row = deps.db.query("SELECT request FROM runs WHERE id = ?").get(id) as {
+      request: string;
+    };
+    return (JSON.parse(row.request) as { metadata?: Record<string, unknown> }).metadata ?? {};
+  };
+
+  test("strips body-supplied widen authorization from EVERY body by default (even non-strict)", async () => {
+    // The hole is real in non-strict too: a daemon serving multiple user_ids via body metadata
+    // would let one user self-authorize widening into a cross-user audience (codex P1). So the
+    // default strips regardless of tenancy mode.
+    const { base, server, deps } = serverWith(async () => textResult("ok"));
+    stopFns.push(() => server.stop());
+    const { id } = (await (await post(base, authzBody)).json()) as { id: string };
+    const meta = storedMeta(deps, id);
+    expect(meta.review_kind).toBeUndefined();
+    expect(meta.widen_authorized).toBeUndefined();
+    expect((meta.review as Record<string, unknown> | undefined)?.widen_authorized).toBeUndefined();
+  });
+
+  test("a single-tenant operator can opt back in with DELTA_TRUST_REVIEW_METADATA", async () => {
+    const { base, server, deps } = serverWith(async () => textResult("ok"), {
+      trustReviewMetadata: true,
+    });
+    stopFns.push(() => server.stop());
+    const { id } = (await (await post(base, authzBody)).json()) as { id: string };
+    const meta = storedMeta(deps, id);
+    expect(meta.widen_authorized).toBe(true);
+    expect(meta.review_kind).toBe("submission_disposition");
   });
 });

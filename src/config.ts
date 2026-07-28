@@ -71,6 +71,19 @@ export type Config = {
    * even to a chat placement — for a daemon fronted by a trusted, authenticated gateway
    * (e.g. Delta Connect). Off by default (spec §J trust model). */
   allowSelfWrite: boolean;
+  /** When set (DELTA_STRICT_TENANT=1), the daemon serves MULTIPLE users behind one control token
+   * and every run must be owned: an HTTP task route is served only to a caller whose
+   * `x-delta-user` matches the run's owner (an unowned run is inaccessible), and a task can't be
+   * created without a principal. Off by default — the single-tenant-per-daemon model (the control
+   * token IS the tenant boundary; unowned runs are open) that current hosts rely on (S1). */
+  strictTenant: boolean;
+  /** When set (DELTA_TRUST_REVIEW_METADATA=1), the daemon trusts memory-widening authorization
+   * (`review_kind` / `widen_authorized`) supplied in a request body. OFF by default: those fields
+   * are stripped from every HTTP body, because a shared control token authenticates the gateway,
+   * NOT that a body field came from a human reviewer — an untrusted body could otherwise
+   * self-authorize widening a `user`-scoped memory into a cross-user audience (S5a). A single-tenant
+   * operator who constructs its own bodies can opt back in; the durable trusted path is S5c. */
+  trustReviewMetadata: boolean;
   /** Product vocabulary for the review loop (portability seam). a knowledge base by default;
    * DELTA_VOCAB overrides fields for another product. */
   vocab: Vocab;
@@ -236,6 +249,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     vision,
     reflect: env.DELTA_REFLECT === "1",
     allowSelfWrite: env.DELTA_ALLOW_SELF_WRITE === "1",
+    strictTenant: env.DELTA_STRICT_TENANT === "1",
+    trustReviewMetadata: env.DELTA_TRUST_REVIEW_METADATA === "1",
     // Review-loop vocabulary: neutral by default, one JSON env to serve another product.
     vocab,
     memoryNamespace:

@@ -326,6 +326,8 @@ try {
     ...(process.env.DELTA_BIND ? { hostname: process.env.DELTA_BIND } : {}),
     ...(process.env.DELTA_INSPECT === "off" ? { inspectDisabled: true } : {}),
     ...(process.env.DELTA_INSPECT_WRITE === "1" ? { inspectWrite: true } : {}),
+    ...(cfg.strictTenant ? { strictTenant: true } : {}),
+    ...(cfg.trustReviewMetadata ? { trustReviewMetadata: true } : {}),
     db: deps.db,
     // Exact-name allowlist for /v1/dev/files?path=operator/<name> — the bundle's
     // viewable files (the self-file + the fixed operator files).

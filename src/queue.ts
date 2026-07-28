@@ -49,33 +49,30 @@ export class Queue {
   ) {}
 
   /** Durable-before-ack: the row is committed before this returns. */
-  enqueue(req: RunRequest): RunRow {
+  enqueue(req: RunRequest, principal: string | null = null, strict = false): RunRow {
     const { db, events } = this.deps;
     const now = Date.now();
-    // Dispatch idempotency (fire-and-forget callers): if a NON-terminal run already carries this
-    // key, return it instead of starting a second one. Single-writer (bun) + this synchronous
-    // check-before-insert make it race-safe without a schema migration — json_extract reads the
-    // key straight out of the stored request. A terminal run frees the key (re-run allowed later).
-    if (req.idempotency_key) {
-      const existing = db
-        .query(
-          `SELECT id FROM runs
-           WHERE status IN ('queued','running')
-             AND json_extract(request, '$.idempotency_key') = ?
-           ORDER BY seq LIMIT 1`,
-        )
-        .get(req.idempotency_key) as { id: string } | null;
-      if (existing) return getRun(db, existing.id) as RunRow;
-    }
-    // Normalize BOTH metadata aliases (the chat vs task entry paths populate one or the other;
-    // spineOf uses the same snake/camel tolerance). Reading only `user_id` here would stamp a
-    // `{ userId }` run's session as NULL-owned → S0's null-owner path would then let anyone
-    // continue it (codex diff-review P1).
-    const userId =
+    // Ownership principal (S1). When the HTTP boundary resolved a principal from the
+    // gateway-asserted `x-delta-user` header, it is AUTHORITATIVE — a client behind the trusted
+    // gateway may control the request body but not that header, so the header overrides any
+    // body-supplied identity (codex P0: never let caller-body metadata be the auth). Body metadata
+    // stays the fallback for callers that don't front a header-setting gateway (single-tenant/dev).
+    // Both aliases are read (the chat vs task entry paths populate one or the other; spineOf uses
+    // the same snake/camel tolerance). NOTE: the server ALSO canonicalizes the stored body's
+    // `user_id` to this same principal at ingress, so every downstream consumer that reads the
+    // body (recall, reflection, event identity) keys on the SAME owner — the read/write scope can't
+    // diverge (codex P0).
+    const bodyOwner =
       (typeof req.metadata?.user_id === "string" && req.metadata.user_id) ||
       (typeof req.metadata?.userId === "string" && req.metadata.userId) ||
       null;
+    const userId = principal ?? bodyOwner;
+    // Resolve + authorize a continuation FIRST, so the idempotency dedupe below can scope to the
+    // run's ACTUAL owner (the existing session's, which a continuation inherits — not the asserted
+    // principal). Doing dedupe first under the principal would miss a null-owned continuation and
+    // start a duplicate on retry (codex P2).
     let sessionId: string | undefined;
+    let dedupeOwner = userId; // a fresh run is owned by the resolved principal…
     if (req.previous_response_id) {
       const prev = db
         .query(
@@ -85,14 +82,36 @@ export class Queue {
         )
         .get(req.previous_response_id) as { session_id: string; user_id: string | null } | null;
       if (!prev) throw new UnknownPreviousResponse(req.previous_response_id);
-      // S0 — session ownership. A session OWNED by a user (non-null user_id) may only be
-      // continued by that same user. A null-owner session (single-tenant / dev, no identity
-      // asserted at creation) stays open — matches pre-S0 behavior and never blocks the
-      // current single-tenant deployment. `userId` is the control-plane's asserted principal,
-      // the same value `sessions.user_id` was stamped with at creation.
-      if (prev.user_id !== null && prev.user_id !== userId)
-        throw new SessionOwnershipError(req.previous_response_id);
+      // Session ownership. Non-strict (single-tenant/dev): a user-OWNED session may only be
+      // continued by that same user; a null-owner session stays open (no identity was asserted at
+      // creation — matches pre-S0 behavior). Strict multi-tenant: the previous owner must EQUAL the
+      // principal, null included — a legacy/unowned session must not be continuable by an arbitrary
+      // tenant just because they know its id (codex P1). `userId` is the same value
+      // `sessions.user_id` was stamped with at creation.
+      const mismatch = strict
+        ? prev.user_id !== userId
+        : prev.user_id !== null && prev.user_id !== userId;
+      if (mismatch) throw new SessionOwnershipError(req.previous_response_id);
       sessionId = prev.session_id;
+      dedupeOwner = prev.user_id; // …but a continuation inherits the existing session's owner
+    }
+    // Dispatch idempotency (fire-and-forget callers): if a NON-terminal run WITH THE SAME OWNER
+    // already carries this key, return it instead of starting a second one. Scoping the dedupe to
+    // the run's owner is load-bearing for tenancy — an unscoped match would hand one tenant
+    // another tenant's live run (and, on the sync route, its streamed result) via a guessed/shared
+    // key (codex P0). `s.user_id IS ?` is SQLite's null-safe compare, so a null owner matches only
+    // null. Single-writer (bun) + this synchronous check-before-insert keep it race-safe.
+    if (req.idempotency_key) {
+      const existing = db
+        .query(
+          `SELECT r.id FROM runs r JOIN sessions s ON s.id = r.session_id
+           WHERE r.status IN ('queued','running')
+             AND json_extract(r.request, '$.idempotency_key') = ?
+             AND s.user_id IS ?
+           ORDER BY r.seq LIMIT 1`,
+        )
+        .get(req.idempotency_key, dedupeOwner) as { id: string } | null;
+      if (existing) return getRun(db, existing.id) as RunRow;
     }
     const id = `resp_${rid()}`;
     db.transaction(() => {
@@ -126,6 +145,19 @@ export class Queue {
   /** Read-only run lookup for HTTP routes (status, cancel, SSE terminal check). */
   get(runId: string): RunRow | null {
     return getRun(this.deps.db, runId);
+  }
+
+  /** The session owner (user_id) for a run — the tenancy principal an HTTP route checks against
+   * (S1). `undefined` = no such run; `null` = an unowned single-tenant/dev run; a string = the
+   * owning principal. Reading the session (not the run) keeps this the same source `enqueue`
+   * stamped and `snapshot` filters on, so the read/write scope can't diverge. */
+  owner(runId: string): string | null | undefined {
+    const row = this.deps.db
+      .query(
+        "SELECT s.user_id AS user_id FROM runs r JOIN sessions s ON s.id = r.session_id WHERE r.id = ?",
+      )
+      .get(runId) as { user_id: string | null } | null;
+    return row ? row.user_id : undefined;
   }
 
   /** Resolves when the run reaches a terminal state. */
@@ -176,8 +208,13 @@ export class Queue {
    * entries in full; everyone else's are opaque — only status/position/age, so
    * you learn "why is my task waiting" without enumerating others' ids, sessions,
    * or user ids. `caller === null` (no identity) sees everything opaque.
-   * Who-may-see-more is a control-plane decision layered above this. */
-  snapshot(caller: string | null = null): Array<{
+   * `mineOnly` (strict multi-tenant): return ONLY the caller's entries and number
+   * their positions among themselves — so a caller can't even infer other tenants'
+   * queued work from a global position number (codex P2). */
+  snapshot(
+    caller: string | null = null,
+    mineOnly = false,
+  ): Array<{
     id: string | null;
     session_id: string | null;
     status: string;
@@ -187,7 +224,7 @@ export class Queue {
     mine: boolean;
   }> {
     const now = Date.now();
-    const rows = this.deps.db
+    const all = this.deps.db
       .query(
         `SELECT r.id, r.session_id, r.status, s.user_id, r.created_at
          FROM runs r JOIN sessions s ON s.id = r.session_id
@@ -201,6 +238,8 @@ export class Queue {
       user_id: string | null;
       created_at: number;
     }>;
+    // In mineOnly mode, drop other tenants BEFORE numbering, so positions are tenant-local.
+    const rows = mineOnly ? all.filter((r) => caller !== null && r.user_id === caller) : all;
     let pos = 0;
     return rows.map((r) => {
       const mine = caller !== null && r.user_id === caller;

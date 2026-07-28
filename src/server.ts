@@ -103,6 +103,12 @@ export function createServer(
      *  workspace-file editing). Off by default so read-introspection never silently
      *  grants write; `delta dev` turns it on locally. No hot-reload — restart applies. */
     inspectWrite?: boolean;
+    /** DELTA_STRICT_TENANT=1 — multiple users behind one control token; every run must be owned
+     *  and a task route is served only to its owner. Off by default (single-tenant-per-daemon). */
+    strictTenant?: boolean;
+    /** DELTA_TRUST_REVIEW_METADATA=1 — honor body-supplied memory-widening authorization. Off by
+     *  default: those fields are stripped from every body (S5a). */
+    trustReviewMetadata?: boolean;
   },
 ) {
   // Gateway auth (codex S8 #1): flycast is network placement, NOT authentication —
@@ -117,6 +123,24 @@ export function createServer(
     const bearer = Buffer.from(header.startsWith("Bearer ") ? header.slice(7) : "");
     const want = Buffer.from(opts.authToken);
     return bearer.length === want.length && timingSafeEqual(bearer, want);
+  };
+
+  // The ONE tenancy principal (S1). The control token authenticates the trusted gateway; the
+  // gateway asserts WHICH of its users this request is for via `x-delta-user`. That header is the
+  // sole authority — it is never taken from the request body (a client behind the gateway may
+  // control the body but not this header). null = no principal asserted (single-tenant/dev).
+  const principalOf = (request: Request): string | null =>
+    request.headers.get("x-delta-user")?.trim() || null;
+
+  // May `principal` touch a run owned by `owner`? `owner === undefined` means the run doesn't
+  // exist. Non-strict (default, single-tenant-per-daemon): an unowned run is open; an owned run is
+  // its owner's alone. Strict (DELTA_STRICT_TENANT): the principal must be present AND match — an
+  // unowned run is inaccessible. A denied lookup returns 404, never 403, so cross-tenant probing
+  // can't even confirm a task id exists (codex P0).
+  const mayAccess = (owner: string | null | undefined, principal: string | null): boolean => {
+    if (owner === undefined) return false;
+    if (opts?.strictTenant) return principal !== null && owner === principal;
+    return owner === null || owner === principal;
   };
 
   // Cockpit introspection gate (spec §7/§8). When DELTA_INSPECT_TOKEN is set, a
@@ -385,10 +409,15 @@ export function createServer(
       }
 
       if (method === "GET" && pathname === "/v1/queue") {
-        // Caller identity rides a header set by the trusted control plane; absent
-        // it, everyone else's entries stay opaque (spec §J cross-user isolation).
-        const caller = request.headers.get("x-delta-user");
-        return json({ queue: queue.snapshot(caller) });
+        // Caller identity rides a header set by the trusted control plane; absent it, everyone
+        // else's entries stay opaque (spec §J cross-user isolation). In strict multi-tenant mode a
+        // principal is required and the snapshot is filtered to the caller's own entries — others'
+        // positions/ages aren't even disclosed opaquely (codex P2).
+        const principal = principalOf(request);
+        if (opts?.strictTenant && principal === null)
+          return json({ error: { message: "x-delta-user is required" } }, 401);
+        // Strict → mineOnly: only the caller's entries, positions numbered among themselves.
+        return json({ queue: queue.snapshot(principal, opts?.strictTenant === true) });
       }
 
       // Lifecycle signal for a scale-to-zero host (the hosting contract): "is the agent
@@ -396,13 +425,33 @@ export function createServer(
       // truth so a host never suspends with work owed. Behind the /v1/ gate below (the
       // host already holds the control token) — deliberately NOT folded into /healthz,
       // which stays open + data-free (busy is operational state, not liveness).
+      // HOST-ONLY BY DESIGN: the counts are GLOBAL because the decision is whole-machine
+      // (suspend the VM iff NO tenant has work) — a per-tenant view can't answer that. It is
+      // gated by the control token, i.e. only the trusted host/gateway can read it; it is never a
+      // tenant-facing endpoint even in strict mode (codex P2 — accepted, not a leak to a tenant).
       if (method === "GET" && pathname === "/v1/busy") return json(queue.activity());
 
       if (method === "POST" && (pathname === "/v1/responses" || pathname === "/v1/tasks")) {
         const parsed = await readRequest(request);
         if ("error" in parsed) return json({ error: { message: parsed.error } }, 400);
+        const principal = principalOf(request);
+        // Strict multi-tenant: a run must be owned, so a create without an asserted principal is
+        // refused rather than stamped NULL-owner (which would then be readable by anyone, S1).
+        if (opts?.strictTenant && principal === null)
+          return json({ error: { message: "x-delta-user is required" } }, 401);
+        // Canonicalize identity: when a gateway asserted the principal, overwrite the stored body's
+        // user_id (and drop the camel alias) with it, so EVERY downstream consumer that reads the
+        // body — recall, reflection, event identity — keys on the same authoritative owner and can't
+        // be pointed at another tenant's memory via a body field (codex P0).
+        canonicalizeIdentity(parsed.body, principal);
+        // S5a: strip body-supplied memory-widening authorization from EVERY body by default — a
+        // shared control token authenticates the gateway, not that a body field came from a human
+        // reviewer, so an untrusted body could otherwise widen a `user`-scoped memory into a
+        // cross-user audience. Opt back in only for a single-tenant operator that builds its own
+        // bodies; the durable trusted path is S5c.
+        if (!opts?.trustReviewMetadata) stripAuthzMetadata(parsed.body);
         try {
-          const run = queue.enqueue(parsed.body);
+          const run = queue.enqueue(parsed.body, principal, opts?.strictTenant ?? false);
           if (pathname === "/v1/tasks") {
             return json({ id: run.id, object: "task", status: "queued" }, 202);
           }
@@ -415,10 +464,10 @@ export function createServer(
           const done = await queue.wait(run.id);
           return json(JSON.parse(done.result ?? "{}"));
         } catch (e) {
-          if (e instanceof UnknownPreviousResponse)
-            return json({ error: { message: e.message } }, 400);
-          if (e instanceof SessionOwnershipError)
-            return json({ error: { message: e.message } }, 403);
+          // An unknown previous id and a cross-tenant one return the SAME 404 — a distinct 400 vs
+          // 403 would be an existence oracle for another tenant's session (codex P1).
+          if (e instanceof UnknownPreviousResponse || e instanceof SessionOwnershipError)
+            return json({ error: { message: "no such previous_response_id" } }, 404);
           throw e;
         }
       }
@@ -427,6 +476,11 @@ export function createServer(
       const taskMatch = pathname.match(/^\/v1\/tasks\/([^/]+)(\/events)?$/);
       if (taskMatch) {
         const id = taskMatch[1] as string;
+        // Tenancy check FIRST (S1) — status, events, and cancel all require the caller to own the
+        // run. A miss (no such run) and a cross-tenant hit both return the SAME 404, so a probe
+        // can't distinguish "not yours" from "doesn't exist".
+        if (!mayAccess(queue.owner(id), principalOf(request)))
+          return json({ error: { message: "no such task" } }, 404);
         const run = queue.get(id);
         if (!run) return json({ error: { message: "no such task" } }, 404);
 
@@ -474,6 +528,36 @@ async function readRequest(request: Request): Promise<{ body: RunRequest } | { e
     return { error: "`input` must be a non-empty string" };
   }
   return { body };
+}
+
+/** Make a gateway-asserted principal the ONE identity in the stored body (S1): overwrite
+ * `metadata.user_id` and drop the camelCase alias, so every downstream reader (memory recall,
+ * reflection write, event identity) keys on the authoritative owner rather than a caller-supplied
+ * body field. No principal (single-tenant/dev) → leave the body's own identity untouched. */
+function canonicalizeIdentity(body: RunRequest, principal: string | null): void {
+  if (principal === null) return;
+  const meta = (body.metadata && typeof body.metadata === "object" ? body.metadata : {}) as Record<
+    string,
+    unknown
+  >;
+  meta.user_id = principal;
+  delete meta.userId;
+  body.metadata = meta as RunRequest["metadata"];
+}
+
+/** Remove memory-widening authorization from a caller-supplied request body (S5a). Reflection only
+ * widens a `user`-scoped memory when `review_kind = submission_disposition` AND `widen_authorized`
+ * (reflect.ts) — both read from run metadata. In strict multi-tenant mode those come from an
+ * untrusted body, so a user could self-authorize a cross-user leak; strip them here so only a
+ * trusted control-plane path (S5c) can ever set them. */
+function stripAuthzMetadata(body: RunRequest): void {
+  const m = body.metadata;
+  if (!m || typeof m !== "object") return;
+  const meta = m as Record<string, unknown>;
+  delete meta.review_kind;
+  delete meta.widen_authorized;
+  if (meta.review && typeof meta.review === "object")
+    delete (meta.review as Record<string, unknown>).widen_authorized;
 }
 
 /** SSE progress = a filtered tail of the §K event stream for this run. Replays
