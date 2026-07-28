@@ -6,44 +6,54 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
-## [0.2.3] — 2026-07-27
+## [0.2.3] — 2026-07-28
 
 Failure-visibility + native-wire batch, driven by Aperture's production field report (two prod
 agents, the harness's heaviest real consumer). Every item ships with a test.
 
 ### Added
 
-- **Provider/tool error on the task surface.** `GET /v1/tasks/:id` now returns a first-class
-  `error` field (the last provider/tool error, already one-lined) so a plain HTTP poller learns
-  *why* a run failed before its first token — no more shelling in to diagnose a zero-token fail.
-- **Cold-start timeline on the task surface.** `GET /v1/tasks/:id` now returns `created_at`,
-  `started_at`, and `finished_at`, so a host can honestly split "waking the agent" (accepted →
-  started) from "reading your question" (started → done) instead of one faith-based spinner.
+- **Run error on the task surface.** `GET /v1/tasks/:id` now returns a first-class `error` field
+  carrying the run's last error — the provider or fatal error that ended it (length-capped) — so a
+  plain HTTP poller learns *why* a run failed before its first token instead of seeing a merely-dead
+  run. Both motivating incidents were provider errors that failed the run before its first token
+  (Opus 5 rejecting `thinking.type=enabled`; an untranslated fallback id). Per-tool errors stay in
+  the message stream, as before.
+- **Run lifecycle timestamps on the task surface.** `GET /v1/tasks/:id` now returns `created_at`
+  (accepted/enqueued), `started_at` (dequeued and began executing), and `finished_at` (terminal),
+  so a host can measure queue wait (created → started) separately from execution time (started →
+  finished) instead of showing one faith-based spinner over the whole thing.
 - **Native Anthropic adaptive thinking.** `DELTA_REASONING_EFFORT` now maps to the correct wire
   per model: `thinking:{type:"adaptive"}` + `output_config.effort` on Claude 4.6+ and all Claude 5
   models (Opus 5, Sonnet 5, Fable 5…), which **reject** the legacy `thinking:{type:"enabled"}`;
   the legacy budget wire is kept for Claude ≤4.5. Effort control now works on frontier models.
-  Note: adaptive thinking has no fixed budget, so size `DELTA_STEP_MAX_TOKENS` generously for a
-  reasoning model at high effort.
+  Two specifics worth knowing: on the adaptive path the OpenAI-only `none` and `minimal` efforts
+  map to `low` (always-on reasoning models reject a disabled thinking type), and Delta
+  automatically raises the request's `max_tokens` by an effort-based headroom so adaptive thinking
+  (which has no fixed budget) has room to breathe — size `DELTA_STEP_MAX_TOKENS` generously at high
+  effort regardless.
 - **Opus 5 pricing** baked into the cost table (`claude-opus-5`), so the native/subscription paths
   meter real dollars without a `DELTA_MODEL_PRICES` override.
 
 ### Changed
 
-- **Categorical-failure breaker.** A tool that returns the *same* `[tool error]` three times in one
-  run (a missing CLI, a persistent schema reject) is quarantined for the rest of that run and the
-  model is told to try another approach — instead of looping. Replays of the field report's worst
-  case (a missing `code` CLI that burned $3.50 of a $5.17 run) now cost pennies and still file output.
-- **`code` tool self-disables when its CLI is absent.** The tool is probed at boot and only
-  advertised if its CLI (`DELTA_CODE_CLI`, default `codex`) resolves on `PATH` — a capability the
-  daemon can't back is never offered, so the model can't loop on it.
+- **Categorical-failure breaker.** A tool that returns the *same* categorical `[tool error]` on
+  three consecutive turns (a missing CLI, a persistent schema reject) is quarantined for the
+  remainder of the run and the model is told to try another approach — a success, a transient
+  error, or a different error resets the count, and multiple failures in one turn count once. This
+  caps the field report's worst case (a missing `code` CLI that burned ~$3.50 of a $5.17 run by
+  looping ~17 turns): a live replay spent pennies on the dead end and still filed its output.
+- **`code` tool self-disables when its CLI isn't an executable file.** Probed once at boot: a bare
+  name via `Bun.which` (PATH), an explicit path via `accessSync(X_OK)` — a real executable check, so
+  a path *this process* can't exec (e.g. a root-owned `0700` file) is rejected rather than passing a
+  mode-bit glance and then `EACCES`-ing on spawn. This stops the model being handed a tool whose CLI
+  is simply absent. A CLI that passes the probe but fails at *runtime* (the bc8e877e case — the CLI
+  was present, its runtime dependency was not) is caught by the breaker above, not here; the two
+  layers are complementary.
 - **All native-wire model ids are normalized** (provider prefix stripped, dotted versions →
-  dashes), for the primary *and* every fallback — not just the utility model. `claude-opus-4.8`
-  and `claude-opus-4-8` both reach the Anthropic wire correctly now.
-- **`DELTA_MCP_SERVERS` parsing fails loud, never silent.** Malformed JSON, a non-array, or an
-  unusable entry is dropped with a specific boot-log warning instead of booting a tool-less agent
-  in silence; a missing `transport` is inferred from the entry shape (`url` → http, `command` →
-  stdio) so the common omission just works.
+  dashes), for the primary *and* every fallback — not just the utility model. An untranslated
+  fallback id was one of the report's two silent zero-token failures (a run that looked merely
+  dead to a polling host); `claude-opus-4.8` and `claude-opus-4-8` both reach the wire correctly now.
 
 ### Documented
 

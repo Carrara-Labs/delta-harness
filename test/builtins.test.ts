@@ -41,6 +41,16 @@ describe("workspace file tools", () => {
     const abs = await run("read_file", { path: "/etc/passwd" }).catch((e) => String(e));
     expect(String(abs)).toContain("escapes the workspace");
   });
+
+  test("read_file caps an oversized single line — the other bounded injection path", async () => {
+    // Completes the A4-hardening story alongside the grep test below: EVERY path that injects
+    // file contents into the context is bounded, so no tool can re-inject a giant single-line
+    // blob. Here it's read_file, which pages an oversized line at 50KB rather than amputating it.
+    await run("write_file", { path: "oneline.txt", content: "Z".repeat(200_000) });
+    const out = String(await run("read_file", { path: "oneline.txt" }));
+    expect(out).toContain("exceeds the 50KB page"); // the truncation notice fired
+    expect(out.length).toBeLessThan(52_000); // ~50KB page, not the 200KB blob
+  });
 });
 
 describe("web tools", () => {

@@ -130,8 +130,9 @@ would break one, that test fails before it ever reaches you.
 
 2. **`recover()` resumes mid-flight runs on daemon boot.** A run left `running` when the
    process stopped is picked up and continued from its last checkpointed turn when the
-   daemon comes back. The only true zombies are machines that never return — a staleness
-   detector can rely on that.
+   daemon comes back. So a staleness detector can treat a machine that never returns as the
+   zombie case. (One caveat: a tool that blocks the event loop *synchronously* can still wedge a
+   live daemon — a documented runtime limit, not a recovery gap.)
 
 3. **`/v1/busy` tells the durable truth.** `busy` is `true` whenever a run is `queued` OR
    `running` in the table, not merely when a session is in flight in memory. It is the
