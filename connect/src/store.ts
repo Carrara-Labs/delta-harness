@@ -145,6 +145,8 @@ export class Store {
    * the event still pending (whole turn re-runs) or fully committed (delivered
    * once). No partial state: never a split reply, never a half-advanced thread.
    * previousResponseId omitted when the reply spends no agent turn (intercepts).
+   * resetSession clears the thread (the `/new` command) in the SAME transaction,
+   * so a crash never leaves the event done with the old thread still linked.
    */
   commitTurn(args: {
     eventId: string;
@@ -152,11 +154,17 @@ export class Store {
     chatId: string;
     userId: string;
     responseId?: string;
+    resetSession?: boolean;
     replyChunks: string[];
   }): void {
     const now = Date.now();
     const groupKey = `out:${args.eventId}`;
     const tx = this.db.transaction(() => {
+      if (args.resetSession) {
+        this.db
+          .query(`DELETE FROM sessions WHERE conversation_id = ?`)
+          .run(args.conversationId);
+      }
       if (args.responseId) {
         this.db
           .query(

@@ -122,6 +122,33 @@ describe("dispatch loop", () => {
     expect(store.getSession("tg:100")?.prev_response_id).toBe("resp_8");
   });
 
+  test("/new clears the thread, spends no agent turn, next message starts fresh", async () => {
+    const store = new Store(tmpDb());
+    const codec = new RecCodec();
+    const seen: (string | undefined)[] = [];
+    const agent: AgentClient = {
+      async run(_input, opts) {
+        seen.push(opts?.previousResponseId);
+        return { responseId: `resp_${seen.length}`, outputText: `reply ${seen.length}` };
+      },
+    };
+    const c = new Connector(store, codec, agent, noopSup);
+
+    store.insertInbox(evt("tg:1", "first"));
+    await drain(c);
+    expect(store.getSession("tg:100")?.prev_response_id).toBe("resp_1");
+
+    store.insertInbox(evt("tg:2", "/new"));
+    await drain(c);
+    expect(store.getSession("tg:100")).toBeNull(); // thread cleared
+    expect(codec.sent.at(-1)).toContain("Fresh thread"); // canned confirmation
+    expect(seen.length).toBe(1); // /new did not spend an agent turn
+
+    store.insertInbox(evt("tg:3", "second"));
+    await drain(c);
+    expect(seen[1]).toBeUndefined(); // the next turn threads from nothing
+  });
+
   test("duplicate delivery is answered once", async () => {
     const store = new Store(tmpDb());
     const codec = new RecCodec();

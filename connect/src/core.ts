@@ -35,9 +35,13 @@ const HELP = [
   "I'm Ferni, your Delta agent. Just talk to me normally - ask a question, hand me a task,",
   "or think out loud. A few built-in commands:",
   "",
+  "/new - start a fresh thread (clears our previous context)",
   "/help - this message",
   "/id - your Telegram id",
 ].join("\n");
+
+const NEW_THREAD =
+  "Fresh thread started. I've cleared our previous context - your next message begins a new conversation.";
 
 export class Connector {
   private running = false;
@@ -59,9 +63,12 @@ export class Connector {
     }
     const text = row.text.trim();
 
-    // Local intercepts: answered without spending an agent turn.
-    const canned =
-      text === "/id"
+    // Local intercepts: answered without spending an agent turn. `/new` also
+    // clears the thread so the next message starts fresh (same commit).
+    const isNew = text === "/new";
+    const canned = isNew
+      ? NEW_THREAD
+      : text === "/id"
         ? `Your Telegram id: ${row.actor_id.replace("tg:", "")}`
         : text === "/help" || text === "/start"
           ? HELP
@@ -72,6 +79,7 @@ export class Connector {
         conversationId: row.conversation_id,
         chatId: row.chat_id,
         userId: row.actor_id,
+        resetSession: isNew,
         replyChunks: chunkText(canned),
       });
       await this.flushOutbox();
