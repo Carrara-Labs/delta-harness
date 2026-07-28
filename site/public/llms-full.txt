@@ -1626,7 +1626,7 @@ curl -sS http://127.0.0.1:8080/healthz
 ```
 
 ```json
-{"ok":true,"version":"0.2.3","build":"optional-commit"}
+{"ok":true,"version":"0.2.4","build":"optional-commit"}
 ```
 
 `build` appears only when `DELTA_BUILD` is set. This endpoint does not test the model, MCP servers, telemetry, or other dependencies. It is liveness and version metadata, not readiness.
