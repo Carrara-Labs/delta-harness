@@ -485,7 +485,19 @@ export function createServer(
         if (!run) return json({ error: { message: "no such task" } }, 404);
 
         if (method === "GET" && taskMatch[2] === "/events") {
-          return streamEvents(queue, events, id);
+          // Two shapes on one path (A1): `?since=<id>` → a bounded, cursor-paged JSON poll for a
+          // host that can't hold an SSE connection; otherwise the live SSE tail. `?coarse=1` drops
+          // the per-token deltas so the feed is a structural heartbeat under the narrative layer.
+          // (The JSON poll reads the persisted `events` table, which never holds ephemeral deltas,
+          // so it is coarse inherently.)
+          if (url.searchParams.has("since")) {
+            const db = opts?.db;
+            if (!db) return json({ error: { message: "event polling requires a database" } }, 501);
+            const since = Number(url.searchParams.get("since")) || 0;
+            const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 200));
+            return json(pollEvents(db, id, since, limit));
+          }
+          return streamEvents(queue, events, id, url.searchParams.get("coarse") === "1");
         }
         if (method === "GET") {
           return json({
@@ -563,7 +575,52 @@ function stripAuthzMetadata(body: RunRequest): void {
 /** SSE progress = a filtered tail of the §K event stream for this run. Replays
  *  nothing; emits live events until the run reaches a terminal state, then ends
  *  with a `done` frame carrying the final response payload. */
-function streamEvents(queue: Queue, events: Events, runId: string): Response {
+/** A coarse-mode SSE feed drops the per-token narrative deltas (`output_text.delta`,
+ * `reasoning.delta`) — everything ending in `.delta` — leaving the structural heartbeat
+ * (run/turn/tool lifecycle + model.call + checkpoint + error). */
+const isDelta = (type: string): boolean => type.endsWith(".delta");
+
+/** Bounded, cursor-paged JSON poll of a run's persisted events (A1). Returns rows with id>since in
+ * id order (capped at `limit`) plus a `cursor` to pass as the next `since`, and `done` once the run
+ * is terminal so a poller knows to stop. Ephemeral token deltas are never persisted, so this feed is
+ * inherently coarse. The `events_run` index (run_id, id) keys the scan. */
+function pollEvents(
+  db: Database,
+  runId: string,
+  since: number,
+  limit: number,
+): { events: Array<Record<string, unknown>>; cursor: number; done: boolean } {
+  const rows = db
+    .query(
+      `SELECT id, ts, type, turn, data FROM events
+       WHERE run_id = ? AND id > ? ORDER BY id LIMIT ?`,
+    )
+    .all(runId, since, limit) as Array<{
+    id: number;
+    ts: number;
+    type: string;
+    turn: number | null;
+    data: string;
+  }>;
+  const list = rows.map((r) => ({
+    id: r.id,
+    ts: r.ts,
+    type: r.type,
+    ...(r.turn !== null ? { turn: r.turn } : {}),
+    ...(JSON.parse(r.data) as Record<string, unknown>),
+  }));
+  const cursor = rows.length ? (rows[rows.length - 1] as { id: number }).id : since;
+  // `done` only once we've drained to the tail (a full page may have more waiting).
+  const done =
+    rows.length < limit &&
+    ["done", "failed", "cancelled"].includes(
+      (db.query("SELECT status FROM runs WHERE id = ?").get(runId) as { status?: string } | null)
+        ?.status ?? "",
+    );
+  return { events: list, cursor, done };
+}
+
+function streamEvents(queue: Queue, events: Events, runId: string, coarse = false): Response {
   const encoder = new TextEncoder();
   // Hoisted so cancel() (client disconnect) hits the same teardown as terminal
   // completion — otherwise the heartbeat + event listener leak per dropped conn.
@@ -603,6 +660,7 @@ function streamEvents(queue: Queue, events: Events, runId: string): Response {
 
       const off = events.on((e: DeltaEvent) => {
         if (e.runId !== runId) return;
+        if (coarse && isDelta(e.type)) return; // heartbeat mode: no per-token deltas
         frame(e.type, { ts: e.ts, turn: e.turn, ...e.data });
         if (e.type === "run.finished") finishTerminal();
       });

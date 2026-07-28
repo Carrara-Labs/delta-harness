@@ -831,6 +831,12 @@ export async function executeRun(
     stepCount++;
     overflowRetried = false; // fresh overflow budget for the next turn
     addUsage(usage, result.usage);
+    // Per-turn cache-hit% = share of input tokens served from the prompt cache (the stable-prefix
+    // win). Computed once, emitted on model.call so a host polling /v1/tasks/:id/events sees live
+    // cache warmth per turn (A1) instead of deriving it, AND logged below for local tuning.
+    const cacheHit = result.usage.input
+      ? Math.round((result.usage.cacheRead / result.usage.input) * 100)
+      : 0;
     events.emit(
       "model.call",
       { ...spine, turn },
@@ -841,16 +847,12 @@ export async function executeRun(
         "gen_ai.usage.output_tokens": result.usage.output,
         "gen_ai.usage.cached_tokens": result.usage.cacheRead,
         "gen_ai.usage.cost_usd": result.usage.costUsd,
+        cache_hit_pct: cacheHit,
         latency_ms: result.latencyMs,
         ...(result.provider ? { "gen_ai.provider": result.provider } : {}),
         tool_calls: result.message.tool_calls?.map((c) => c.function.name) ?? [],
       },
     );
-    // Per-turn token/cost breakdown, surfaced for tuning (spec §I). cacheHit% =
-    // share of input tokens served from the prompt cache (the stable-prefix win).
-    const cacheHit = result.usage.input
-      ? Math.round((result.usage.cacheRead / result.usage.input) * 100)
-      : 0;
     console.error(
       `[turn ${turn}] ${result.model} in=${result.usage.input} out=${result.usage.output} cache=${cacheHit}% $${result.usage.costUsd.toFixed(4)} ${result.latencyMs}ms · run $${usage.costUsd.toFixed(4)}`,
     );

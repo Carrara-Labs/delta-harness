@@ -10,7 +10,8 @@ function serverWith(
   opts?: Parameters<typeof createServer>[3],
 ) {
   const deps = makeDeps(chat);
-  const server = createServer(new Queue(deps), deps.events, 0, opts);
+  // Pass the db so event polling works, as in production (index.ts). Explicit opts win.
+  const server = createServer(new Queue(deps), deps.events, 0, { db: deps.db, ...opts });
   return { base: `http://localhost:${server.port}`, server, deps };
 }
 
@@ -448,5 +449,50 @@ describe("widen-authorization ingress (S5a)", () => {
     const meta = storedMeta(deps, id);
     expect(meta.widen_authorized).toBe(true);
     expect(meta.review_kind).toBe("submission_disposition");
+  });
+});
+
+describe("A1 event polling (GET /v1/tasks/:id/events?since=)", () => {
+  test("returns a bounded, cursor-paged JSON feed with per-turn cache_hit_pct", async () => {
+    const { base, server } = serverWith(async () => textResult("done"));
+    stopFns.push(() => server.stop());
+    const { id } = (await (await post(base, { input: "t" })).json()) as { id: string };
+    // Let the run reach terminal so its events are all persisted.
+    for (let i = 0; i < 50; i++) {
+      const s = (await (await fetch(`${base}/v1/tasks/${id}`)).json()) as { status: string };
+      if (s.status === "done") break;
+      await Bun.sleep(20);
+    }
+    const body = (await (await fetch(`${base}/v1/tasks/${id}/events?since=0`)).json()) as {
+      events: Array<{ id: number; type: string; cache_hit_pct?: number }>;
+      cursor: number;
+      done: boolean;
+    };
+    expect(body.events.length).toBeGreaterThan(0);
+    // No ephemeral per-token deltas in the persisted poll — it's inherently coarse.
+    expect(body.events.some((e) => e.type.endsWith(".delta"))).toBe(false);
+    // A model.call carries the pre-computed cache-hit% so a host needn't derive it.
+    const modelCall = body.events.find((e) => e.type === "model.call");
+    expect(modelCall).toBeTruthy();
+    expect(typeof modelCall?.cache_hit_pct).toBe("number");
+    // Ids are ascending; the cursor is the last id.
+    expect(body.cursor).toBe(body.events[body.events.length - 1]?.id as number);
+    // Re-polling from the cursor drains to empty and reports done.
+    const next = (await (
+      await fetch(`${base}/v1/tasks/${id}/events?since=${body.cursor}`)
+    ).json()) as {
+      events: unknown[];
+      done: boolean;
+    };
+    expect(next.events.length).toBe(0);
+    expect(next.done).toBe(true);
+  });
+
+  test("the poll inherits the S1 tenancy gate (cross-tenant → 404)", async () => {
+    const { base, server } = serverWith(async () => textResult("ok"));
+    stopFns.push(() => server.stop());
+    const { id } = (await (await post(base, { input: "t" }, "alice")).json()) as { id: string };
+    expect((await fetch(`${base}/v1/tasks/${id}/events?since=0`, hdr("bob"))).status).toBe(404);
+    expect((await fetch(`${base}/v1/tasks/${id}/events?since=0`, hdr("alice"))).status).toBe(200);
   });
 });
