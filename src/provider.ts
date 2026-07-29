@@ -153,6 +153,7 @@ export async function warmupWire(providers: ProviderConfig[], max = 8): Promise<
           const t0 = performance.now();
           try {
             await fetch(origin, { method: "HEAD", signal: AbortSignal.timeout(3_000) });
+            wireOk();
             const ms = Math.round(performance.now() - t0);
             okStreak = ms < 1_500 ? okStreak + 1 : 0;
             if (i > 0 || ms >= 1_500)
@@ -396,17 +397,27 @@ function armFirstByte(idle: AbortController | undefined, ms: number): () => void
   return () => clearTimeout(t);
 }
 
-/* After a suspend/resume the fetch pool may hold sockets whose NAT path died with the
- * freeze. During a short suspect window every provider call opts OUT of connection
- * reuse (Bun honors `keepalive: false` per request: fresh socket in, none pooled
- * after — verified empirically 2026-07-29), trading one TLS handshake per call for
- * immunity to the 150s dead-socket hang. The daemon marks the window on resume
- * detection (index.ts heartbeat gap). */
+/* After a suspend/resume — or any long idle behind a NAT/LB — the fetch pool may hold
+ * sockets whose path died quietly. A suspect call opts OUT of connection reuse (Bun
+ * honors `keepalive: false` per request: fresh socket in, none pooled after — verified
+ * empirically 2026-07-29), trading one TLS handshake for immunity to the 150s
+ * dead-socket hang (lab reproduction: 251s turn-1 stall on the pooled socket while a
+ * parallel fresh-socket probe answered in 1ms). Two triggers, one mechanism:
+ * - explicit: index.ts marks a window on resume detection (heartbeat gap), and
+ * - implicit: any call after >5 min of wire silence distrusts the pool on its own —
+ *   the heartbeat can tick up to 10s AFTER a resumed task's first call, so the
+ *   provider cannot depend on it for turn 1. */
+const WIRE_STALE_MS = 300_000;
 let wireSuspectUntil = 0;
+let wireOkAt = 0;
 export function markWireSuspect(ms = 120_000): void {
   wireSuspectUntil = Date.now() + ms;
 }
-const wireKeepalive = (): boolean => Date.now() >= wireSuspectUntil;
+const wireKeepalive = (): boolean =>
+  Date.now() >= wireSuspectUntil && Date.now() - wireOkAt < WIRE_STALE_MS;
+const wireOk = (): void => {
+  wireOkAt = Date.now();
+};
 
 /** Race a promise against an abort signal (with listener cleanup) — bounds work that
  * happens BEFORE fetch, like a broker credential mint, under the same deadline. */
@@ -768,6 +779,7 @@ async function streamOnce(
   } finally {
     disarmFB();
   }
+  wireOk(); // headers arrived — the wire (and this socket's path) is alive
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => "");
     if (req.signal?.aborted) return { ok: false, model, error: "aborted", aborted: true };
@@ -1107,6 +1119,7 @@ async function streamAnthropic(
   } finally {
     disarmFB();
   }
+  wireOk(); // headers arrived — the wire (and this socket's path) is alive
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => "");
     if (req.signal?.aborted) return { ok: false, model, error: "aborted", aborted: true };
@@ -1367,6 +1380,7 @@ async function streamResponses(
   } finally {
     disarmFB();
   }
+  wireOk(); // headers arrived — the wire (and this socket's path) is alive
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => "");
     if (req.signal?.aborted) return { ok: false, model, error: "aborted", aborted: true };
