@@ -1109,7 +1109,7 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
         </div>
         <p class="cap"><b>The seam is that doorway.</b> "Seam" is simply our name for Delta's API - the small, fixed set of doors the outside world uses. Everything an agent can be asked to do passes through it, and nothing else.</p>
       </div>
-      <p>Every request through the doorway is two things: a <strong>verb</strong> (what you want to do) and an <strong>address</strong> (what you want to do it to). You only ever need two verbs.</p>
+      <p>Every request through the doorway is two things: a <strong>verb</strong> (what you want to do) and an <strong>address</strong> (what you want to do it to). For the three doors below you need just two verbs, GET and POST. (Cancelling a long job later adds one more, DELETE.)</p>
       <div class="verbs">
         <div class="verb-card"><span class="vk">GET</span><span class="vt">Read something</span><span class="vd">Fetch information without changing anything - like checking whether the agent is awake.</span></div>
         <div class="verb-card"><span class="vk">POST</span><span class="vt">Send something</span><span class="vd">Hand data in and make the agent act - like giving it a question to answer or a task to run.</span></div>
@@ -1121,9 +1121,9 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
           <div class="anat-row"><code class="seg">/v1</code><span class="lab"><b>The version.</b> Version 1 of the API. A later version can be added without breaking code that already uses v1.</span></div>
           <div class="anat-row"><code class="seg">/responses</code><span class="lab"><b>The thing you want.</b> Here, a response from the agent.</span></div>
         </div>
-        <p class="cap"><b>How to read an endpoint.</b> Put it together and <code>POST /v1/responses</code> means "send a message to version 1's <em>responses</em> door, and get the agent's answer." Read one, and you can read them all.</p>
+        <p class="cap"><b>How to read an endpoint.</b> Put it together and <code>POST /v1/responses</code> means "send a message to version 1's <em>responses</em> door, and get the agent's answer." Once you can read this one, the rest of Delta's paths follow the same shape.</p>
       </div>
-      <p>With that, Delta's whole seam is just two working doors and a <span class="term" data-t="heartbeat">heartbeat</span>. The two doors differ in one thing: how long the job takes.</p>
+      <p>With that, the three doors to know first are two working doors and a <span class="term" data-t="heartbeat">heartbeat</span>. The two working doors differ in one thing: whether you wait on the line for the answer, or take a ticket and check back.</p>
       <div class="doors">
         <div class="door">
           <p class="dwhen">For a quick turn</p>
@@ -1140,13 +1140,13 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
       </div>
       <div class="beat">
         <p class="beat-ep"><span class="method get">GET</span><span class="epath">/healthz</span></p>
-        <p class="beat-body"><b>The heartbeat - it does no work.</b> A <span class="term" data-t="heartbeat">heartbeat</span> is a tiny "are you alive?" check between programs. The host pings this door every so often; a reply means the agent is up and ready. That is its whole job - it proves the lights are on, nothing more.</p>
+        <p class="beat-body"><b>The heartbeat - it does no work.</b> A <span class="term" data-t="heartbeat">heartbeat</span> is a tiny "are you alive?" check between programs. The host pings this door every so often; a reply means the agent is running and reachable. That is its whole job - it proves the lights are on, nothing more.</p>
       </div>
       <p>In every case it is plain text in and the agent's work out: no special app and no SDK, just an ordinary web request your code already knows how to make. Chapter 12 lists the full set of doors.</p>
-      <p>Why build it as a thing-you-call instead of a bot that sits running all day? Because a service can be <strong>summoned when there's work and sleep when there isn't</strong>. An always-on program burns money every hour whether or not anyone needs it; a callable agent costs almost nothing while idle and wakes in about a second when a request arrives (chapter 14 shows exactly how). Just as important, <em>any</em> software can drive it - a web app, a nightly script, a chat connector - not only a chat box welded to the front. One small, well-defined front door buys three things at once: cheaper to run, easy to build products on top of, and a tiny surface to secure.</p>
+      <p>Why build it as a thing-you-call instead of a bot that sits running all day? Because a service can be <strong>summoned when there's work and sleep when there isn't</strong>. An always-on program burns money every hour whether or not anyone needs it; a callable agent costs almost nothing while idle, and its host can wake it in about a second when a request arrives (chapter 14 shows exactly how). Just as important, <em>any</em> software that can make a web request can drive it - a web app, a nightly script, a chat connector - not only a chat box welded to the front. That one small, well-defined seam buys three things at once: cheaper to run, easy to build products on top of, and a tiny surface to secure.</p>
 
       <h3>The engine</h3>
-      <p>A single downloadable binary. It contains the agent loop, the model client with failover, the built-in tools, the context manager, the memory adapters, and every safety rail. It knows nothing about your product. You never edit it; you configure it.</p>
+      <p>A single downloadable binary. It contains the agent loop, the model client with failover, the built-in tools, the context manager, the memory adapters, and every safety rail. It knows nothing about your product. You normally never need to edit it; you configure it.</p>
 
       <h3>The bundle - five plain files</h3>
       <p>This is how you define an agent. No code, no framework - five files you version like any other config. Chapter 7 opens each one; here is the map:</p>
@@ -1156,7 +1156,7 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
         <tbody>
           <tr><td class="mono">delta.env</td><td>Which model, which keys, and the budgets.</td><td>operator</td></tr>
           <tr><td class="mono">vocab.json</td><td>The <span class="term" data-t="writerail">write rail</span> - your product's nouns and verbs.</td><td>operator</td></tr>
-          <tr><td class="mono">POLICY.md</td><td>Fixed rules. Highest priority, never overridable.</td><td>operator</td></tr>
+          <tr><td class="mono">POLICY.md</td><td>Fixed operating rules. Rendered last, and protected from the agent's own edits.</td><td>operator</td></tr>
           <tr><td class="mono">DELTA.md</td><td>Identity <strong>plus what the agent has learned</strong>.</td><td>human <em>and</em> agent</td></tr>
           <tr><td class="mono">PROMPT_CONTEXT.md</td><td>Optional live variables (<code>{{model}}</code>, <code>{{now.date}}</code>).</td><td>operator</td></tr>
         </tbody>
@@ -1164,29 +1164,30 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
       </div>
 
       <h3>The state</h3>
-      <p>Everything the agent has actually done: its run history, its scoped memories, its progress on the current task. It lives in a local database so it survives a crash, a restart, or a redeploy. Chapters 8, 9, and 11 are all about this.</p>
+      <p>Everything the agent has actually done: its run history, its scoped memories, its progress on the current task. Most of it lives in a local <span class="term" data-t="sqlite">SQLite</span> database so it survives a crash, a restart, or a redeploy. Chapters 8, 9, and 11 are all about this.</p>
+      <p><strong>One file bridges the two.</strong> <code>DELTA.md</code> starts in the bundle because it carries the agent's identity - but as the agent learns, it rewrites its own <code>DELTA.md</code>, so that one file becomes living state too. Everything else a run produces lives in SQLite. The "three clean pieces" are clean, with one deliberate seam between who the agent is and what it has learned.</p>
 
       <h3>The whole system, on one page</h3>
       <p>You've now met all three parts and the doorway they sit behind. Here they are together - the same picture from the top of a real Delta agent.</p>
       <div class="arch">
         <div class="arch-seam"><span class="sl">The seam · HTTP in / out</span><span class="sr">POST /v1/responses · POST /v1/tasks · GET /healthz</span></div>
         <div class="arch-engine">
-          <div class="el"><span>Engine · the binary, names no product</span><span>&lt;2k-token spine</span></div>
+          <div class="el"><span>Engine · the binary, names no product</span><span><span class="term" data-t="spine">&lt;2k-token spine</span></span></div>
           <div class="arch-parts">
-            <div class="arch-part"><span class="pn">Run loop</span><span class="pd">the turn cycle + budgets</span></div>
-            <div class="arch-part"><span class="pn">Provider</span><span class="pd">model calls · failover · cache</span></div>
-            <div class="arch-part"><span class="pn">Tools</span><span class="pd">builtins + MCP client</span></div>
-            <div class="arch-part"><span class="pn">Context</span><span class="pd">compaction · spill</span></div>
-            <div class="arch-part"><span class="pn">Memory</span><span class="pd">scoped recall + reflect</span></div>
-            <div class="arch-part"><span class="pn">Safety</span><span class="pd">untrusted · SSRF · guards</span></div>
+            <div class="arch-part"><span class="pn">Run loop</span><span class="pd">the turn cycle + <span class="term" data-t="budget">budgets</span></span></div>
+            <div class="arch-part"><span class="pn">Provider</span><span class="pd">model calls · <span class="term" data-t="failover">failover</span> · <span class="term" data-t="promptcache">cache</span></span></div>
+            <div class="arch-part"><span class="pn">Tools</span><span class="pd">builtins + <span class="term" data-t="mcp">MCP</span> client</span></div>
+            <div class="arch-part"><span class="pn">Context</span><span class="pd"><span class="term" data-t="compaction">compaction</span> · <span class="term" data-t="spill">spill</span></span></div>
+            <div class="arch-part"><span class="pn">Memory</span><span class="pd">scoped <span class="term" data-t="recall">recall</span> + <span class="term" data-t="reflect">reflect</span></span></div>
+            <div class="arch-part"><span class="pn">Safety</span><span class="pd"><span class="term" data-t="untrusted">untrusted</span> · <span class="term" data-t="ssrf">SSRF</span> · guards</span></div>
           </div>
         </div>
         <div class="arch-link">↑ reads the bundle at boot ···· writes new state every turn ↓</div>
         <div class="arch-feeds">
           <div class="arch-col bundle"><p class="cl2">Bundle · config you version like code</p><div class="chips2"><span class="c2">delta.env</span><span class="c2">vocab.json</span><span class="c2">POLICY.md</span><span class="c2">DELTA.md</span><span class="c2">PROMPT_CONTEXT.md</span></div></div>
-          <div class="arch-col state"><p class="cl2">State · local SQLite (WAL)</p><div class="chips2"><span class="c2">messages</span><span class="c2">journal</span><span class="c2">memory</span><span class="c2">revisions</span><span class="c2">events</span></div></div>
+          <div class="arch-col state"><p class="cl2">State · local <span class="term" data-t="sqlite">SQLite</span> (<span class="term" data-t="wal">WAL</span>)</p><div class="chips2"><span class="c2">messages</span><span class="c2">journal</span><span class="c2">memory</span><span class="c2">revisions</span><span class="c2">events</span></div></div>
         </div>
-        <p class="cap"><b>Everything you just met, in one place.</b> Requests come in through the seam at the top. The product-free engine runs the loop, reading the <b>bundle</b> for who the agent is and the <b>state</b> for what it remembers, and writing fresh state on every turn. Each box on this map is a chapter later on.</p>
+        <p class="cap"><b>The whole machine, on one page.</b> Requests come in through the seam at the top. The product-free engine runs the loop, reading the <b>bundle</b> for who the agent is and the <b>state</b> for what it remembers, and writing fresh state on every turn. Some labels here (compaction, spill, SSRF, WAL) are their own later chapters - hover any dotted one for a definition now.</p>
       </div>
 
       <div class="note">
@@ -2643,7 +2644,7 @@ platform event
     c2: "The agent loop lets the model call real tools and read the results back, turning a text predictor into something that does multi-step work.",
     c3: "A harness runs that loop safely: it owns the tools, memory, budget, and recovery. Delta is a working-agent harness, not a coding one.",
     c4: "Delta's five choices (tiny spine, neutral engine, budgets-not-timers, error-as-value, lean by construction) put it at parity-or-ahead in ~1.8% of a rival's code.",
-    c5: "agent = engine + bundle + state. Swap the bundle and the same audited engine becomes a different worker.",
+    c5: "agent = engine + bundle + state. Swap the bundle and the same engine becomes a different worker.",
     c6: "One turn: run pending tools or finish, check budget, build the cached prompt, maybe compact, call the model, checkpoint. It stops on budget and saves every step.",
     c7: "Five plain files define an agent. DELTA.md is the one the agent rewrites itself (safely, atomically, reversibly) and it always sits below fixed policy.",
     c8: "Memory is filed by who it's for, so lessons never leak between users. A human's review correction is distilled into a durable, scoped lesson.",
