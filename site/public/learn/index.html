@@ -406,6 +406,8 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 .tbl th { font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--mutedink); font-weight: 600; }
 .tbl td.mono, .tbl td code { font-family: var(--mono); font-size: 12.5px; }
 .tbl tr:hover td { background: color-mix(in srgb, var(--sage) 4%, transparent); }
+/* narrow screens: let a wide table scroll inside itself instead of pushing the page sideways */
+@media (max-width: 620px) { .tbl { display: block; overflow-x: auto; } }
 .tblwrap { overflow-x: auto; }
 
 /* file-cite (metal) */
@@ -609,8 +611,9 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
       <li><a href="#c10"><span class="n">10</span> Tools, MCP &amp; subagents</a></li>
       <li><a href="#c11"><span class="n">11</span> Durability &amp; safety</a></li>
       <li><a href="#c12"><span class="n">12</span> What you can build</a></li>
-      <li><a href="#c13"><span class="n">13</span> What's not there yet</a></li>
-      <li><a href="#c14"><span class="n">14</span> Glossary &amp; next</a></li>
+      <li><a href="#c13"><span class="n">13</span> Channels &amp; autonomy</a></li>
+      <li><a href="#c14"><span class="n">14</span> What's not there yet</a></li>
+      <li><a href="#c15"><span class="n">15</span> Glossary &amp; next</a></li>
     </ol>
     <div class="railnote">
       <p class="lab">How to read this</p>
@@ -627,7 +630,7 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
       <h1>From <span class="g">zero</span> to the <span class="g">metal</span>.</h1>
       <p class="lede">Start knowing nothing about how an AI model is called. Finish understanding every moving part of the Delta Harness - the loop, the memory, the budgets, the safety rails. Plain English all the way through, with the how and the actual code one click deeper wherever you want it, and a definition for every hard word.</p>
       <div class="runline">
-        <span><b>15 chapters</b> · beginner → engineer</span>
+        <span><b>16 chapters</b> · beginner → engineer</span>
         <span><b>open "go deeper"</b> · for how it works + the code</span>
         <span>hover any <span class="term" data-t="dotted">dotted word</span> for a definition</span>
       </div>
@@ -932,7 +935,7 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
         <div class="db">
           <p>The neutrality is real, not marketing: the engine reads a <span class="term" data-t="bundle">bundle</span> at boot and holds no product nouns of its own. You can grep the source and find no "recruiter" or "knowledge base" baked in.</p>
           <p>Contrast the <span class="term" data-t="spine">spines</span> (the permanent system prompt each harness carries): a heavier agent like OpenClaw is reported to bootstrap near 26,000 tokens of standing instructions, where Delta's targets under 2,000 (assembled in <code>src/spine.ts</code>). On every single call, that difference is paid in money and speed.</p>
-          <p>The "parity-or-ahead on 14 dimensions" claim comes from a feature-by-feature teardown against the real source of Pi, OpenClaw, and Hermes; the roadmap (<a class="link" href="#c13">chapter 13</a>) records which of their ideas are worth folding in.</p>
+          <p>The "parity-or-ahead on 14 dimensions" claim comes from a feature-by-feature teardown against the real source of Pi, OpenClaw, and Hermes; the roadmap (<a class="link" href="#c14">chapter 14</a>) records which of their ideas are worth folding in.</p>
         </div>
       </details>
     </section>
@@ -1677,9 +1680,92 @@ A teammate can act on your reply without re-checking it.
       </details>
     </section>
 
-    <!-- ===================== CH 13 ===================== -->
+    <!-- ===================== CH 13 : channels + autonomy ===================== -->
     <section class="ch" id="c13">
-      <p class="ch-tag"><span class="num">13</span> · Honesty</p>
+      <p class="ch-tag"><span class="num">13</span> · The edge</p>
+      <h2>Channels, and the autonomy dial.</h2>
+      <p class="dek">Two last questions before the machine is complete. How does a person actually reach an agent that has no chat window - and how do you decide how much that agent is allowed to do?</p>
+
+      <p class="lead">Neither answer lives in the engine, and that is the point. The harness speaks one HTTP <span class="term" data-t="seam">seam</span> and has no idea what a "channel" is. <strong>Reaching</strong> an agent (Delta Connect) and <strong>bounding</strong> it (profiles) are two separate, deliberate choices - and keeping both out of the core is what keeps the core small.</p>
+
+      <h3>The autonomy dial: profiles</h3>
+      <p>Every run happens under a <span class="term" data-t="profile">profile</span> - a named preset that fixes two things: which tools the agent may touch at all, and its <span class="term" data-t="budget">budget</span> ceiling in steps, tokens, and dollars. The profile is the single dial for how autonomous - how "wild" - an agent is allowed to get. Delta ships two.</p>
+      <div class="roadmap-cards">
+        <div class="rc next">
+          <p class="rck">chat - boxed in</p>
+          <ul>
+            <li>Read-only and own-state tools only: web search, web fetch, read a file, list a folder, <span class="term" data-t="recall">recall</span> this thread, keep a todo.</li>
+            <li>No writing, no <span class="term" data-t="remember">remembering</span>, no delegating.</li>
+            <li>10 steps · 100k tokens · $0.25 a run.</li>
+            <li>Safe to point at a stranger.</li>
+          </ul>
+        </div>
+        <div class="rc">
+          <p class="rck">work - fully autonomous</p>
+          <ul>
+            <li>Every registered tool: writing files, remembering lessons, delegating to <span class="term" data-t="subagent">subagents</span>, running code.</li>
+            <li>100 steps · 2M tokens · $5 a run.</li>
+            <li>For your own trusted tasks, where you want it to just get the job done.</li>
+          </ul>
+        </div>
+      </div>
+      <p>The two are strictly ordered: <code>chat</code> is "no more permissive" than <code>work</code> - a subset of the tools and a smaller budget. And here is the rule that makes it safe: <strong>the daemon's placement sets the ceiling, and a caller can only ask for something tighter, never wilder.</strong> An untrusted message can never talk an agent into more power than the operator granted it.</p>
+      <details class="deeper">
+        <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">how the ceiling actually holds</span><span class="peek">narrow-only, never escalate</span></summary>
+        <div class="db">
+          <p>The operator picks a ceiling profile when they place the daemon. A request may carry a profile name in its metadata, but it is only honoured if it is a subset of that ceiling - fewer tools, and budgets that are smaller or equal. Ask for more and you are silently held at the ceiling; ask for less and you get the tighter box. Because inbound callers are treated as untrusted, this narrow-only direction is the whole game: a prompt-injection attack buried in a Telegram message cannot widen its own permissions.</p>
+          <p>Two escape hatches, both operator-controlled. The operator's own budget knobs on their own daemon can raise or lower the dollar and token caps directly (a $5 default is wrong for a deep-research agent). And a trusted, authenticated gateway can be vouched for so that even a restricted profile is handed the single <span class="term" data-t="remember">remember</span> tool - so a locked-down chat agent can still learn, but only when a real gateway is fronting it.</p>
+        </div>
+      </details>
+      <details class="deeper code">
+        <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">at the code</span><span class="peek">PROFILES, isSubset, getProfile</span></summary>
+        <div class="db">
+          <p>The presets are plain objects in <code>src/profiles.ts</code>: <code>PROFILES.work</code> (<code>allowed: "*"</code>, every tool) and <code>PROFILES.chat</code> (an explicit read-only list). <code>isSubset(a, b)</code> defines the ordering - <code>a</code> is no more permissive than <code>b</code> when its tools are a subset and every budget is less-or-equal.</p>
+          <p><code>getProfile(requested, ceiling)</code> is where the rule lives: it starts from the operator's <code>DELTA_PROFILE</code> ceiling, accepts the requested profile only if <code>isSubset</code> holds, then applies the operator's <code>DELTA_MAX_TOKENS</code> / <code>DELTA_MAX_COST_USD</code> overrides. <code>grantSelfWrite</code> adds <code>remember</code> to a finite profile only when <code>DELTA_ALLOW_SELF_WRITE</code> vouches for a trusted gateway.</p>
+        </div>
+      </details>
+
+      <h3>The edge: Delta Connect</h3>
+      <p>The engine has no Telegram code, no Slack code, no email code. A person reaches an agent through a <span class="term" data-t="connect">connector</span> that lives entirely outside the harness - a separate package called Delta Connect. That separation is a design stance, not an accident.</p>
+      <p>The harness's whole advantage is being small: zero dependencies, a sub-50ms cold start, one seam. Weld a channel layer onto it - sockets held open, session state in memory, a plugin catalogue - and you trade all of that away. So channels live at <span class="term" data-t="edge">the edge</span>. Delta is the agent; Connect is an optional thin edge that plugs it into chat. (Heavier stacks like OpenClaw <em>are</em> the channel layer welded to the agent - a resident process that must stay up just to hold every socket open.)</p>
+      <p>Keeping the channel outside the agent is exactly what lets the agent <span class="term" data-t="scaletozero">scale to zero</span>. The connector is the only always-on part - a tiny durable edge - and the agent wakes only long enough to answer, then sleeps again.</p>
+      <div class="code">
+        <div class="bar"><i></i><i></i><i></i><span>the round trip</span></div>
+        <pre><span class="c"># a message arrives while the agent is asleep</span>
+platform event
+  <span class="k">-&gt;</span> durable inbox      <span class="c"># dedup + thread, written before anything acts</span>
+  <span class="k">-&gt;</span> ack the platform   <span class="c"># return 2xx at once - nothing can be lost</span>
+  <span class="k">-&gt;</span> wake the agent     <span class="c"># one turn on POST /v1/responses</span>
+  <span class="k">-&gt;</span> durable outbox     <span class="c"># ordered, at-least-once</span>
+  <span class="k">-&gt;</span> send the reply     <span class="c"># rate-limited, retried, then sleep</span></pre>
+      </div>
+      <p>Because every step commits to a durable store before it acts, nothing is lost if the agent is asleep, the process restarts, or a send fails - the message is already safe in the inbox, and the reply waits in the outbox until it is truly delivered.</p>
+      <details class="deeper">
+        <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">what the edge actually owns</span><span class="peek">inbox, outbox, threading, retries</span></summary>
+        <div class="db">
+          <p>The edge owns three durable tables and nothing else. An <strong>inbox</strong> dedups incoming events, so a platform re-delivering the same message can't cause a double answer. <strong>Sessions</strong> carry the <span class="term" data-t="threading">thread</span> - each reply's id is fed back as the next turn's <code>previous_response_id</code>, so the conversation continues without the connector holding any state in memory. An <strong>outbox</strong> delivers replies in order, at least once, with retry backoff, and parks a message in a <span class="term" data-t="deadletter">dead-letter</span> slot if it keeps failing.</p>
+          <p>Everything else an agent needs - memory, tools, budget, recovery - stays in the harness. The connector is just another client of the same public seam, calling <code>POST /v1/responses</code> for a turn and <code>POST /v1/files</code> to hand over an attachment. That is the whole reason the engine never had to learn what a channel is.</p>
+        </div>
+      </details>
+      <details class="deeper code">
+        <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">at the code</span><span class="peek">a separate package, zero deps</span></summary>
+        <div class="db">
+          <p>Delta Connect ships as <code>@carrara-labs/delta-connect</code>, versioned independently of the engine, with zero runtime dependencies (Bun, <code>bun:sqlite</code>, and raw <code>fetch</code>). The durable spine is <code>src/store.ts</code> (inbox, sessions, outbox, and an atomic <code>commitTurn</code>); the dispatch loop that writes before it delivers is <code>src/core.ts</code>; the Telegram codec and long-poll ingress are <code>src/telegram.ts</code>; a single turn against the seam is <code>src/agent.ts</code>.</p>
+          <p>The same connector runs two ways behind one interface (<code>src/supervisor.ts</code>): a local keep-alive on an always-on box, or a Fly start/suspend that wakes the agent on demand. Shipped so far: a Telegram DM connector (v0.1), then a <code>/new</code> command and inbound file receipt (v0.2) - each validated live before release.</p>
+        </div>
+      </details>
+
+      <h3>Reaching wide, staying safe</h3>
+      <p>The two choices compose into one operating decision. Put Connect in front of a public Telegram DM and bind that agent to the <code>chat</code> profile: it can search the web and answer, but a hijacked message can't make it spend real money or change a single file. Point your own trusted channel at a <code>work</code> agent and it can do the entire job, autonomously. Same engine, same audited binary - two completely different blast radii, and the core never grew a line of channel code to get there.</p>
+      <div class="note">
+        <p class="nt">The whole philosophy in miniature</p>
+        <p>A lesser design bakes channels and a sprawling permissions matrix into the agent and calls it "features." Delta does the opposite: the engine stays a small, legible loop; reach is an optional edge you bolt on; power is a dial you turn. Leanness in the core, choice at the boundary.</p>
+      </div>
+    </section>
+
+    <!-- ===================== CH 14 ===================== -->
+    <section class="ch" id="c14">
+      <p class="ch-tag"><span class="num">14</span> · Honesty</p>
       <h2>What's not there yet.</h2>
       <p class="dek">A guided teardown that only lists strengths is marketing. Here is what Delta deliberately hasn't built, and what's queued next.</p>
 
@@ -1714,9 +1800,9 @@ A teammate can act on your reply without re-checking it.
       </div>
     </section>
 
-    <!-- ===================== CH 14 ===================== -->
-    <section class="ch" id="c14">
-      <p class="ch-tag"><span class="num">14</span> · You made it</p>
+    <!-- ===================== CH 15 ===================== -->
+    <section class="ch" id="c15">
+      <p class="ch-tag"><span class="num">15</span> · You made it</p>
       <h2>Glossary &amp; where to go next.</h2>
       <p class="dek">You started not knowing what an LLM call was. You now understand the whole machine. Here's a reference and a few doors.</p>
 
@@ -1869,7 +1955,7 @@ A teammate can act on your reply without re-checking it.
 
   /* ---- search: concepts + chapters (+ "/" shortcut, like /docs) ----
      The page's real value is the 58 glossary concepts and the body prose, not
-     the 15 chapter titles (which are already visible in the rail). So the index
+     the chapter titles (which are already visible in the rail). So the index
      covers both: a concept hit shows its plain-English definition and jumps to
      where the word is actually used; a chapter hit shows a snippet around the
      match. The index is built lazily because the glossary object is populated
@@ -2053,6 +2139,12 @@ A teammate can act on your reply without re-checking it.
   set("untrusted", "Untrusted input", "Any text from the outside world - web pages, tool results, documents - that could hide instructions trying to hijack the agent. Delta wraps it and labels it 'data, not instructions.'");
   set("broker", "Token broker", "A small service that mints short-lived, scoped access tokens for the subscription sign-in, so the long-lived credential never rides along inside the agent.");
   set("reasoningeffort", "Reasoning effort", "A per-request dial telling a reasoning model how hard to think before answering - trading speed and cost against depth. Delta can set it per task.");
+  set("budget", "Budget", "The spend ceiling on a single run - a cap on steps, tokens, and dollars. Delta stops a run when it hits the cap, not on a wall-clock timer, so a run ends when it is done, cancelled, or out of budget.");
+  set("recall", "Recall", "A read-only tool that lets an agent look up its own earlier notes and this thread's history. Safe even in a locked-down chat placement, because it only reads - it never writes.");
+  set("connect", "Delta Connect", "A separate, optional package that plugs a Delta agent into chat channels (Telegram first, then Slack, email, webhooks). It is not part of the engine - it is the thin edge that reaches the agent through the same public seam.");
+  set("edge", "The edge", "Everything that lives outside the engine on purpose - channels, devices, connectors. Keeping them at the edge is what keeps the core small, dependency-free, and fast to start.");
+  set("deadletter", "Dead-letter", "Where a message goes when it can't be delivered after repeated retries - parked aside instead of blocking the queue or being silently dropped, so it can be inspected later.");
+  set("threading", "Threading", "Linking each reply to the next message so a conversation continues. Delta Connect does it by feeding the previous reply's id back as previous_response_id, so the connector keeps no conversation state in memory.");
   window.__DH_WIRE__ && window.__DH_WIRE__();
 })();
 </script>
