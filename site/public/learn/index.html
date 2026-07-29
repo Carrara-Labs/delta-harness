@@ -51,7 +51,7 @@ img, svg { max-width: 100%; }
   --shadow: 0 1px 0 rgba(20,17,11,.02);
   --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, "Cascadia Code", Consolas, monospace;
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  /* shared chrome tokens (derived, so they auto-adapt per theme) — kept in
+  /* shared chrome tokens (derived, so they auto-adapt per theme) - kept in
      lockstep with /docs so the header, sidebar and search read identically. */
   --surface: var(--card);
   --surface-soft: var(--paper-2);
@@ -153,7 +153,7 @@ main { min-width: 0; max-width: 820px; padding-bottom: 120px; }
   :root:not([data-theme="light"]) .brand-logo-dark { display: block; }
 }
 
-/* header icon buttons — identical to /docs: a circular GitHub link and a
+/* header icon buttons - identical to /docs: a circular GitHub link and a
    bordered pill theme toggle, so the chrome is consistent across the app. */
 .github-link {
   display: inline-grid; width: 38px; height: 38px; flex: 0 0 auto; place-items: center;
@@ -215,11 +215,16 @@ main { min-width: 0; max-width: 820px; padding-bottom: 120px; }
 .search-result { display: flex; gap: 10px; align-items: baseline; padding: 10px 11px; border-radius: 8px; text-decoration: none; color: var(--ink); }
 .search-result:hover, .search-result:focus-visible { background: var(--surface-soft); outline: none; }
 .search-result .sr-n { font-family: var(--mono); font-size: 11px; color: var(--sage); min-width: 18px; }
+.search-result .sr-tag { flex: 0 0 auto; align-self: flex-start; margin-top: 1px; padding: 1px 7px; border-radius: 999px; background: var(--wash-green); color: var(--sage); font-family: var(--mono); font-size: 9px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; }
 .search-result strong { display: block; font-size: 13px; font-weight: 620; }
 .search-result .sr-ex { display: -webkit-box; margin-top: 2px; overflow: hidden; color: var(--mutedink); font-size: 11px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .search-empty { margin: 0; padding: 14px 11px; color: var(--mutedink); font-size: 12px; }
+/* brief highlight when search jumps to where a concept is used */
+@keyframes term-flash { 0% { background: var(--sage); color: var(--paper); } 100% { background: transparent; } }
+.term-flash { border-radius: 4px; animation: term-flash 1.4s ease-out; }
+@media (prefers-reduced-motion: reduce) { .term-flash { animation: none; } }
 
-/* chapter list — numbered (it is a real sequence), Docs-style soft active pill */
+/* chapter list - numbered (it is a real sequence), Docs-style soft active pill */
 .rail ol { list-style: none; margin: 0 0 8px; padding: 0; }
 .rail li a {
   display: flex; gap: 10px; align-items: baseline; text-decoration: none;
@@ -291,7 +296,7 @@ main { min-width: 0; max-width: 820px; padding-bottom: 120px; }
 .hero .startrow { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 34px; }
 .btn { display: inline-flex; align-items: center; gap: 9px; text-decoration: none; font-family: var(--mono); font-size: 13.5px; padding: 11px 18px; border-radius: 10px; border: 1px solid var(--line-strong); color: var(--ink); background: var(--surface); transition: border-color .14s ease, background-color .14s ease, box-shadow .14s ease; }
 .btn:hover { border-color: var(--line-strong); background: var(--surface-soft); }
-/* primary CTA — warm beige fill with a sage arrow: high-contrast dark-ink
+/* primary CTA - warm beige fill with a sage arrow: high-contrast dark-ink
    text (accessible), and it reads as the same warm palette as the rest of
    the app rather than a saturated green block. */
 .btn.primary { background: var(--paper-2); border-color: var(--line-strong); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(20, 17, 11, .05); }
@@ -585,7 +590,7 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
     <p class="rail-label">Search</p>
     <div class="search-wrap">
       <svg class="search-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="8.7" cy="8.7" r="5.2" stroke="currentColor" stroke-width="1.4"/><path d="m12.6 12.6 3.5 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-      <input class="rail-search" id="learn-search" type="search" placeholder="Search the walk" autocomplete="off" aria-label="Search chapters" />
+      <input class="rail-search" id="learn-search" type="search" placeholder="Search concepts + chapters" autocomplete="off" aria-label="Search concepts and chapters" />
       <span class="search-shortcut" aria-hidden="true">/</span>
       <div class="search-results" id="search-results" aria-live="polite" hidden></div>
     </div>
@@ -1862,35 +1867,74 @@ A teammate can act on your reply without re-checking it.
   window.addEventListener("resize", updateProgress);
   updateProgress();
 
-  /* ---- chapter search (same behaviour + "/" shortcut as /docs) ---- */
+  /* ---- search: concepts + chapters (+ "/" shortcut, like /docs) ----
+     The page's real value is the 58 glossary concepts and the body prose, not
+     the 15 chapter titles (which are already visible in the rail). So the index
+     covers both: a concept hit shows its plain-English definition and jumps to
+     where the word is actually used; a chapter hit shows a snippet around the
+     match. The index is built lazily because the glossary object is populated
+     by a later inline script. */
   var searchInput = document.getElementById("learn-search");
   var searchResults = document.getElementById("search-results");
   var DIACRITICS = new RegExp("[\\u0300-\\u036f]", "g");
   function norm(v) { return v.normalize("NFKD").replace(DIACRITICS, "").toLowerCase(); }
-  var searchIndex = Array.prototype.slice.call(document.querySelectorAll("main section.ch")).map(function (sec) {
-    var h2 = sec.querySelector("h2");
-    var numEl = sec.querySelector(".ch-tag .num");
-    var dekEl = sec.querySelector(".dek");
-    var title = h2 ? h2.textContent.trim() : sec.id;
-    var body = (sec.textContent || "").replace(/\s+/g, " ").trim();
-    return {
-      id: sec.id,
-      num: numEl ? numEl.textContent.trim() : "",
-      title: title,
-      dek: dekEl ? dekEl.textContent.trim() : "",
-      nTitle: norm(title),
-      nBody: norm(title + " " + body)
-    };
-  });
+  function cleanText(node) { return (node.textContent || "").replace(/\s+/g, " ").trim(); }
+  function excerpt(body, terms) {
+    var nb = norm(body), pos = Infinity;
+    terms.forEach(function (t) { var i = nb.indexOf(t); if (i >= 0 && i < pos) pos = i; });
+    if (!isFinite(pos)) pos = 0;
+    var start = Math.max(0, pos - 45), end = Math.min(body.length, start + 150);
+    return (start > 0 ? "… " : "") + body.slice(start, end).trim() + (end < body.length ? " …" : "");
+  }
+  function termAnchor(key, title) {
+    var t = document.querySelector('.term[data-t="' + key + '"]');
+    if (t) return t;
+    var dts = document.querySelectorAll(".glist dt"), lt = title.toLowerCase();
+    for (var i = 0; i < dts.length; i++) { if (dts[i].textContent.trim().toLowerCase() === lt) return dts[i]; }
+    return document.getElementById("c14");
+  }
+  var _index = null;
+  function getIndex() {
+    if (_index) return _index;
+    var chapters = Array.prototype.slice.call(document.querySelectorAll("main section.ch")).map(function (sec) {
+      var h2 = sec.querySelector("h2"), numEl = sec.querySelector(".ch-tag .num");
+      var title = h2 ? h2.textContent.trim() : sec.id, body = cleanText(sec);
+      return { kind: "chapter", id: sec.id, num: numEl ? numEl.textContent.trim() : "", title: title, body: body, nTitle: norm(title), nBody: norm(title + " " + body) };
+    });
+    var G = window.__DH_GLOSSARY__ || {}, terms = [], seen = {};
+    Object.keys(G).filter(function (k) { return k !== "dotted"; }).forEach(function (k) {
+      var term = G[k].t || k, def = G[k].d || "";
+      seen[norm(term)] = true;
+      terms.push({ kind: "term", key: k, el: null, title: term, def: def, nTitle: norm(term), nBody: norm(term + " " + def) });
+    });
+    /* also index the curated chapter-14 list: a few concepts (e.g. "Budget")
+       live only there. Dedup by title against the tooltip terms above. */
+    Array.prototype.slice.call(document.querySelectorAll(".glist dt")).forEach(function (dt) {
+      var title = dt.textContent.trim(), nt = norm(title);
+      if (seen[nt]) return;
+      seen[nt] = true;
+      var dd = dt.nextElementSibling, def = dd ? cleanText(dd) : "";
+      terms.push({ kind: "term", key: null, el: dt, title: title, def: def, nTitle: nt, nBody: norm(title + " " + def) });
+    });
+    _index = chapters.concat(terms);
+    return _index;
+  }
   function closeSearch() { searchResults.hidden = true; searchResults.replaceChildren(); }
+  function flashTerm(it) {
+    var el = it.el || termAnchor(it.key, it.title);
+    if (!el) return;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.classList.remove("term-flash"); void el.offsetWidth; el.classList.add("term-flash");
+    setTimeout(function () { el.classList.remove("term-flash"); }, 1400);
+  }
   function renderSearch(q) {
     var terms = norm(q).split(/\s+/).filter(Boolean);
     if (!terms.length) { closeSearch(); return; }
     var nq = terms.join(" ");
-    var matches = searchIndex.map(function (it) {
+    var matches = getIndex().map(function (it) {
       var hay = it.nTitle + " " + it.nBody;
       if (!terms.every(function (t) { return hay.indexOf(t) >= 0; })) return null;
-      var score = 0;
+      var score = it.kind === "term" ? 3 : 0; /* nudge a concept hit so "what is X" surfaces the definition */
       if (it.nTitle === nq) score += 40; else if (it.nTitle.indexOf(nq) === 0) score += 28; else if (it.nTitle.indexOf(nq) >= 0) score += 18;
       terms.forEach(function (t) {
         if (it.nTitle.indexOf(t) === 0) score += 8; else if (it.nTitle.indexOf(t) >= 0) score += 5; else if (it.nBody.indexOf(t) >= 0) score += 1;
@@ -1903,7 +1947,7 @@ A teammate can act on your reply without re-checking it.
     if (!matches.length) {
       var empty = document.createElement("p");
       empty.className = "search-empty";
-      empty.textContent = "No matching chapters";
+      empty.textContent = "No matches on this page";
       searchResults.appendChild(empty);
       return;
     }
@@ -1911,14 +1955,23 @@ A teammate can act on your reply without re-checking it.
       var it = m.it;
       var a = document.createElement("a");
       a.className = "search-result";
-      a.href = "#" + it.id;
-      var n = document.createElement("span"); n.className = "sr-n"; n.textContent = it.num;
+      var lead = document.createElement("span");
       var box = document.createElement("span"); box.style.flex = "1"; box.style.minWidth = "0";
       var strong = document.createElement("strong"); strong.textContent = it.title;
-      var span = document.createElement("span"); span.className = "sr-ex"; span.textContent = it.dek || it.title;
-      box.appendChild(strong); box.appendChild(span);
-      a.appendChild(n); a.appendChild(box);
-      a.addEventListener("click", function () { closeSearch(); searchInput.value = ""; });
+      var ex = document.createElement("span"); ex.className = "sr-ex";
+      box.appendChild(strong); box.appendChild(ex);
+      if (it.kind === "chapter") {
+        lead.className = "sr-n"; lead.textContent = it.num;
+        ex.textContent = excerpt(it.body, terms);
+        a.href = "#" + it.id;
+        a.addEventListener("click", function () { closeSearch(); searchInput.value = ""; });
+      } else {
+        lead.className = "sr-tag"; lead.textContent = "Term";
+        ex.textContent = it.def;
+        a.href = "#c14";
+        a.addEventListener("click", function (e) { e.preventDefault(); closeSearch(); searchInput.value = ""; flashTerm(it); });
+      }
+      a.appendChild(lead); a.appendChild(box);
       searchResults.appendChild(a);
     });
   }
