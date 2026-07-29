@@ -105,6 +105,12 @@ export type ProviderConfig = {
    * bounded only by `timeoutMs`. Rides the idle controller, so streamIdleMs:0 disables
    * this too. Default 30s. */
   firstByteMs?: number;
+  /** Anthropic prompt-cache retention for the STABLE prefix breakpoint (system spine +
+   * tools). "1h" keeps the ~13k-token prefix a cache READ across the 5-minute gaps
+   * between runs — turn-1 TTFT + cost win for an agent serving several runs an hour.
+   * 1h writes bill 2× base input (vs 1.25×), so this is opt-in (DELTA_CACHE_TTL=1h).
+   * Rolling tail breakpoints always keep the provider default TTL. */
+  cacheTtl?: "1h";
 };
 
 /** Provider error strings that mean "the prompt overflowed the model's context window"
@@ -661,12 +667,19 @@ type Chunk = {
 //      a documented provider-caching technique.)
 // OpenAI-family models cache automatically; only cache metadata is Anthropic-specific.
 // Tool-result framing applies on every wire path.
-function withPromptCache(messages: ChatMsg[], model: string): unknown[] {
+function withPromptCache(messages: ChatMsg[], model: string, cacheTtl?: "1h"): unknown[] {
   const framed = messages.map((m) =>
     m.role === "tool" ? { ...m, content: untrustedToolResult(m.content) } : m,
   );
   if (!/anthropic|claude/i.test(model)) return framed;
   const cc = { cache_control: { type: "ephemeral" } };
+  // Long-retention (1h) goes on the STABLE prefix only: an agent serving several runs
+  // an hour keeps its ~13k-token spine+tools a cache READ across the 5-minute TTL gaps
+  // between runs (turn-1 TTFT + cost win), while the per-run rolling tail stays at the
+  // default TTL — 1h writes bill 2× base vs 1.25×, wasted on a tail that dies with the
+  // run. Anthropic requires longer-TTL breakpoints to precede shorter ones; the system
+  // prefix does. Opt-in via DELTA_CACHE_TTL=1h.
+  const ccStable = cacheTtl ? { cache_control: { type: "ephemeral", ttl: cacheTtl } } : cc;
   // Mark the LAST system message only (Anthropic hard-caps 4 explicit breakpoints; marking
   // every system could exceed it — codex #6) + the last TWO user/tool messages. Two rolling
   // marks (not one) because Anthropic's cache lookup only scans ~20 blocks back from a
@@ -688,7 +701,7 @@ function withPromptCache(messages: ChatMsg[], model: string): unknown[] {
   }
   return framed.map((m, i) => {
     if (m.role === "system" && i === lastSystem)
-      return { role: "system", content: [{ type: "text", text: m.content, ...cc }] };
+      return { role: "system", content: [{ type: "text", text: m.content, ...ccStable }] };
     if (rolling.includes(i) && typeof m.content === "string" && m.content) {
       if (m.role === "user")
         return { role: "user", content: [{ type: "text", text: m.content, ...cc }] };
@@ -722,7 +735,7 @@ async function streamOnce(
   const openrouter = cfg.baseUrl.includes("openrouter.ai");
   const body: Record<string, unknown> = {
     model,
-    messages: withPromptCache(req.messages, model),
+    messages: withPromptCache(req.messages, model, cfg.cacheTtl),
     stream: true,
     stream_options: { include_usage: true },
   };
@@ -940,7 +953,10 @@ type AnthropicContentBlock =
       cache_control?: { type: "ephemeral" };
     };
 
-function toAnthropic(messages: ChatMsg[]): {
+function toAnthropic(
+  messages: ChatMsg[],
+  cacheTtl?: "1h",
+): {
   system: unknown;
   msgs: Array<{ role: "user" | "assistant"; content: AnthropicContentBlock[] }>;
 } {
@@ -948,8 +964,17 @@ function toAnthropic(messages: ChatMsg[]): {
     .filter((m) => m.role === "system")
     .map((m) => (typeof m.content === "string" ? m.content : ""))
     .join("\n\n");
+  // Long-retention on the stable prefix only (see withPromptCache) — the rolling tail
+  // below keeps the default TTL. Longer-TTL breakpoints must precede shorter ones;
+  // the system prefix does.
   const system = systemText
-    ? [{ type: "text", text: systemText, cache_control: { type: "ephemeral" } }]
+    ? [
+        {
+          type: "text",
+          text: systemText,
+          cache_control: { type: "ephemeral", ...(cacheTtl ? { ttl: cacheTtl } : {}) },
+        },
+      ]
     : undefined;
   const msgs: Array<{ role: "user" | "assistant"; content: AnthropicContentBlock[] }> = [];
   for (const m of messages) {
@@ -1028,7 +1053,7 @@ async function streamAnthropic(
   // before fetch (a hung broker must not escape the timeout; codex #6).
   const sig = withTimeout(req.signal, timeoutMs, idle);
   let emitted = false;
-  const { system, msgs } = toAnthropic(req.messages);
+  const { system, msgs } = toAnthropic(req.messages, cfg.cacheTtl);
   // A9: the native wire wants a bare DASHED id ("claude-opus-4-8") — strip any provider prefix
   // and translate dotted versions, for EVERY model (primary AND fallback), not just the utility
   // model. The RETURNED model keeps the configured id (pricing/telemetry already alias both forms).

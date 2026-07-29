@@ -514,3 +514,44 @@ describe("warmupWire", () => {
     expect(performance.now() - t0).toBeLessThan(10_000);
   });
 });
+
+describe("prompt-cache retention (DELTA_CACHE_TTL)", () => {
+  let seen: Record<string, unknown> = {};
+  const capture = () => {
+    seen = {};
+    reset((_, body) => {
+      seen = body;
+      return sse(delta({ content: "ok" }, "stop"));
+    });
+  };
+  const sys = { role: "system" as const, content: "spine" };
+  const usr = { role: "user" as const, content: "hi" };
+
+  test("openai-compat wire: 1h rides the stable system breakpoint only", async () => {
+    capture();
+    await chat(cfg({ models: ["anthropic/claude-opus-5"], maxRetries: 0, cacheTtl: "1h" }), {
+      messages: [sys, usr],
+    });
+    const msgs = seen.messages as any[];
+    expect(msgs[0].content[0].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    expect(msgs[1].content[0].cache_control).toEqual({ type: "ephemeral" }); // rolling tail: default TTL
+  });
+
+  test("anthropic wire: 1h on the system prefix, rolling tail stays default", async () => {
+    capture();
+    await chat(cfg({ api: "anthropic", models: ["claude-opus-5"], maxRetries: 0, cacheTtl: "1h" }), {
+      messages: [sys, usr],
+    });
+    expect((seen.system as any[])[0].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    const last = (seen.messages as any[]).at(-1).content.at(-1);
+    expect(last.cache_control).toEqual({ type: "ephemeral" });
+  });
+
+  test("unset: no ttl key anywhere (wire-identical to 0.2.4)", async () => {
+    capture();
+    await chat(cfg({ api: "anthropic", models: ["claude-opus-5"], maxRetries: 0 }), {
+      messages: [sys, usr],
+    });
+    expect((seen.system as any[])[0].cache_control).toEqual({ type: "ephemeral" });
+  });
+});
