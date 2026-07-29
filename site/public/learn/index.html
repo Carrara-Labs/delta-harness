@@ -1537,7 +1537,7 @@ A teammate can act on your reply without re-checking it.
           <div class="ca">→</div>
           <div class="cs"><span class="csn">05</span><div class="cst">Promote</div><p class="csd">If broadly useful, it's staged to shared knowledge.</p></div>
         </div>
-        <p class="cap"><b>Review → reflect → remember.</b> The loop runs in the background and never blocks the user's answer. When a lesson is filed, the next run starts already knowing it.</p>
+        <p class="cap"><b>Review → reflect → remember.</b> The loop runs in the background and never blocks the user's answer. Once a lesson is filed, a later run can start already knowing it.</p>
       </div>
 
       <div class="note clay">
@@ -1601,7 +1601,7 @@ A teammate can act on your reply without re-checking it.
         <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">how compaction keeps the load-bearing facts</span><span class="peek">summarise, then audit</span></summary>
         <div class="db">
           <p>When a projected request nears the ceiling, Delta walks the tail of the conversation back by <em>token budget</em> (not a fixed message count), keeps those most-recent turns word-for-word, and replaces the older prefix with a summary under 350 words, in four fixed sections: Goal / Progress / Next / Artifacts.</p>
-          <p>Then it <strong>audits</strong> that summary - it harvested the identifiers from the original (file paths, years, big numbers) and checks they survived the summarisation, retrying once if too many were dropped. And any huge tool output is <span class="term" data-t="spill">spilled to disk</span> and referenced by a ledger, so it stays recoverable even after its message scrolls out of the window. This is careful mitigation, not magic: the audit exists precisely because summarising can lose things.</p>
+          <p>Then it <strong>audits</strong> that summary - it harvested the identifiers from the original (file paths, years, big numbers) and checks they survived the summarisation, retrying once if too many were dropped. And a huge tool output is <span class="term" data-t="spill">spilled to disk</span> and referenced by a ledger, so it stays available even after its message scrolls out of the window. This is careful mitigation, not magic: the audit exists precisely because summarising can lose things.</p>
         </div>
       </details>
       <details class="deeper code">
@@ -1660,7 +1660,7 @@ A teammate can act on your reply without re-checking it.
       <details class="deeper code">
         <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">at the code</span><span class="peek">src/mcp.ts, 60-tool cap</span></summary>
         <div class="db">
-          <p><code>src/mcp.ts</code> speaks both transports an <span class="term" data-t="mcp">MCP</span> server can use (HTTP and stdio). The key safety number is <code>MAX_RESIDENT_TOOLS = 60</code>: even if a server exposes hundreds of tools, at most 60 schemas are ever "resident" in the prompt, so a huge server can't blow the per-turn token budget on step one.</p>
+          <p><code>src/mcp.ts</code> speaks both transports an <span class="term" data-t="mcp">MCP</span> server can use (HTTP and stdio). The key safety number is <code>MAX_RESIDENT_TOOLS = 60</code>: even if a server exposes hundreds of tools, the initial "resident" set in the prompt is capped at 60 schemas, so a huge server can't blow the per-turn token budget on step one (tools the agent then activates are added as it goes).</p>
           <p>When the model calls <code>search_tools</code>, Delta activates the top few matches for the rest of the run, and that activation survives a restart - so the agent doesn't have to re-discover its tools after a crash.</p>
         </div>
       </details>
@@ -1678,7 +1678,7 @@ A teammate can act on your reply without re-checking it.
         <thead><tr><th>Path</th><th>Runs where</th><th>Can it write?</th><th>Best for</th></tr></thead>
         <tbody>
           <tr><td class="mono">research</td><td>The <strong>same process</strong>, up to 3 in parallel.</td><td>No - read-only tools only.</td><td>Fanning out to investigate parts of a task at once.</td></tr>
-          <tr><td class="mono">spawn_subagent</td><td>A <strong>child process</strong> - the same Delta binary, default-deny env.</td><td>Only what its profile allows; can't touch memory or nest further.</td><td>A heavier, isolated sub-task that still obeys the same rules.</td></tr>
+          <tr><td class="mono">spawn_subagent</td><td>A <strong>child process</strong> - the same Delta binary, default-deny env.</td><td>Only what its profile allows; runs on its own scratch memory, and can't nest further.</td><td>A heavier, isolated sub-task that still obeys the same rules.</td></tr>
           <tr><td class="mono">code</td><td>An <strong>external coding CLI</strong> (not Delta), if one is installed.</td><td>In its own workspace, via that tool.</td><td>Handing off actual code editing to a purpose-built agent.</td></tr>
         </tbody>
       </table>
@@ -1697,7 +1697,7 @@ A teammate can act on your reply without re-checking it.
     <section class="ch" id="c11">
       <p class="ch-tag"><span class="num">11</span> · When things go wrong</p>
       <h2>Durability &amp; safety.</h2>
-      <p class="dek">The two properties that make Delta safe to point at real work: it survives crashes without repeating side effects, and it treats the outside world as hostile.</p>
+      <p class="dek">The two properties that make Delta safe to point at real work: it survives crashes without blindly repeating a side effect it can't prove was safe, and it treats the outside world as hostile.</p>
 
       <p class="lead">Two doctrines run through the whole engine. <strong>Error-as-value:</strong> a failed model or tool call returns a clean result the loop can read - the daemon never crashes on a bad call. <strong>Budgets, not timers:</strong> nothing imposes a wall-clock deadline on a task - it ends when it's done, cancelled, out of budget, or unrecoverably failed - so it can safely run long, pause, and resume.</p>
 
@@ -1855,7 +1855,7 @@ A teammate can act on your reply without re-checking it.
       <h3>Running it for real</h3>
       <p>Because the whole runtime is one small self-contained binary with a local database, operating it is deliberately boring. Four things you get for free:</p>
       <div class="prodgrid">
-        <div class="prodcard"><p class="pk">Deploy</p><h4>One binary, runs anywhere</h4><p>A single compiled binary or a container, no external services to stand up: state is a local <span class="term" data-t="sqlite">SQLite</span> file. Laptop, VM, or a serverless box - same artifact. ~30 MB memory, sub-50 ms cold start.</p></div>
+        <div class="prodcard"><p class="pk">Deploy</p><h4>One binary, runs almost anywhere</h4><p>A single compiled binary or a container, no external services to stand up: state is a local <span class="term" data-t="sqlite">SQLite</span> file, so it needs a host with its own disk. Laptop, VM, or a serverless box with persistent storage - same artifact. ~30 MB memory, sub-50 ms cold start.</p></div>
         <div class="prodcard"><p class="pk">Scale to zero</p><h4>Sleeps between tasks</h4><p>The daemon reports whether any work is <span class="term" data-t="scaletozero">queued or running</span>, so the host only suspends it when idle - never mid-task. A crash or redeploy resumes in-flight work from the journal. You pay for compute only while it is actually working.</p></div>
         <div class="prodcard"><p class="pk">Observe</p><h4>Every turn is traced</h4><p>A durable event stream (SQLite + live SSE + an NDJSON export) records each model call, tool call, and cost, keyed by user, session, run, and turn. You can see exactly what an agent did and what it spent.</p></div>
         <div class="prodcard"><p class="pk">Economics</p><h4>Metered or flat-rate</h4><p>Point it at metered API tokens, or at a <span class="term" data-t="subscription">subscription</span> for a flat monthly cost. Prompt caching keeps long runs lean either way, and each run's dollar cost is captured whenever the model's price is known (an unpriced model logs a warning instead of a fake number).</p></div>
@@ -1886,7 +1886,7 @@ A teammate can act on your reply without re-checking it.
             <li>Read-only and own-state tools only: web search, web fetch, read a file, list a folder, <span class="term" data-t="recall">recall</span> this thread, keep a todo.</li>
             <li>No writing, no <span class="term" data-t="remember">remembering</span>, no delegating.</li>
             <li>10 steps · 100k tokens · $0.25 a run.</li>
-            <li>Safe to point at a stranger.</li>
+            <li>Boxed in enough to put in front of a stranger (in its own workspace).</li>
           </ul>
         </div>
         <div class="rc">
@@ -1928,7 +1928,7 @@ platform event
   <span class="k">-&gt;</span> durable outbox     <span class="c"># ordered, at-least-once</span>
   <span class="k">-&gt;</span> send the reply     <span class="c"># rate-limited, retried, then sleep</span></pre>
       </div>
-      <p>Because every step commits to a durable store before it acts, nothing is lost if the agent is asleep, the process restarts, or a send fails - the message is already safe in the inbox, and the reply waits in the outbox until it is truly delivered.</p>
+      <p>Because every step commits to a durable store before it acts, nothing is lost if the agent is asleep, the process restarts, or a send fails - the message is already safe in the inbox, and the reply waits in the outbox, retried until it is delivered or parked for a human to inspect.</p>
       <details class="deeper">
         <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">what the edge actually owns</span><span class="peek">inbox, outbox, threading, retries</span></summary>
         <div class="db">
@@ -1945,7 +1945,7 @@ platform event
       </details>
 
       <h3>Reaching wide, staying safe</h3>
-      <p>The two choices compose into one operating decision. Put Connect in front of a public Telegram DM and bind that agent to the <code>chat</code> profile: it can search the web and answer, but a hijacked message can't make it spend real money or change a single file. Point your own trusted channel at a <code>work</code> agent and it can do the entire job, autonomously. Same engine, same binary - two completely different blast radii, and the core never grew a line of channel code to get there.</p>
+      <p>The two choices compose into one operating decision. Put Connect in front of a public Telegram DM and bind that agent to the <code>chat</code> profile: it can search the web and answer, but a hijacked message can't make it change a single file or run up a real bill (its cap is cents). Point your own trusted channel at a <code>work</code> agent and it can do the entire job, autonomously. Same engine, same binary - two completely different blast radii, and the core never grew a line of channel code to get there.</p>
       <div class="note">
         <p class="nt">The whole philosophy in miniature</p>
         <p>A lesser design bakes channels and a sprawling permissions matrix into the agent and calls it "features." Delta does the opposite: the engine stays a small, legible loop; reach is an optional edge you bolt on; power is a dial you turn. Leanness in the core, choice at the boundary.</p>
@@ -1992,7 +1992,7 @@ platform event
       </div>
 
       <h3>Cheap enough to run one per user</h3>
-      <p>A working agent should cost almost nothing when it isn't working. Delta agents are honest about being idle: between tasks they <strong>fully suspend</strong> - the machine freezes, memory and all - so they are not a daemon that hums all day waiting. That is what makes it realistic to give every user, or every team, their own agent.</p>
+      <p>A working agent should cost almost nothing when it isn't working. Delta agents are honest about being idle: between tasks their host can <strong>fully suspend</strong> them - the machine freezes, memory and all - so they are not a daemon that hums all day waiting. That is what makes it realistic to give every user, or every team, their own agent.</p>
       <p>It works because the daemon exposes one durable truth - a <span class="term" data-t="scaletozero">busy signal</span> that is true whenever anything is queued or running - so the host suspends the machine only when it is genuinely idle, and wakes it, memory intact, in about a second when the next task arrives. Delta deliberately does <em>not</em> hand that decision to a connection-counting proxy, because an agent's work is fire-and-forget: a proxy watching for open connections would see none and suspend it mid-task. You pay for compute only while it is actually working - and even a full stop or a crash is safe, because every turn is checkpointed and resumes from the <span class="term" data-t="journal">journal</span>.</p>
       <div class="note">
         <p class="nt">What that costs in practice</p>
@@ -2007,7 +2007,7 @@ platform event
       </details>
 
       <h3>A cloud full of specialists</h3>
-      <p>Put those two properties together - an agent that fully suspends when idle, and a control plane that can wake it on demand - and you can host a whole agency in the cloud. One control plane, many agents: one per user, per team, or per customer, each a specialist with its own <span class="term" data-t="bundle">bundle</span> and its own learned memory, and each asleep until something actually needs it.</p>
+      <p>Put those two properties together - an agent whose host can fully suspend it when idle, and a control plane that wakes it on demand - and you can host a whole agency in the cloud. One control plane, many agents: one per user, per team, or per customer, each a specialist with its own <span class="term" data-t="bundle">bundle</span> and its own learned memory, and each asleep until something actually needs it.</p>
       <p>The round trip is the whole end-to-end story, and it is simple. A request reaches the control plane; it starts or resumes that one agent's machine and waits for <code>/healthz</code>; it hands the task to the <span class="term" data-t="seam">seam</span>; the agent works, streaming its progress; and once the run reaches a terminal state and <code>/v1/busy</code> reads idle, the control plane suspends the machine again. The agent was never awake waiting - so you never paid for it to wait.</p>
       <p>That is what turns "an agent for every user" from ruinous into routine. <strong>Aperture</strong> runs its fleet exactly this way - around fifteen agents, each self-learning, for under a dollar a month apiece. The engine stays one small binary you can read in an afternoon; the control plane is what makes it a fleet.</p>
 
@@ -2023,7 +2023,7 @@ platform event
       </details>
 
       <h3>Built by using it</h3>
-      <p>None of this came off a whiteboard. We run Delta in production - the <strong>Company Brain</strong> agent fleet and <strong>Aperture</strong> - and we improve the engine from what real tasks actually need. Ship it, watch it work, fold the lesson back into the core: that loop is why an engine this small keeps pace with the frontier instead of falling behind it.</p>
+      <p>None of this came off a whiteboard. We run Delta in production - <strong>Company Brain</strong>'s agents and <strong>Aperture</strong> - and we improve the engine from what real tasks actually need. Ship it, watch it work, fold the lesson back into the core: that loop is why an engine this small keeps pace with the frontier instead of falling behind it.</p>
       <div class="note">
         <p class="nt">Why it earns its place</p>
         <p>The proof is concrete, not adjectives: an idle agent costs storage pennies, and one small engine runs both Company Brain's autonomous agents and Aperture's product feature without a fork. Lean, cheap, legible enough to read in an afternoon - and parity-or-ahead with systems many times its size. That is the whole argument for Delta: small on purpose, and it holds. We're opening it up because a stable, lean harness is something other people should be able to build their own solutions on, too.</p>
@@ -2078,9 +2078,9 @@ platform event
       <div class="miscon">
         <div class="mrow"><div class="mq"><span class="x">✕</span><span>"The AI model and the harness are the same thing."</span></div><div class="ma"><span class="c">✓</span><span>The model only turns text into text. The harness is the separate program around it that loops, holds the tools and memory, enforces a budget, and recovers from crashes. Delta is a harness; it <em>calls</em> a model.</span></div></div>
         <div class="mrow"><div class="mq"><span class="x">✕</span><span>"Agents remember things on their own."</span></div><div class="ma"><span class="c">✓</span><span>A model is stateless - it forgets everything the instant it replies. Any memory is something the harness stores and re-injects into the next call. "Memory" is an engineering feature, not a property of the model.</span></div></div>
-        <div class="mrow"><div class="mq"><span class="x">✕</span><span>"A bigger system prompt makes a smarter agent."</span></div><div class="ma"><span class="c">✓</span><span>Often the opposite. A huge prompt costs more, runs slower, and buries the task. Delta keeps its spine under 2,000 tokens so the model spends its attention on the work, not on reading its own manual.</span></div></div>
+        <div class="mrow"><div class="mq"><span class="x">✕</span><span>"A bigger system prompt makes a smarter agent."</span></div><div class="ma"><span class="c">✓</span><span>Often the opposite. A huge prompt costs more, runs slower, and buries the task. Delta aims to keep its spine near 2,000 tokens so the model spends its attention on the work, not on reading its own manual.</span></div></div>
         <div class="mrow"><div class="mq"><span class="x">✕</span><span>"You need a vector database for an agent to have memory."</span></div><div class="ma"><span class="c">✓</span><span>Not necessarily. Delta uses scoped local tables with deterministic recall - the same query over the same rows returns the same learnings - and ships no vector store in its core. Meaning-based retrieval is a choice, not a requirement.</span></div></div>
-        <div class="mrow"><div class="mq"><span class="x">✕</span><span>"Long-running means it runs on a timer, and a crash restarts it."</span></div><div class="ma"><span class="c">✓</span><span>It runs on a budget (steps, tokens, dollars), not a clock, and it checkpoints every turn. A crash resumes exactly where it stopped and never repeats a side effect it can't prove was safe.</span></div></div>
+        <div class="mrow"><div class="mq"><span class="x">✕</span><span>"Long-running means it runs on a timer, and a crash restarts it."</span></div><div class="ma"><span class="c">✓</span><span>It runs on a budget (steps, tokens, dollars), not a clock, and it checkpoints every turn. A crash resumes exactly where it stopped, reusing finished work and verifying any action it can't prove was safe before repeating it.</span></div></div>
       </div>
 
       <p class="lead">Every dotted term on this page is defined on hover. Here are the load-bearing ones in one place - the vocabulary that takes you from "AI agent" as a buzzword to a precise mental model.</p>
@@ -2093,7 +2093,7 @@ platform event
         <dt>Harness</dt><dd>The program that runs the loop safely: tools, memory, budget, recovery.</dd>
         <dt>Tool call</dt><dd>The model asking to run a named function instead of writing prose.</dd>
         <dt>Bundle</dt><dd>The five plain files that define one agent. <em>agent = engine + bundle + state.</em></dd>
-        <dt>Spine</dt><dd>Delta's &lt;2k-token cached system prompt, assembled from the bundle.</dd>
+        <dt>Spine</dt><dd>Delta's small cached system prompt, assembled from the bundle (targets under ~2k tokens).</dd>
         <dt>Budget</dt><dd>The spend ceiling on a run - steps, tokens, and dollars. There's no wall-clock deadline; a run also ends when it's done, cancelled, or fails.</dd>
         <dt>Checkpoint</dt><dd>The atomic per-turn save that lets a task survive a crash.</dd>
         <dt>Compaction</dt><dd>Summarising old turns into Goal/Progress/Next/Artifacts to stay in the window.</dd>
@@ -2650,7 +2650,7 @@ platform event
     c8: "Memory is filed by who it's for, so lessons never leak between users. A human's review correction is distilled into a durable, scoped lesson.",
     c9: "When history would overflow, Delta summarises old turns into Goal / Progress / Next / Artifacts and keeps the recent ones, never dropping a load-bearing fact.",
     c10: "Delta ships a small set of hands, plugs into unlimited external tools over MCP (showing only a few at a time), and delegates to read-only subagents bound by the same rules.",
-    c11: "Two doctrines make it safe for real work: error-as-value (never crashes on a bad call) and journaled crash-resume (never repeats a side effect it can't prove was safe).",
+    c11: "Two doctrines make it safe for real work: error-as-value (a bad call comes back to the loop instead of crashing it) and journaled crash-resume (it verifies any side effect it can't prove was safe before repeating it).",
     c12: "Delta is a service behind a small HTTP seam. One binary runs many products, deploys anywhere, scales to zero, and can run on a flat subscription instead of metered tokens.",
     c13: "The roadmap is grounded in real usage, and the 'not building' list is deliberate: each omission keeps the core small and legible."
   };
