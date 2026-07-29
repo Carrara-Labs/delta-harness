@@ -543,14 +543,14 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 .tokchips { display: flex; flex-wrap: wrap; gap: 4px; margin: 14px 0; min-height: 30px; }
 .tokchip { font-family: var(--mono); font-size: 12.5px; padding: 3px 6px; border-radius: 5px; white-space: pre; }
 .tokchip.a { background: color-mix(in srgb, var(--sage) 20%, var(--card)); color: var(--ink); }
-.tokchip.b { background: color-mix(in srgb, var(--clay) 20%, var(--card)); color: var(--ink); }
+.tokchip.b { background: color-mix(in srgb, var(--sage) 9%, var(--muted)); color: var(--ink); }
 .tokstat { display: flex; gap: 22px; flex-wrap: wrap; font-family: var(--mono); font-size: 12.5px; }
 .tokstat b { font-size: 20px; font-weight: 700; letter-spacing: -.02em; display: block; color: var(--ink); }
 .tokstat .lb { color: var(--mutedink); font-size: 11px; letter-spacing: .04em; }
 
 /* ---- budget meter ---- */
 .meter { margin: 8px 0; }
-.meter .mtop { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11.5px; color: var(--mutedink); margin-bottom: 5px; }
+.meter .mtop { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 12.5px; color: var(--mutedink); margin-bottom: 5px; }
 .meter .mtop b { color: var(--ink); }
 .meter .mbar { height: 7px; border-radius: 999px; background: var(--muted); overflow: hidden; }
 .meter .mbar > i { display: block; height: 100%; width: 0; background: var(--sage); border-radius: 999px; transition: width .4s cubic-bezier(.4,0,.2,1); }
@@ -562,7 +562,7 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 .simu-track { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
 .simu-node { flex: 1 1 132px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); padding: 11px 13px; min-width: 0; transition: all .25s; position: relative; }
 .simu-node .sn { font-family: var(--mono); font-size: 12px; font-weight: 700; display: block; }
-.simu-node .sd { font-size: 11.5px; color: var(--mutedink); line-height: 1.35; margin-top: 2px; }
+.simu-node .sd { font-size: 12.5px; color: var(--mutedink); line-height: 1.35; margin-top: 2px; }
 .simu-node.on { border-color: var(--sage); background: color-mix(in srgb, var(--sage) 14%, var(--card)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--sage) 18%, transparent); transform: translateY(-1px); }
 .simu-node.done-node { border-color: color-mix(in srgb, var(--sage) 46%, var(--line)); }
 .simu-arw { align-self: center; color: var(--line-strong); font-family: var(--mono); font-size: 14px; }
@@ -571,7 +571,7 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 .simu-log .ln { color: var(--mutedink); }
 .simu-log .ln.hi { color: var(--ink); }
 .simu-log .ln .t { color: var(--sage); }
-.simu-log .ln .tool { color: var(--clay); }
+.simu-log .ln .tool { color: var(--slate); }
 .simu-meters { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
 @media (max-width: 620px) { .simu-track { flex-direction: column; } .simu-arw { transform: rotate(90deg); align-self: center; } .simu-meters { grid-template-columns: 1fr; } }
 
@@ -828,7 +828,7 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
       <h2>Why one call isn't enough.</h2>
       <p class="dek">Real work needs action, memory, and checking. A single text-in-text-out call gives you none of those.</p>
 
-      <p class="lead">Imagine you ask an assistant: "What's the weather in Paris, and should I bring an umbrella to my 3pm?" A raw model can <em>write</em> a confident answer, but it can't actually look up the forecast or read your calendar. It will guess. To do the job for real, something has to let the model <strong>act</strong>, then feed the results back so it can continue.</p>
+      <p class="lead">Imagine you ask an assistant: "What's the weather in Paris, and should I bring an umbrella to my 3pm?" A raw model can <em>write</em> a confident answer, but it cannot check today's forecast or read your calendar - so anything it says about your 3pm would be a guess. To do the job for real, something has to let the model <strong>act</strong>, then feed the results back so it can continue.</p>
 
       <p>The breakthrough idea is the <span class="term" data-t="toolcall">tool call</span>. Instead of only writing prose, the model is allowed to reply with a structured request like <em>"call <code>get_weather(city: 'Paris')</code>."</em> The surrounding program runs that function for real, then hands the answer back to the model as more text. The model reads it and decides what to do next. Repeat until the job is done. That repetition is <strong>the agent loop</strong>. A tool call is still just text - text in a strict shape the harness knows how to read - so nothing from chapter 1 has changed; we have only agreed on a format the model can use to <em>ask</em> for an action.</p>
 
@@ -980,7 +980,7 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
             <div><dt>Built for</dt><dd>knowledge work that isn't coding</dd></div>
             <div><dt>Its world</dt><dd>messages, documents, and tools, over long tasks</dd></div>
             <div><dt>A typical job</dt><dd>read the new messages, research the gaps, draft a briefing, update the notes, resume tomorrow</dd></div>
-            <div><dt>Example</dt><dd>Delta (and Aperture, Company Brain)</dd></div>
+            <div><dt>Example</dt><dd>Delta - and the products we run on it: Aperture (an AI recruiter) and Company Brain (autonomous knowledge work)</dd></div>
           </dl>
         </div>
       </div>
@@ -1146,11 +1146,11 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
       <p><strong>An API is just a way for one program to ask another to do something.</strong> One program sends a request through a doorway; the other does the work and passes the answer back. That is the entire idea.</p>
       <div class="fig">
         <div class="flow">
-          <div class="node sage"><span class="h">Your software</span><span class="d">a website, a script, a chat app</span></div>
+          <div class="node"><span class="h">Your software</span><span class="d">a website, a script, a chat app</span></div>
           <div class="arw">→</div>
-          <div class="node clay"><span class="h">The seam</span><span class="d">Delta's one small front door</span></div>
+          <div class="node slate"><span class="h">The seam</span><span class="d">Delta's one small doorway (its API)</span></div>
           <div class="arw">→</div>
-          <div class="node slate"><span class="h">The agent</span><span class="d">does the work, answers back</span></div>
+          <div class="node sage"><span class="h">The agent</span><span class="d">does the work, answers back</span></div>
         </div>
         <p class="cap"><b>The seam is that doorway.</b> "Seam" is simply our name for Delta's API - the small, fixed set of doors the outside world uses. Everything an agent can be asked to do passes through it, and nothing else.</p>
       </div>
@@ -1188,7 +1188,15 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
         <p class="beat-body"><b>The heartbeat - it does no work.</b> A <span class="term" data-t="heartbeat">heartbeat</span> is a tiny "are you alive?" check between programs. The host pings this door every so often; a reply means the agent is running and reachable. That is its whole job - it proves the lights are on, nothing more.</p>
       </div>
       <p>In every case it is plain text in and the agent's work out: no special app and no SDK, just an ordinary web request your code already knows how to make. Chapter 12 lists the full set of doors.</p>
-      <p>Why build it as a thing-you-call instead of a bot that sits running all day? Because a service can be <strong>summoned when there's work and sleep when there isn't</strong>. An always-on program burns money every hour whether or not anyone needs it; a callable agent costs almost nothing while idle, and its host can wake it in about a second when a request arrives (chapter 14 shows exactly how). Just as important, <em>any</em> software that can make a web request can drive it - a web app, a nightly script, a chat connector - not only a chat box welded to the front. That one small, well-defined seam buys three things at once: cheaper to run, easy to build products on top of, and a tiny surface to secure.</p>
+      <p>Why build it as a thing-you-call instead of a bot that sits running all day? Because one small, well-defined seam pays off in three separate ways - and it helps to see them as separate:</p>
+      <div class="fig">
+        <div class="causal">
+          <div class="crow"><span class="cwhat">It is a plain web API</span><span class="carw">→</span><span class="cwhy">any software can drive it - a web app, a nightly script, a chat connector - not just a chat box welded to the front</span><span class="carw">→</span><span class="cpay">easy to build on</span></div>
+          <div class="crow"><span class="cwhat">Nothing has to stay running between calls</span><span class="carw">→</span><span class="cwhy">the host can suspend the machine while it is idle and wake it in about a second (chapter 14)</span><span class="carw">→</span><span class="cpay">cheap to run</span></div>
+          <div class="crow"><span class="cwhat">The doorway is small and fixed</span><span class="carw">→</span><span class="cwhy">there is very little for an attacker to reach through, and little to keep secure</span><span class="carw">→</span><span class="cpay">safer</span></div>
+        </div>
+        <p class="cap"><b>One seam, three payoffs.</b> Being <em>callable</em> is what lets many products drive it; being <em>suspendable by its host</em> is what makes it cheap when idle. Those are two different wins, not one.</p>
+      </div>
 
       <h3>The engine</h3>
       <p>A single downloadable binary. It contains the agent loop, the model client with failover, the built-in tools, the context manager, the memory adapters, and every safety rail. It knows nothing about your product. You normally never need to edit it; you configure it.</p>
@@ -1307,11 +1315,11 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
       <h2>One turn, step by step.</h2>
       <p class="dek">This is the engine actually running. Follow a single message from arrival to answer, and you have seen the whole machine work.</p>
 
-      <p class="lead">Everything so far has been setup. Now watch the loop from chapter 2 run for real inside Delta. A "turn" is one lap: the engine either runs the tools the model asked for, or calls the model again, or decides the answer is finished. It checks the budget and saves its place on <em>every</em> lap.</p>
+      <p class="lead">Everything so far has been setup. Now watch the loop from chapter 2 run for real inside Delta. One <strong>lap</strong> is one trip around: the engine runs any tools the model asked for, checks the budget, builds the prompt, and calls the model again. One task usually takes <em>several</em> laps before the model writes its final answer - and the engine saves its place on every one.</p>
 
       <div class="viz" id="simu">
         <div class="vhead"><span class="vtag">Watch it run</span><span class="vttl">One task through the loop</span></div>
-        <p class="vsub">Press Play. Follow the lit step and the log as a real task ("summarise 3 docs and flag what's new") loops through tools and model calls until it answers - watch the budget meters fill, never a clock.</p>
+        <p class="vsub">Press Play. Follow the lit step and the log as a real task ("summarise 3 docs and flag what's new") loops through tools and model calls until it answers - watch the budget meters fill, never a clock. This is the shape; the numbered steps below add the two the diagram skips - compacting a long prompt, and the checkpoint save.</p>
         <div class="simu-stage">
           <div class="simu-track">
             <div class="simu-node" data-node="message"><span class="sn">Message in</span><span class="sd">durably queued</span></div>
@@ -2450,15 +2458,15 @@ platform event
     '<text class="vlab" x="277" y="56" text-anchor="middle">also blank</text>' +
     '</svg>';
   V.context =
-    '<svg viewBox="0 0 356 70">' +
+    '<svg viewBox="0 0 356 74">' +
     '<text class="vlab" x="4" y="15">CONTEXT WINDOW - one fixed token budget</text>' +
-    '<rect class="vbox" x="4" y="23" width="348" height="30" rx="7"/>' +
-    '<rect class="vsage" x="8" y="27" width="196" height="22" rx="4"/>' +
-    '<rect class="vclay" x="322" y="27" width="26" height="22" rx="4"/>' +
-    '<line class="vdash" x1="210" y1="25" x2="210" y2="51"/>' +
-    '<text class="vlab" x="106" y="66" text-anchor="middle">used: prompt + reply</text>' +
-    '<text class="vlab" x="255" y="66" text-anchor="middle">free</text>' +
-    '<text class="vlab" x="352" y="66" text-anchor="end">over = rejected</text>' +
+    '<rect class="vbox" x="4" y="23" width="296" height="30" rx="7"/>' +
+    '<rect class="vsage" x="8" y="27" width="176" height="22" rx="4"/>' +
+    '<line class="vdash" x1="192" y1="25" x2="192" y2="51"/>' +
+    '<text class="vlab" x="98" y="68" text-anchor="middle">used: prompt + reply</text>' +
+    '<text class="vlab" x="250" y="68" text-anchor="middle">free</text>' +
+    '<text class="vfill-clay" x="326" y="46" font-size="22" text-anchor="middle">&#215;</text>' +
+    '<text class="vlab" x="352" y="68" text-anchor="end">over the wall = rejected</text>' +
     '</svg>';
   V.toolcall =
     '<svg viewBox="0 0 356 92">' +
@@ -2688,7 +2696,7 @@ platform event
     c1: "An LLM call is one stateless, size-limited, pay-per-token request: text in, text out. On its own it cannot act or remember.",
     c2: "The agent loop lets the model call real tools and read the results back, turning a text predictor into something that does multi-step work.",
     c3: "A harness runs that loop safely: it owns the tools, memory, budget, and recovery. Delta is a working-agent harness, not a coding one.",
-    c4: "Delta's five choices (tiny spine, neutral engine, budgets-not-timers, error-as-value, lean by construction) put it at parity-or-ahead in ~1.8% of a rival's code.",
+    c4: "Delta's five deliberate choices - tiny spine, product-neutral engine, budgets not timers, error-as-value, lean by construction - a small, sharp core shaped for real work.",
     c5: "agent = engine + bundle + state. Swap the bundle and the same engine becomes a different worker.",
     c6: "One turn: run pending tools or finish, check budget, build the cached prompt, maybe compact, call the model, checkpoint. It stops on budget and saves every step.",
     c7: "Five plain files define an agent. DELTA.md is the one the agent rewrites itself (safely, atomically, reversibly) and it always sits below fixed policy.",
@@ -2765,7 +2773,7 @@ platform event
       { node: "budget", log: "Budget check - 2/10 steps, $0.05 of $0.25. OK." },
       { node: "prompt", log: "Rebuild the prompt." },
       { node: "model", log: '<span class="t">Call the model</span> &rarr; it writes a final answer.', step: 3, tok: 4300, cost: 0.07 },
-      { node: "decide", log: "Decision: prose, no tool. The turn is done." },
+      { node: "decide", log: "Decision: prose, no tool. The task is done." },
       { node: "answer", log: '<span class="hi">Answer returned.</span> 3 steps, $0.07 of a $0.25 budget.', done: true }
     ];
     var STEP_CAP = 10, TOK_CAP = 100000, COST_CAP = 0.25;
@@ -2889,14 +2897,14 @@ platform event
 .arch { border: 1px solid var(--line-strong); border-radius: 14px; background: var(--card); padding: clamp(16px, 2.5vw, 26px); margin: 26px 0; }
 .arch-seam { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; border: 1px dashed color-mix(in srgb, var(--slate) 55%, var(--line)); border-radius: 10px; background: color-mix(in srgb, var(--slate) 8%, var(--card)); padding: 10px 14px; margin-bottom: 14px; }
 .arch-seam .sl { font-family: var(--mono); color: var(--slate); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-size: 10.5px; }
-.arch-seam .sr { font-family: var(--mono); color: var(--mutedink); font-size: 11.5px; }
+.arch-seam .sr { font-family: var(--mono); color: var(--mutedink); font-size: 12px; }
 .arch-engine { border: 1px solid color-mix(in srgb, var(--sage) 46%, var(--line)); border-radius: 12px; background: color-mix(in srgb, var(--sage) 6%, var(--card)); padding: 14px; }
 .arch-engine .el { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--sage); margin-bottom: 12px; }
 .arch-parts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
 .arch-part { border: 1px solid var(--line); border-radius: 9px; background: var(--paper); padding: 11px 13px; }
 .arch-part .pn { font-family: var(--mono); font-weight: 700; font-size: 12.5px; display: block; }
-.arch-part .pd { font-size: 11.5px; color: var(--mutedink); line-height: 1.35; margin-top: 3px; }
-.arch-link { text-align: center; font-family: var(--mono); font-size: 10.5px; color: var(--mutedink); padding: 10px 0 4px; letter-spacing: .03em; }
+.arch-part .pd { font-size: 12px; color: var(--mutedink); line-height: 1.35; margin-top: 3px; }
+.arch-link { text-align: center; font-family: var(--mono); font-size: 11px; color: var(--mutedink); padding: 10px 0 4px; letter-spacing: .03em; }
 .arch-feeds { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .arch-col { border: 1px solid var(--line); border-radius: 11px; background: var(--paper); padding: 13px 15px; }
 .arch-col.bundle { border-color: color-mix(in srgb, var(--clay) 42%, var(--line)); }
@@ -2911,7 +2919,7 @@ platform event
 @media (max-width: 620px) { .arch-parts { grid-template-columns: 1fr 1fr; } .arch-feeds { grid-template-columns: 1fr; } }
 
 /* ---- tool-call wire exchange ---- */
-.wire { display: flex; flex-direction: column; gap: 6px; margin: 20px 0; }
+.wire { display: flex; flex-direction: column; gap: 9px; margin: 20px 0; }
 .wire-msg { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .wire-msg .wl { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-family: var(--mono); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; padding: 8px 13px; }
 .wire-msg.you .wl { background: color-mix(in srgb, var(--slate) 12%, var(--card)); color: var(--slate); }
