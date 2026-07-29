@@ -6,6 +6,16 @@
 <title>Delta Harness - from zero to metal</title>
 <meta name="description" content="An exhaustive, visual walk from what an LLM call is, to what a harness is, to the precise machinery of the Delta Harness - built for anyone, from total beginner to engineer." />
 <link rel="icon" href="../favicon.svg" />
+<script>
+  /* Apply the saved theme before first paint so there is no flash, and use the
+     same "delta-theme" key as /docs and the app so the choice carries across pages. */
+  (function () {
+    try {
+      var stored = localStorage.getItem("delta-theme");
+      if (stored === "light" || stored === "dark") document.documentElement.setAttribute("data-theme", stored);
+    } catch (e) {}
+  })();
+</script>
 <style>
 /* =========================================================================
    Delta Harness - from zero to metal
@@ -41,6 +51,16 @@ img, svg { max-width: 100%; }
   --shadow: 0 1px 0 rgba(20,17,11,.02);
   --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, "Cascadia Code", Consolas, monospace;
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* shared chrome tokens (derived, so they auto-adapt per theme) — kept in
+     lockstep with /docs so the header, sidebar and search read identically. */
+  --surface: var(--card);
+  --surface-soft: var(--paper-2);
+  --wash-green: color-mix(in srgb, var(--sage-soft) 48%, var(--paper));
+  --success: var(--sage);
+  --header-bg: color-mix(in srgb, var(--paper) 92%, transparent);
+  --pop-shadow: 0 24px 64px rgba(20, 17, 11, .10);
+  --page: min(100% - 48px, 1180px);
+  --header-page: min(100% - 48px, 1240px);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -100,15 +120,17 @@ body {
 /* =========================================================================
    Layout scaffold
    ========================================================================= */
-.wrap { max-width: 1220px; margin: 0 auto; padding: 0 clamp(18px, 4vw, 40px); }
-.layout { display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: clamp(24px, 4vw, 64px); }
+/* width tokens shared with /docs so header, content and footer line up
+   pixel-for-pixel across the app (1240px cap, 24px gutters). */
+.wrap { width: var(--header-page); max-width: none; margin: 0 auto; padding: 0; }
+.layout { display: grid; grid-template-columns: 232px minmax(0, 1fr); justify-content: start; gap: clamp(56px, calc(50vw - 550px), 94px); }
 main { min-width: 0; max-width: 820px; padding-bottom: 120px; }
 
 /* ---- site header (mirrors the main site nav) ---- */
 .site-header {
   position: sticky; top: 0; z-index: 60;
-  background: color-mix(in srgb, var(--paper) 90%, transparent);
-  backdrop-filter: saturate(140%) blur(20px); -webkit-backdrop-filter: saturate(140%) blur(20px);
+  background: var(--header-bg);
+  backdrop-filter: saturate(140%) blur(24px); -webkit-backdrop-filter: saturate(140%) blur(24px);
   border-bottom: 1px solid var(--line);
 }
 .header-inner { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 18px; min-height: 60px; }
@@ -121,7 +143,7 @@ main { min-width: 0; max-width: 820px; padding-bottom: 120px; }
 .nav-links a:hover { color: var(--ink); }
 .nav-links a.is-active { position: relative; color: var(--ink); }
 .nav-links a.is-active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -6px; height: 1.5px; border-radius: 1px; background: var(--sage); }
-.header-actions { justify-self: end; display: inline-flex; align-items: center; gap: 4px; }
+.header-actions { justify-self: end; display: inline-flex; align-items: center; gap: 8px; }
 
 /* dark-mode logo swap (matches the site) */
 :root[data-theme="dark"] .brand-logo-light { display: none; }
@@ -131,17 +153,36 @@ main { min-width: 0; max-width: 820px; padding-bottom: 120px; }
   :root:not([data-theme="light"]) .brand-logo-dark { display: block; }
 }
 
-/* icon buttons: github + theme toggle */
-.icobtn {
-  width: 34px; height: 34px; border-radius: 8px; border: 1px solid transparent;
-  background: transparent; color: var(--mutedink); cursor: pointer; display: grid; place-items: center; text-decoration: none;
+/* header icon buttons — identical to /docs: a circular GitHub link and a
+   bordered pill theme toggle, so the chrome is consistent across the app. */
+.github-link {
+  display: inline-grid; width: 38px; height: 38px; flex: 0 0 auto; place-items: center;
+  border-radius: 50%; color: var(--mutedink); text-decoration: none;
+  transition: background-color .15s ease, color .15s ease;
 }
-.icobtn:hover { color: var(--ink); background: var(--card); border-color: var(--line); }
-.icobtn svg { width: 18px; height: 18px; }
-.icobtn.ico-gh svg { width: 19px; height: 19px; }
-:root:not([data-theme="dark"]) .ico-sun { display: none; }
-:root[data-theme="dark"] .ico-moon { display: none; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ico-moon { display: none; } :root:not([data-theme="light"]) .ico-sun { display: block; } }
+.github-link:hover { background: var(--surface-soft); color: var(--ink); }
+.github-link svg { width: 18px; height: 18px; }
+.theme-toggle {
+  display: inline-grid; width: 38px; min-height: 38px; place-items: center;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+  color: var(--ink); cursor: pointer; transition: border-color .15s ease, background-color .15s ease;
+}
+.theme-toggle:hover { border-color: var(--line-strong); background: var(--surface-soft); }
+.theme-toggle svg { width: 17px; height: 17px; }
+.moon-icon { display: none; }
+:root[data-theme="dark"] .sun-icon { display: none; }
+:root[data-theme="dark"] .moon-icon { display: block; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sun-icon { display: none; }
+  :root:not([data-theme="light"]) .moon-icon { display: block; }
+}
+
+/* fixed reading-progress bar, pinned just under the sticky header */
+.reading-progress {
+  position: fixed; z-index: 55; top: 60px; left: 0; height: 2px; width: 0;
+  background: var(--sage); transition: width .08s linear; pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) { .reading-progress { transition: none; } }
 
 /* narrow screens: collapse the cross-page nav, keep brand + actions */
 @media (max-width: 700px) { .nav-links { display: none; } .header-inner { grid-template-columns: 1fr auto; } }
@@ -157,18 +198,37 @@ main { min-width: 0; max-width: 820px; padding-bottom: 120px; }
 /* =========================================================================
    Left chapter rail
    ========================================================================= */
-.rail { position: sticky; top: 60px; align-self: start; height: calc(100vh - 60px); overflow-y: auto; padding: 28px 0 60px; }
-.rail::-webkit-scrollbar { width: 0; }
-.rail .rl-kicker { font-family: var(--mono); font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--mutedink); margin: 0 0 12px; padding-left: 12px; }
-.rail ol { list-style: none; margin: 0 0 26px; padding: 0; }
+.rail { position: sticky; top: 60px; align-self: start; height: calc(100vh - 60px); overflow-y: auto; scrollbar-width: thin; padding: 34px 2px 48px 0; }
+.rail::-webkit-scrollbar { width: 6px; }
+.rail::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 6px; }
+.rail-label { font-size: 11px; font-weight: 650; letter-spacing: .11em; text-transform: uppercase; color: var(--mutedink); margin: 0 0 10px; }
+
+/* search (mirrors the /docs search field, including the "/" shortcut hint) */
+.search-wrap { position: relative; margin-bottom: 26px; }
+.search-icon { position: absolute; z-index: 1; top: 12px; left: 12px; width: 16px; height: 16px; color: var(--mutedink); pointer-events: none; }
+.rail-search { width: 100%; height: 40px; padding: 0 44px 0 37px; border: 1px solid var(--line); border-radius: 11px; outline: 0; background: var(--surface); color: var(--ink); font-size: 13px; font-family: var(--sans); transition: border-color .15s ease, box-shadow .15s ease; }
+.rail-search::placeholder { color: var(--mutedink); }
+.rail-search:focus { border-color: var(--success); box-shadow: 0 0 0 3px var(--wash-green); }
+.search-shortcut { position: absolute; top: 9px; right: 9px; min-width: 24px; padding: 2px 5px; border: 1px solid var(--line); border-radius: 6px; color: var(--mutedink); font-family: var(--mono); font-size: 10px; text-align: center; pointer-events: none; }
+.search-results { position: absolute; z-index: 5; top: 46px; right: 0; left: 0; max-height: min(440px, 62vh); padding: 6px; overflow-y: auto; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); box-shadow: var(--pop-shadow); }
+.search-results[hidden] { display: none; }
+.search-result { display: flex; gap: 10px; align-items: baseline; padding: 10px 11px; border-radius: 8px; text-decoration: none; color: var(--ink); }
+.search-result:hover, .search-result:focus-visible { background: var(--surface-soft); outline: none; }
+.search-result .sr-n { font-family: var(--mono); font-size: 11px; color: var(--sage); min-width: 18px; }
+.search-result strong { display: block; font-size: 13px; font-weight: 620; }
+.search-result .sr-ex { display: -webkit-box; margin-top: 2px; overflow: hidden; color: var(--mutedink); font-size: 11px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.search-empty { margin: 0; padding: 14px 11px; color: var(--mutedink); font-size: 12px; }
+
+/* chapter list — numbered (it is a real sequence), Docs-style soft active pill */
+.rail ol { list-style: none; margin: 0 0 8px; padding: 0; }
 .rail li a {
   display: flex; gap: 10px; align-items: baseline; text-decoration: none;
-  color: var(--mutedink); font-size: 13.5px; line-height: 1.35; padding: 6px 12px;
-  border-left: 2px solid transparent; transition: color .12s, border-color .12s;
+  color: var(--mutedink); font-size: 13px; line-height: 1.4; margin: 1px 0; padding: 5px 10px;
+  border-radius: 7px; transition: color .12s ease, background-color .12s ease;
 }
-.rail li a .n { font-family: var(--mono); font-size: 11px; color: var(--line-strong); min-width: 16px; }
+.rail li a .n { font-family: var(--mono); font-size: 11px; color: var(--line-strong); min-width: 18px; transition: color .12s ease; }
 .rail li a:hover { color: var(--ink); }
-.rail li a.active { color: var(--ink); border-left-color: var(--sage); font-weight: 600; }
+.rail li a.active { background: var(--wash-green); color: var(--ink); font-weight: 600; }
 .rail li a.active .n { color: var(--sage); }
 
 /* =========================================================================
@@ -210,7 +270,7 @@ main { min-width: 0; max-width: 820px; padding-bottom: 120px; }
 /* deeper blocks inside the step timeline sit flush under the step body */
 .tstep .deeper { margin: 12px 0 2px; }
 /* left-rail "how to read this" note */
-.railnote { border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 14px 15px; margin-left: 8px; }
+.railnote { border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 14px 15px; margin: 22px 2px 0; }
 .railnote .lab { font-family: var(--mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--mutedink); margin: 0 0 8px; }
 .railnote p { font-size: 12.5px; color: var(--mutedink); line-height: 1.5; margin: 0; max-width: none; }
 .railnote .rn-sage { font-family: var(--mono); font-size: 11px; color: var(--sage); font-weight: 600; }
@@ -229,12 +289,15 @@ main { min-width: 0; max-width: 820px; padding-bottom: 120px; }
 .hero .runline { display: flex; flex-wrap: wrap; gap: 10px 22px; margin-top: 30px; font-family: var(--mono); font-size: 12.5px; color: var(--mutedink); }
 .hero .runline b { color: var(--ink); font-weight: 600; }
 .hero .startrow { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 34px; }
-.btn { display: inline-flex; align-items: center; gap: 9px; text-decoration: none; font-family: var(--mono); font-size: 13.5px; padding: 11px 18px; border-radius: 9px; border: 1px solid var(--line-strong); color: var(--ink); background: var(--card); transition: all .14s; }
-.btn:hover { border-color: var(--sage); }
-.btn.primary { background: var(--sage); color: var(--paper); border-color: var(--sage); }
-:root[data-theme="dark"] .btn.primary, :root:not([data-theme="light"]) .btn.primary { color: #12100a; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .btn.primary { color: #12100a; } }
-.btn.primary:hover { filter: brightness(1.06); }
+.btn { display: inline-flex; align-items: center; gap: 9px; text-decoration: none; font-family: var(--mono); font-size: 13.5px; padding: 11px 18px; border-radius: 10px; border: 1px solid var(--line-strong); color: var(--ink); background: var(--surface); transition: border-color .14s ease, background-color .14s ease, box-shadow .14s ease; }
+.btn:hover { border-color: var(--line-strong); background: var(--surface-soft); }
+/* primary CTA — warm beige fill with a sage arrow: high-contrast dark-ink
+   text (accessible), and it reads as the same warm palette as the rest of
+   the app rather than a saturated green block. */
+.btn.primary { background: var(--paper-2); border-color: var(--line-strong); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(20, 17, 11, .05); }
+.btn.primary .arw { color: var(--sage); transition: transform .14s ease; }
+.btn.primary:hover { background: color-mix(in srgb, var(--sage-soft) 42%, var(--paper-2)); border-color: var(--sage); }
+.btn.primary:hover .arw { transform: translateX(2px); }
 
 /* =========================================================================
    Prose + section rhythm
@@ -352,11 +415,12 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
    ========================================================================= */
 @media (max-width: 940px) {
   .layout { grid-template-columns: 1fr; }
-  .rail { position: static; height: auto; overflow: visible; padding: 18px 0; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
-  .rail ol { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 16px; }
-  .rail li a { border-left: none; border-bottom: 2px solid transparent; padding: 6px 10px; }
-  .rail li a.active { border-left: none; border-bottom-color: var(--sage); }
-  .railnote { margin-left: 0; }
+  .rail { position: static; height: auto; overflow: visible; padding: 20px 0 8px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+  .search-wrap { max-width: 420px; }
+  .rail ol { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+  .rail li a { padding: 5px 10px; }
+  .search-results { max-width: 420px; }
+  .railnote { margin: 16px 0 0; max-width: 520px; }
 }
 </style>
 </head>
@@ -501,23 +565,31 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
       <a href="/changelog">Changelog</a>
     </nav>
     <div class="header-actions">
-      <a class="icobtn ico-gh" href="https://github.com/Carrara-Labs/delta-harness" target="_blank" rel="noreferrer" aria-label="View Delta on GitHub" title="View Delta on GitHub">
+      <a class="github-link" href="https://github.com/Carrara-Labs/delta-harness" target="_blank" rel="noopener" aria-label="View Delta on GitHub" title="View Delta on GitHub">
         <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .7a11.5 11.5 0 0 0-3.64 22.4c.58.1.79-.25.79-.56v-2.02c-3.22.7-3.9-1.37-3.9-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.17.08 1.78 1.2 1.78 1.2 1.04 1.77 2.72 1.26 3.38.96.1-.75.4-1.26.74-1.55-2.57-.29-5.27-1.28-5.27-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.16 1.18a10.98 10.98 0 0 1 5.76 0c2.2-1.49 3.16-1.18 3.16-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.71 5.39-5.29 5.68.42.36.79 1.06.79 2.14v3.18c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z" /></svg>
       </a>
-      <button class="icobtn" id="themeBtn" aria-label="Toggle light / dark theme" title="Toggle theme">
-        <svg class="ico-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
-        <svg class="ico-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"/></svg>
+      <button class="theme-toggle" id="themeBtn" type="button" aria-label="Switch theme" title="Switch theme">
+        <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2.5V5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3 7 7M17 17l1.7 1.7M18.7 5.3 17 7M7 17l-1.7 1.7" stroke-linecap="round"/></svg>
+        <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M19.2 15.4A8.1 8.1 0 0 1 8.6 4.8 8.2 8.2 0 1 0 19.2 15.4Z" stroke-linejoin="round"/></svg>
       </button>
     </div>
   </div>
 </header>
+<div class="reading-progress" id="reading-progress" role="presentation"></div>
 
 <div class="wrap">
 <div class="layout">
 
   <!-- ===================== LEFT RAIL ===================== -->
   <aside class="rail" aria-label="Chapters">
-    <p class="rl-kicker">The walk</p>
+    <p class="rail-label">Search</p>
+    <div class="search-wrap">
+      <svg class="search-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="8.7" cy="8.7" r="5.2" stroke="currentColor" stroke-width="1.4"/><path d="m12.6 12.6 3.5 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      <input class="rail-search" id="learn-search" type="search" placeholder="Search the walk" autocomplete="off" aria-label="Search chapters" />
+      <span class="search-shortcut" aria-hidden="true">/</span>
+      <div class="search-results" id="search-results" aria-live="polite" hidden></div>
+    </div>
+    <p class="rail-label">The walk</p>
     <ol id="toc">
       <li><a href="#c0"><span class="n">00</span> Start here</a></li>
       <li><a href="#c1"><span class="n">01</span> What is an LLM call?</a></li>
@@ -555,7 +627,7 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
         <span>hover any <span class="term" data-t="dotted">dotted word</span> for a definition</span>
       </div>
       <div class="startrow">
-        <a class="btn primary" href="#c1">Start at chapter one →</a>
+        <a class="btn primary" href="#c1">Start at chapter one <span class="arw" aria-hidden="true">→</span></a>
         <a class="btn" href="#c6">Jump to the loop</a>
         <a class="btn" href="#c5">Just the architecture</a>
       </div>
@@ -1709,9 +1781,8 @@ A teammate can act on your reply without re-checking it.
 (function () {
   var root = document.documentElement;
 
-  /* ---- theme ---- */
-  var THEME_KEY = "dh-theme";
-  try { var saved = localStorage.getItem(THEME_KEY); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  /* ---- theme (shared "delta-theme" key with /docs + the app) ---- */
+  var THEME_KEY = "delta-theme";
   document.getElementById("themeBtn").addEventListener("click", function () {
     var cur = root.getAttribute("data-theme");
     if (!cur) { cur = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; }
@@ -1778,6 +1849,90 @@ A teammate can act on your reply without re-checking it.
     });
   }, { rootMargin: "-45% 0px -50% 0px" });
   document.querySelectorAll("section.ch, section.hero").forEach(function (s) { if (s.id) spy.observe(s); });
+
+  /* ---- reading progress bar (fixed, just under the header) ---- */
+  var pbar = document.getElementById("reading-progress");
+  function updateProgress() {
+    var h = document.documentElement;
+    var max = h.scrollHeight - h.clientHeight;
+    var pct = max > 0 ? h.scrollTop / max : 0;
+    pbar.style.width = (Math.max(0, Math.min(1, pct)) * 100).toFixed(2) + "%";
+  }
+  window.addEventListener("scroll", updateProgress, { passive: true });
+  window.addEventListener("resize", updateProgress);
+  updateProgress();
+
+  /* ---- chapter search (same behaviour + "/" shortcut as /docs) ---- */
+  var searchInput = document.getElementById("learn-search");
+  var searchResults = document.getElementById("search-results");
+  var DIACRITICS = new RegExp("[\\u0300-\\u036f]", "g");
+  function norm(v) { return v.normalize("NFKD").replace(DIACRITICS, "").toLowerCase(); }
+  var searchIndex = Array.prototype.slice.call(document.querySelectorAll("main section.ch")).map(function (sec) {
+    var h2 = sec.querySelector("h2");
+    var numEl = sec.querySelector(".ch-tag .num");
+    var dekEl = sec.querySelector(".dek");
+    var title = h2 ? h2.textContent.trim() : sec.id;
+    var body = (sec.textContent || "").replace(/\s+/g, " ").trim();
+    return {
+      id: sec.id,
+      num: numEl ? numEl.textContent.trim() : "",
+      title: title,
+      dek: dekEl ? dekEl.textContent.trim() : "",
+      nTitle: norm(title),
+      nBody: norm(title + " " + body)
+    };
+  });
+  function closeSearch() { searchResults.hidden = true; searchResults.replaceChildren(); }
+  function renderSearch(q) {
+    var terms = norm(q).split(/\s+/).filter(Boolean);
+    if (!terms.length) { closeSearch(); return; }
+    var nq = terms.join(" ");
+    var matches = searchIndex.map(function (it) {
+      var hay = it.nTitle + " " + it.nBody;
+      if (!terms.every(function (t) { return hay.indexOf(t) >= 0; })) return null;
+      var score = 0;
+      if (it.nTitle === nq) score += 40; else if (it.nTitle.indexOf(nq) === 0) score += 28; else if (it.nTitle.indexOf(nq) >= 0) score += 18;
+      terms.forEach(function (t) {
+        if (it.nTitle.indexOf(t) === 0) score += 8; else if (it.nTitle.indexOf(t) >= 0) score += 5; else if (it.nBody.indexOf(t) >= 0) score += 1;
+      });
+      return { it: it, score: score };
+    }).filter(Boolean).sort(function (a, b) { return b.score - a.score; }).slice(0, 8);
+
+    searchResults.replaceChildren();
+    searchResults.hidden = false;
+    if (!matches.length) {
+      var empty = document.createElement("p");
+      empty.className = "search-empty";
+      empty.textContent = "No matching chapters";
+      searchResults.appendChild(empty);
+      return;
+    }
+    matches.forEach(function (m) {
+      var it = m.it;
+      var a = document.createElement("a");
+      a.className = "search-result";
+      a.href = "#" + it.id;
+      var n = document.createElement("span"); n.className = "sr-n"; n.textContent = it.num;
+      var box = document.createElement("span"); box.style.flex = "1"; box.style.minWidth = "0";
+      var strong = document.createElement("strong"); strong.textContent = it.title;
+      var span = document.createElement("span"); span.className = "sr-ex"; span.textContent = it.dek || it.title;
+      box.appendChild(strong); box.appendChild(span);
+      a.appendChild(n); a.appendChild(box);
+      a.addEventListener("click", function () { closeSearch(); searchInput.value = ""; });
+      searchResults.appendChild(a);
+    });
+  }
+  searchInput.addEventListener("input", function () { renderSearch(searchInput.value); });
+  searchInput.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") { searchInput.value = ""; closeSearch(); searchInput.blur(); }
+    if (e.key === "Enter") { var first = searchResults.querySelector("a"); if (first) { e.preventDefault(); first.click(); } }
+  });
+  document.addEventListener("click", function (e) { if (!e.target.closest(".search-wrap")) closeSearch(); });
+  document.addEventListener("keydown", function (e) {
+    var t = e.target;
+    var typing = t && t.matches && (t.matches("input, textarea, select") || t.isContentEditable);
+    if ((e.key === "/" && !typing) || ((e.metaKey || e.ctrlKey) && e.key === "k")) { e.preventDefault(); searchInput.focus(); }
+  });
 
   wireTerms();
 })();
