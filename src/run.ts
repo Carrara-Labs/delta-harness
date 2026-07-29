@@ -784,6 +784,8 @@ export async function executeRun(
     const messages: ChatMsg[] = [{ role: "system", content: system }, ...withImages, ...ephemeral];
     const turn = stepCount + 1;
     events.emit("turn.start", { ...spine, turn }, { step: turn });
+    const callT0 = Date.now();
+    let retries = 0;
     const result = await deps.chat({
       messages,
       tools: toolSpecs(tools),
@@ -796,6 +798,24 @@ export async function executeRun(
       // never affects the model call. Cheap no-op when nobody is listening.
       onReasoningDelta: (text) =>
         events.stream("reasoning.delta", { ...spine, turn }, { delta: text }),
+      // PERSISTED (unlike the deltas): a host polling /v1/tasks/:id/events must be able
+      // to say "provider is retrying" instead of shimmering through a silent stall —
+      // the 2026-07-29 field data showed ~300s of turn-1 dead air with zero events.
+      onRetry: (info) => {
+        retries++;
+        events.emit(
+          "model.retry",
+          { ...spine, turn },
+          {
+            "gen_ai.request.model": info.model,
+            ...(info.provider ? { "gen_ai.provider": info.provider } : {}),
+            attempt: info.attempt,
+            ...(info.status !== undefined ? { status: info.status } : {}),
+            message: info.error.slice(0, 300),
+            next_delay_ms: info.nextDelayMs,
+          },
+        );
+      },
       ...(opts.signal ? { signal: opts.signal } : {}),
     });
 
@@ -866,6 +886,10 @@ export async function executeRun(
         "gen_ai.usage.cost_usd": result.usage.costUsd,
         cache_hit_pct: cacheHit,
         latency_ms: result.latencyMs,
+        // Wall time of the WHOLE cascade (retries + failover + the winning attempt) —
+        // `wall_ms - latency_ms` is the invisible pre-call stall the waterfall hunts.
+        wall_ms: Date.now() - callT0,
+        ...(retries ? { retries } : {}),
         ...(result.provider ? { "gen_ai.provider": result.provider } : {}),
         tool_calls: result.message.tool_calls?.map((c) => c.function.name) ?? [],
       },

@@ -18,6 +18,9 @@ let modelCalls = 0;
 const mock = Bun.serve({
   port: 0,
   fetch: async (req) => {
+    // The daemon's boot-time warmupWire probes the origin with a bodyless HEAD (0.2.5);
+    // like a real provider, answer it without counting it as a model call.
+    if (req.method !== "POST") return new Response(null, { status: 405 });
     modelCalls++;
     return script(modelCalls, (await req.json()) as Record<string, unknown>);
   },

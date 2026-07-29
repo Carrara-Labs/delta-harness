@@ -99,6 +99,12 @@ export type ProviderConfig = {
    * for this long. Resets every chunk, so a healthy long stream is never cut; a stalled
    * socket dies in `streamIdleMs`, not `timeoutMs`. 0 disables. Default 60s. */
   streamIdleMs?: number;
+  /** Connect + time-to-first-header deadline (ms) — the one phase the idle watchdog
+   * cannot see (it arms only once a body stream exists). A dead socket after a VM
+   * suspend/resume otherwise hangs in fetch() for the kernel's own timeout (100s+),
+   * bounded only by `timeoutMs`. Rides the idle controller, so streamIdleMs:0 disables
+   * this too. Default 30s. */
+  firstByteMs?: number;
 };
 
 /** Provider error strings that mean "the prompt overflowed the model's context window"
@@ -116,6 +122,36 @@ export function failoverWorthy(r: ModelResult): boolean {
   if (r.ok || r.aborted) return false;
   const s = r.status;
   return s === undefined || s === 409 || s === 401 || s === 403 || s === 429 || s >= 500;
+}
+
+/** Re-establish the provider wire after a boot or a VM suspend/resume. Two jobs in
+ * one loop: (1) pay DNS + TLS off the first turn's critical path, (2) DRAIN dead
+ * pooled sockets — after a Firecracker resume the NAT path behind idle keep-alive
+ * sockets is gone, and the pool hands those corpses to the first real call (field
+ * data 2026-07-29: ~150s hang each, ~300s of silent turn-1 stall). Each probe rides
+ * a pooled-or-fresh socket with a 3s deadline: a corpse dies cheap and is evicted, a
+ * healthy wire answers fast. Stop after two consecutive quick successes or `max`
+ * probes. Fire-and-forget; never on a turn's path; never throws. */
+export async function warmupWire(providers: ProviderConfig[], max = 8): Promise<void> {
+  const origins = [...new Set(providers.map((p) => new URL(p.baseUrl).origin))];
+  await Promise.all(
+    origins.map(async (origin) => {
+      let okStreak = 0;
+      for (let i = 0; i < max && okStreak < 2; i++) {
+        const t0 = performance.now();
+        try {
+          await fetch(origin, { method: "HEAD", signal: AbortSignal.timeout(3_000) });
+          const ms = Math.round(performance.now() - t0);
+          okStreak = ms < 1_500 ? okStreak + 1 : 0;
+          if (i > 0 || ms >= 1_500)
+            console.error(`[wire] warmup ${origin} answered in ${ms}ms (probe ${i + 1})`);
+        } catch {
+          okStreak = 0;
+          console.error(`[wire] warmup ${origin} probe ${i + 1} dead — evicted a stale socket`);
+        }
+      }
+    }),
+  );
 }
 
 /** Try each provider in order; fall through on a failover-worthy error, stamping
@@ -155,6 +191,18 @@ export type ChatRequest = {
   signal?: AbortSignal;
   /** Streaming text deltas (SSE progress later); assembly happens regardless. */
   onDelta?: (text: string) => void;
+  /** Fired on EVERY failed attempt the cascade absorbs (in-provider retry, next-model,
+   * next-provider). Purely observational — the caller surfaces honest "retrying" state
+   * (task event + telemetry) instead of the silent 5-minute stall a user read as a hang
+   * (field data 2026-07-29). Never affects execution. */
+  onRetry?: (info: {
+    provider?: string;
+    model: string;
+    attempt: number;
+    status?: number;
+    error: string;
+    nextDelayMs: number;
+  }) => void;
   /** Streaming extended-thinking / reasoning deltas, per wire (Anthropic `thinking_delta`,
    * OpenAI-compat `reasoning`/`reasoning_content`, Responses reasoning-summary). Purely
    * observational: it is NEVER coupled to the `emitted` failover guard, so a provider that
@@ -288,6 +336,7 @@ function parseRetryAfter(v: string | null): number | undefined {
 
 const DEFAULT_TIMEOUT_MS = 600_000; // absolute cap: 10 min, matching common SDK defaults
 const DEFAULT_IDLE_MS = 60_000; // per-chunk stall watchdog — the fast stall detector
+const DEFAULT_FIRST_BYTE_MS = 30_000; // connect+first-header deadline (see firstByteMs)
 
 /** Compose the caller's cancel signal with an absolute wall-clock cap and (optionally)
  * a per-chunk idle controller into ONE AbortSignal for fetch. One seam covers connect +
@@ -305,6 +354,17 @@ export function withTimeout(
   if (signal) parts.push(signal);
   if (idle) parts.push(idle.signal);
   return parts.length === 1 ? (parts[0] as AbortSignal) : AbortSignal.any(parts);
+}
+
+/** Bound the connect + time-to-first-header window through the SAME idle controller
+ * (one abort seam, no extra signal plumbing). Field data 2026-07-29: after a Fly
+ * suspend/resume, the first provider call rode a dead socket and hung ~150s per
+ * attempt — ~300s of silent turn-1 stall on a third of prod runs. Disarm the moment
+ * fetch resolves; sseLines takes over from the first body chunk. */
+function armFirstByte(idle: AbortController | undefined, ms: number): () => void {
+  if (!idle || ms <= 0) return () => {};
+  const t = setTimeout(() => idle.abort(), ms);
+  return () => clearTimeout(t);
 }
 
 /** Race a promise against an abort signal (with listener cleanup) — bounds work that
@@ -429,8 +489,22 @@ export async function chat(cfg: ProviderConfig, req: ChatRequest): Promise<Model
       // fail over to the next provider. A 429 is identity-wide only for a SHARED subscription
       // credential; a metered/keyed provider falls through to its normal retry+next-model path.
       if (s === 401 || s === 403 || s === 409 || (s === 429 && shared)) return last;
-      if (!retriable(s, last.error) || attempt >= maxRetries) break; // next model
-      const delay = Math.min(500 * 2 ** attempt + Math.random() * 250, 10_000);
+      const exhausted = !retriable(s, last.error) || attempt >= maxRetries;
+      const delay = exhausted ? 0 : Math.min(500 * 2 ** attempt + Math.random() * 250, 10_000);
+      // A failed attempt must never be silent: one log line + one observer callback per
+      // failure, whether we retry, move to the next model, or fail over entirely.
+      console.error(
+        `[model retry] ${model} attempt ${attempt + 1} failed (${s ?? "net"}: ${last.error.slice(0, 160)}) → ${exhausted ? "next model/provider" : `retry in ${delay}ms`}`,
+      );
+      req.onRetry?.({
+        ...(cfg.label ? { provider: cfg.label } : {}),
+        model,
+        attempt: attempt + 1,
+        ...(s !== undefined ? { status: s } : {}),
+        error: last.error,
+        nextDelayMs: delay,
+      });
+      if (exhausted) break; // next model
       await Bun.sleep(delay);
       if (req.signal?.aborted) return { ok: false, model, error: "aborted", aborted: true };
     }
@@ -571,6 +645,7 @@ async function streamOnce(
   }
 
   let res: Response;
+  const disarmFB = armFirstByte(idle, cfg.firstByteMs ?? DEFAULT_FIRST_BYTE_MS);
   try {
     res = await fetch(`${cfg.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
@@ -588,6 +663,8 @@ async function streamOnce(
     if (t) return t;
     const aborted = req.signal?.aborted ?? false;
     return { ok: false, model, error: aborted ? "aborted" : String(e), aborted };
+  } finally {
+    disarmFB();
   }
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => "");
@@ -901,6 +978,7 @@ async function streamAnthropic(
   }
 
   let res: Response;
+  const disarmFB = armFirstByte(idle, cfg.firstByteMs ?? DEFAULT_FIRST_BYTE_MS);
   try {
     res = await fetch(`${cfg.baseUrl.replace(/\/+$/, "")}/messages`, {
       method: "POST",
@@ -919,6 +997,8 @@ async function streamAnthropic(
     if (t) return t;
     const aborted = req.signal?.aborted ?? false;
     return { ok: false, model, error: aborted ? "aborted" : String(e), aborted };
+  } finally {
+    disarmFB();
   }
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => "");
@@ -1157,6 +1237,7 @@ async function streamResponses(
   }
 
   let res: Response;
+  const disarmFB = armFirstByte(idle, cfg.firstByteMs ?? DEFAULT_FIRST_BYTE_MS);
   try {
     res = await fetch(`${cfg.baseUrl.replace(/\/+$/, "")}/responses`, {
       method: "POST",
@@ -1174,6 +1255,8 @@ async function streamResponses(
     if (t) return t;
     const aborted = req.signal?.aborted ?? false;
     return { ok: false, model, error: aborted ? "aborted" : String(e), aborted };
+  } finally {
+    disarmFB();
   }
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => "");

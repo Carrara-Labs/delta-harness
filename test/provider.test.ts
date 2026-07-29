@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { anthropicUsesAdaptive, chat, normalizeEffort, type ProviderConfig } from "../src/provider";
+import { anthropicUsesAdaptive, chat, normalizeEffort, type ProviderConfig, warmupWire } from "../src/provider";
 
 describe("normalizeEffort", () => {
   test("normalizes case/space and passes ANY non-empty value through (the model is the authority)", () => {
@@ -367,5 +367,100 @@ describe("reasoning capture (onReasoningDelta)", () => {
     if (!result.ok) throw new Error("unreachable");
     expect(calls).toBe(2); // it retried — reasoning did not mark the turn as emitted
     expect(result.message.content).toBe("recovered");
+  });
+});
+
+// ── 0.2.5 speed-lab batch: stall containment + retry visibility ─────────────────
+
+describe("first-byte deadline (the resume-stall killer)", () => {
+  // A socket that accepts and never sends headers is exactly what a dead-after-resume
+  // keep-alive connection looks like. Pre-0.2.5 nothing bounded this phase but the
+  // 600s absolute cap — field data: ~300s of silent turn-1 stall.
+  const hang = Bun.serve({ port: 0, fetch: () => new Promise<Response>(() => {}) });
+  afterAll(() => hang.stop());
+
+  test("a never-responding endpoint fails the attempt in ~firstByteMs, not the absolute cap", async () => {
+    const t0 = performance.now();
+    const result = await chat(
+      {
+        baseUrl: `http://localhost:${hang.port}/v1`,
+        apiKey: "test",
+        models: ["test/a"],
+        maxRetries: 0,
+        firstByteMs: 300,
+        streamIdleMs: 5_000,
+        timeoutMs: 60_000,
+      },
+      { messages: [{ role: "user", content: "hi" }] },
+    );
+    const wall = performance.now() - t0;
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("before first token");
+    expect(wall).toBeLessThan(3_000); // bounded by firstByteMs (+ jittered overhead), not 60s
+  });
+
+  test("streamIdleMs:0 disables the first-byte deadline too (one escape hatch)", async () => {
+    const t0 = performance.now();
+    const result = await chat(
+      {
+        baseUrl: `http://localhost:${hang.port}/v1`,
+        apiKey: "test",
+        models: ["test/a"],
+        maxRetries: 0,
+        firstByteMs: 200,
+        streamIdleMs: 0,
+        timeoutMs: 800, // the absolute cap is now the only bound — prove it's the one that fires
+      },
+      { messages: [{ role: "user", content: "hi" }] },
+    );
+    expect(result.ok).toBe(false);
+    expect(performance.now() - t0).toBeGreaterThan(700);
+  });
+});
+
+describe("retry visibility (onRetry observer)", () => {
+  test("fires once per failed attempt with attempt numbers, then success still lands", async () => {
+    reset((n) =>
+      n <= 2
+        ? new Response("overloaded", { status: 529 })
+        : sse(delta({ content: "recovered" }, "stop")),
+    );
+    const seen: Array<{ attempt: number; status?: number; nextDelayMs: number }> = [];
+    const result = await chat(cfg({ maxRetries: 2, label: "primary" }), {
+      messages: [{ role: "user", content: "hi" }],
+      onRetry: (i) => seen.push({ attempt: i.attempt, ...(i.status !== undefined ? { status: i.status } : {}), nextDelayMs: i.nextDelayMs }),
+    });
+    expect(result.ok).toBe(true);
+    expect(seen.map((s) => s.attempt)).toEqual([1, 2]);
+    expect(seen.every((s) => s.status === 529)).toBe(true);
+    expect(seen.every((s) => s.nextDelayMs > 0)).toBe(true); // both were retried, not exhausted
+  });
+
+  test("an exhausted model reports nextDelayMs 0 (moving on, not sleeping)", async () => {
+    reset(() => new Response("boom", { status: 500 }));
+    const seen: number[] = [];
+    const result = await chat(cfg({ maxRetries: 1 }), {
+      messages: [{ role: "user", content: "hi" }],
+      onRetry: (i) => seen.push(i.nextDelayMs),
+    });
+    expect(result.ok).toBe(false);
+    expect(seen.length).toBe(2); // attempt 1 (retried), attempt 2 (exhausted)
+    expect(seen[1]).toBe(0);
+  });
+});
+
+describe("warmupWire", () => {
+  const live = Bun.serve({ port: 0, fetch: () => new Response(null, { status: 405 }) });
+  afterAll(() => live.stop());
+
+  test("resolves against live and dead origins without throwing", async () => {
+    const t0 = performance.now();
+    await warmupWire([
+      { baseUrl: `http://localhost:${live.port}/v1`, apiKey: "x", models: ["m"] },
+      { baseUrl: "http://127.0.0.1:1/v1", apiKey: "x", models: ["m"] }, // connection-refused origin
+    ]);
+    // dead origin fails fast (ECONNREFUSED), live origin answers — never hangs, never throws
+    expect(performance.now() - t0).toBeLessThan(10_000);
   });
 });

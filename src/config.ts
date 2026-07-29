@@ -163,6 +163,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   // tool default is below any long-runner, which opts out with timeoutMs:0.
   const modelTimeoutMs = Number(env.DELTA_MODEL_TIMEOUT_MS ?? 600_000); // 10 min absolute backstop
   const streamIdleMs = Number(env.DELTA_STREAM_IDLE_MS ?? 60_000); // per-chunk stall; 0 disables
+  const firstByteMs = Number(env.DELTA_FIRST_BYTE_MS ?? 30_000); // connect+first-header deadline
   const toolTimeoutMs = Number(env.DELTA_TOOL_TIMEOUT_MS ?? 120_000); // per-tool default; 0 unbounded
   // Inline cap before spill — 20k matches the old per-builtin elide, so the token budget is
   // unchanged; what's new is the full output now survives in a re-readable spill file.
@@ -189,12 +190,14 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     ...brokerCredential(env),
     timeoutMs: modelTimeoutMs,
     streamIdleMs,
+    firstByteMs,
   };
   // Every provider in the cascade inherits the same wall-clock ceilings.
   const providers = [provider, ...parseFallbackProviders(env, models)].map((p) => ({
     ...p,
     timeoutMs: p.timeoutMs ?? modelTimeoutMs,
     streamIdleMs: p.streamIdleMs ?? streamIdleMs,
+    firstByteMs: p.firstByteMs ?? firstByteMs,
   }));
   // T5: a subscription (broker) provider with NO usable non-subscription fallback has no safety
   // net when the broker 409s / 401s / cools down after a 429. A real fallback = a non-broker

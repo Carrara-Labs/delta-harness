@@ -20,7 +20,7 @@ import { McpRegistry } from "./mcp";
 import { fileRefreshStore, RefreshingMcpCredential } from "./mcp-refresh";
 import { loadPolicy } from "./policy";
 import { loadPromptContext, renderTemplate, stableVars } from "./promptcontext";
-import { chatVia } from "./provider";
+import { chatVia, warmupWire } from "./provider";
 import { Queue } from "./queue";
 import { pruneLocalState } from "./retention";
 import type { Deps } from "./run";
@@ -225,29 +225,40 @@ const shutdown = (code: number, relinquish = true): void => {
   process.exit(code);
 };
 
-heartbeat = setInterval(
-  () => {
-    // Renew our lease; if renewal fails because it lapsed — the classic case is a Fly
-    // suspend/resume across a wall-clock jump that pushed expires_at into the past while
-    // the VM (and this interval) were frozen — try to REACQUIRE our own machine-scoped
-    // lease before giving up. acquireLease's "expires_at <= now OR holder_id = me" branch
-    // reclaims an expired-or-own lease atomically, so we recover from suspend instead of
-    // exiting into Fly's restart-cap stall. This is RECOVERY, not fencing (the lease is
-    // unfenced and machine-scoped, see lease.ts): we exit only when a *different* live
-    // holder genuinely owns a non-expired lease — real split-brain, the one case worth
-    // dying for. A duplicate holder id across machines still defeats this (documented).
-    if (
-      renewLease(deps.db, leaseHolder, cfg.leaseTtlMs) ||
-      acquireLease(deps.db, leaseHolder, cfg.leaseTtlMs)
-    )
-      return;
-    console.error(
-      `delta: write lease held by a different live holder on ${cfg.dbPath} — exiting to avoid concurrent writes`,
-    );
-    shutdown(1, false);
-  },
-  Math.floor(cfg.leaseTtlMs / 3),
-);
+const beatMs = Math.floor(cfg.leaseTtlMs / 3);
+let lastBeat = Date.now();
+heartbeat = setInterval(() => {
+  // Suspend/resume detector: this interval cannot tick while the VM is frozen, so a
+  // wall-clock gap far beyond the cadence means we just woke from a suspend (or a hard
+  // event-loop stall — same remedy). The keep-alive sockets in the fetch pool are dead
+  // behind a gone NAT path after a resume; re-establish the provider wire in the
+  // background BEFORE the next turn rides a corpse (field data 2026-07-29: ~300s of
+  // silent turn-1 stall on a third of prod runs).
+  const gapMs = Date.now() - lastBeat;
+  lastBeat = Date.now();
+  if (gapMs > Math.max(beatMs * 3, 60_000)) {
+    console.error(`delta: resume detected (heartbeat gap ${Math.round(gapMs / 1000)}s) — rewarming provider wire`);
+    void warmupWire(cfg.providers);
+  }
+  // Renew our lease; if renewal fails because it lapsed — the classic case is a Fly
+  // suspend/resume across a wall-clock jump that pushed expires_at into the past while
+  // the VM (and this interval) were frozen — try to REACQUIRE our own machine-scoped
+  // lease before giving up. acquireLease's "expires_at <= now OR holder_id = me" branch
+  // reclaims an expired-or-own lease atomically, so we recover from suspend instead of
+  // exiting into Fly's restart-cap stall. This is RECOVERY, not fencing (the lease is
+  // unfenced and machine-scoped, see lease.ts): we exit only when a *different* live
+  // holder genuinely owns a non-expired lease — real split-brain, the one case worth
+  // dying for. A duplicate holder id across machines still defeats this (documented).
+  if (
+    renewLease(deps.db, leaseHolder, cfg.leaseTtlMs) ||
+    acquireLease(deps.db, leaseHolder, cfg.leaseTtlMs)
+  )
+    return;
+  console.error(
+    `delta: write lease held by a different live holder on ${cfg.dbPath} — exiting to avoid concurrent writes`,
+  );
+  shutdown(1, false);
+}, beatMs);
 process.once("SIGTERM", () => shutdown(0));
 process.once("SIGINT", () => shutdown(0));
 
@@ -353,6 +364,9 @@ try {
   process.exit(1);
 }
 queue.recover(); // resume mid-flight runs only after we own BOTH the lease and the port
+// Pay DNS + TLS to every provider origin off the first turn's critical path. Boot-time
+// counterpart of the resume warmup in the heartbeat below. Fire-and-forget by contract.
+void warmupWire(cfg.providers);
 if (cfg.telemetryUrl) {
   // Collector credential: a dedicated TELEMETRY_TOKEN when provisioned, else the
   // VM's own gateway token — the CP's ingest self-auths by its hash (the same
