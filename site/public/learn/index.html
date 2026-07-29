@@ -371,7 +371,7 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 .vfig .vfill-mut { fill: color-mix(in srgb, var(--mutedink) 22%, var(--paper)); stroke: var(--line-strong); stroke-width: 1.2; }
 .vfig .vt { fill: var(--ink); font-family: var(--mono); font-size: 11.5px; font-weight: 600; }
 .vfig .vlab { fill: var(--mutedink); font-family: var(--sans); font-size: 10px; font-weight: 600; letter-spacing: .02em; }
-.vfig .vsagetext { fill: var(--sage); font-family: var(--sans); font-size: 9.5px; font-weight: 700; }
+.vfig .vsagetext { fill: var(--sage); font-family: var(--sans); font-size: 10.5px; font-weight: 700; }
 .vfig .vstroke { stroke: var(--mutedink); stroke-width: 1.4; fill: none; }
 .vfig .vstroke-sage { stroke: var(--sage); stroke-width: 1.6; fill: none; }
 .vfig .vdash { stroke: var(--line-strong); stroke-width: 1.3; fill: none; stroke-dasharray: 3 3; }
@@ -481,7 +481,7 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 .tbl td.mono, .tbl td code { font-family: var(--mono); font-size: 12.5px; }
 .tbl tr:hover td { background: color-mix(in srgb, var(--sage) 4%, transparent); }
 /* narrow screens: let a wide table scroll inside itself instead of pushing the page sideways */
-@media (max-width: 620px) { .tbl { display: block; overflow-x: auto; } }
+@media (max-width: 620px) { .tblwrap, .fig:has(> .tbl) { overflow-x: auto; } .tbl { min-width: 540px; } }
 .tblwrap { overflow-x: auto; }
 
 /* file-cite (metal) */
@@ -567,7 +567,7 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 .simu-node.done-node { border-color: color-mix(in srgb, var(--sage) 46%, var(--line)); }
 .simu-arw { align-self: center; color: var(--line-strong); font-family: var(--mono); font-size: 14px; }
 .simu-arw.lit { color: var(--sage); }
-.simu-log { border: 1px solid var(--line); border-radius: 9px; background: var(--paper); padding: 12px 14px; font-family: var(--mono); font-size: 12px; line-height: 1.7; min-height: 118px; max-height: 160px; overflow-y: auto; }
+.simu-log { border: 1px solid var(--line); border-radius: 9px; background: var(--paper); padding: 12px 14px; font-family: var(--mono); font-size: 12.5px; line-height: 1.7; min-height: 118px; max-height: 160px; overflow-y: auto; }
 .simu-log .ln { color: var(--mutedink); }
 .simu-log .ln.hi { color: var(--ink); }
 .simu-log .ln .t { color: var(--sage); }
@@ -599,8 +599,8 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 .ctxwin { display: grid; grid-template-columns: 1fr; gap: 16px; }
 .ctxframe { position: relative; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); padding: 12px; min-height: 230px; display: flex; flex-direction: column-reverse; gap: 6px; overflow: hidden; }
 .ctxceil { position: absolute; left: 0; right: 0; top: 34px; border-top: 1.5px dashed var(--clay); z-index: 2; }
-.ctxceil .cl { position: absolute; right: 8px; top: -16px; font-family: var(--mono); font-size: 10px; color: var(--clay); }
-.ctxblk { border: 1px solid var(--line); border-radius: 7px; background: var(--card); padding: 8px 11px; font-family: var(--mono); font-size: 11.5px; display: flex; justify-content: space-between; gap: 10px; animation: ctxin .3s ease; }
+.ctxceil .cl { position: absolute; right: 8px; top: -16px; font-family: var(--mono); font-size: 11.5px; color: var(--clay); }
+.ctxblk { border: 1px solid var(--line); border-radius: 7px; background: var(--card); padding: 8px 11px; font-family: var(--mono); font-size: 12.5px; display: flex; justify-content: space-between; gap: 10px; animation: ctxin .3s ease; }
 .ctxblk .bt { color: var(--mutedink); }
 @keyframes ctxin { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .ctxblk.summary { background: color-mix(in srgb, var(--sage) 14%, var(--card)); border-color: color-mix(in srgb, var(--sage) 42%, var(--line)); }
@@ -1295,8 +1295,18 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
     .axis .ax .axk { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--sage); margin: 0 0 8px; }
     .axis .ax .axv { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
     .axis .ax .axv span { font-family: var(--mono); font-size: 12px; padding: 4px 9px; border-radius: 7px; border: 1px solid var(--line); background: var(--muted); }
-    .axis .ax p { font-size: 12.5px; color: var(--mutedink); margin: 0; line-height: 1.45; }
+    .axis .ax p { font-size: 13.5px; color: var(--mutedink); margin: 0; line-height: 1.45; }
     @media (max-width: 560px) { .axis { grid-template-columns: 1fr; } }
+    /* one concrete memory, tagged on all four axes */
+    .memex { border: 1px solid var(--line-strong); border-radius: 14px; background: color-mix(in srgb, var(--sage) 5%, var(--card)); padding: 16px 18px; }
+    .memex .memex-q { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--sage); margin: 0 0 8px; }
+    .memex .memex-note { font-size: 15.5px; font-weight: 600; color: var(--ink); margin: 0 0 15px; line-height: 1.4; }
+    .memex .memex-tags { display: grid; grid-template-columns: 1fr 1fr; gap: 11px 18px; }
+    .memex .memex-tags > div { display: grid; grid-template-columns: 74px 1fr; gap: 10px; align-items: baseline; }
+    .memex .mxk { font-family: var(--mono); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--mutedink); padding-top: 2px; }
+    .memex .mxv { font-size: 13px; color: var(--ink); line-height: 1.4; }
+    .memex .mxv b { color: var(--sage); font-weight: 600; }
+    @media (max-width: 560px) { .memex .memex-tags { grid-template-columns: 1fr; } }
     /* horizontal cycle */
     .cyc { display: flex; align-items: stretch; flex-wrap: wrap; gap: 8px; margin: 22px 0; }
     .cyc .cs { flex: 1 1 120px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); padding: 13px 14px; min-width: 0; }
@@ -1304,7 +1314,7 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
     .cyc .cs .csn { font-family: var(--mono); font-size: 11px; color: var(--sage); font-weight: 700; }
     .cyc .cs.human .csn { color: var(--clay); }
     .cyc .cs .cst { font-weight: 620; font-size: 13.5px; margin: 4px 0 3px; }
-    .cyc .cs .csd { font-size: 12px; color: var(--mutedink); line-height: 1.4; }
+    .cyc .cs .csd { font-size: 13px; color: var(--mutedink); line-height: 1.45; }
     .cyc .ca { align-self: center; color: var(--sage); font-family: var(--mono); }
     @media (max-width: 640px) { .cyc { flex-direction: column; } .cyc .ca { transform: rotate(90deg); align-self: center; } }
     </style>
@@ -1365,7 +1375,7 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
           </div></div>
           <div class="tstep"><div class="body">
             <p class="tt">Any pending tool calls run first - in parallel</p>
-            <p class="td">If the previous lap ended with the model asking for tools, those run now, all at once. If the model instead wrote a plain answer, the turn is <strong>done</strong> and that text is returned.</p>
+            <p class="td">On the very first lap there is nothing pending yet, so this step is skipped and Delta goes straight to calling the model. On later laps: if the previous lap ended with the model asking for tools, those run now, all at once; if the model instead wrote a plain answer, the task is <strong>done</strong> and that text is returned.</p>
             <details class="deeper">
               <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">on this step</span><span class="peek">tools in parallel, or finish</span></summary>
               <div class="db">
@@ -1554,11 +1564,24 @@ A teammate can act on your reply without re-checking it.
       <p class="lead">A raw model forgets everything between calls. Delta gives an agent two kinds of memory: the <code>DELTA.md</code> self-file from chapter 7 (broad identity and habits), and a <strong>scoped memory store</strong> - a local table of specific learnings that is careful about <em>who each memory belongs to</em>.</p>
 
       <h3>Every memory is filed on four independent axes</h3>
-      <p>The point of the axes is isolation: a lesson learned while helping one user must never surface for another. So each memory records who it's for, what kind of thing it is, how much it's trusted, and whose it is.</p>
+      <p>The point of the axes is isolation: a lesson learned while helping one user must not leak to another. So each memory records who it may be recalled for, what kind of thing it is, how sure we are of it, and exactly whose row it is. Here is one memory carrying all four tags:</p>
+      <div class="fig">
+        <div class="memex">
+          <p class="memex-q">One memory, filed on four axes</p>
+          <p class="memex-note">"Alice likes her briefings as a one-page PDF, not slides."</p>
+          <div class="memex-tags">
+            <div><span class="mxk">Audience</span><span class="mxv"><b>user</b> - so it surfaces only when the agent is working for Alice, never for someone else</span></div>
+            <div><span class="mxk">Kind</span><span class="mxv"><b>preference</b> - a taste, not a hard fact or a fixed procedure</span></div>
+            <div><span class="mxk">Trust</span><span class="mxv"><b>review 0.8+</b> - a human confirmed it, so it is treated as reliable</span></div>
+            <div><span class="mxk">Identity</span><span class="mxv"><b>acme / recruiter / alice</b> - the exact owner, so two Alices at two firms never collide</span></div>
+          </div>
+        </div>
+        <p class="cap"><b>Audience vs identity.</b> Audience decides <em>when</em> a memory may be recalled; identity is the full owner label that keeps rows from different firms, agents, or people from ever mixing.</p>
+      </div>
       <div class="axis">
         <div class="ax"><p class="axk">Audience - who it's for</p><div class="axv"><span>user</span><span>task_type</span><span>agent</span><span>org</span></div><p>The privacy boundary. A memory tied to a user is only ever recalled for that user.</p></div>
         <div class="ax"><p class="axk">Kind - what it is</p><div class="axv"><span>fact</span><span>preference</span><span>pitfall</span><span>procedure</span></div><p>The same words filed as a "fact" and as a "procedure" are different memories.</p></div>
-        <div class="ax"><p class="axk">Trust - how sure</p><div class="axv"><span>self ≥0.6</span><span>review ≥0.8</span></div><p>A human-reviewed correction is ground truth; an unrated self-claim doesn't persist.</p></div>
+        <div class="ax"><p class="axk">Trust - how sure</p><div class="axv"><span>self ≥0.6</span><span>review ≥0.8</span></div><p>A confidence score, 0 to 1. A memory the agent claims on its own needs 0.6 to persist; one a human reviewed clears a higher 0.8 bar - so corrected lessons outrank guesses.</p></div>
         <div class="ax"><p class="axk">Identity - whose</p><div class="axv"><span>namespace</span><span>agent</span><span>user</span></div><p>The full owner tuple, never blank, so overlapping agents can't blur rows together.</p></div>
       </div>
       <details class="deeper">
@@ -2699,9 +2722,9 @@ platform event
     c4: "Delta's five deliberate choices - tiny spine, product-neutral engine, budgets not timers, error-as-value, lean by construction - a small, sharp core shaped for real work.",
     c5: "agent = engine + bundle + state. Swap the bundle and the same engine becomes a different worker.",
     c6: "One turn: run pending tools or finish, check budget, build the cached prompt, maybe compact, call the model, checkpoint. It stops on budget and saves every step.",
-    c7: "Five plain files define an agent. DELTA.md is the one the agent rewrites itself (safely, atomically, reversibly) and it always sits below fixed policy.",
+    c7: "Five plain files define an agent. DELTA.md is the one the agent rewrites itself (safely, atomically, reversibly); it is rendered before fixed policy, so policy stays the last word.",
     c8: "Memory is filed by who it's for, so lessons never leak between users. A human's review correction is distilled into a durable, scoped lesson.",
-    c9: "When history would overflow, Delta summarises old turns into Goal / Progress / Next / Artifacts and keeps the recent ones, never dropping a load-bearing fact.",
+    c9: "When history would overflow, Delta summarises old turns into Goal / Progress / Next / Artifacts, keeps the recent ones verbatim, and audits that key identifiers survived - careful mitigation, not lossless memory.",
     c10: "Delta ships a small set of hands, plugs into unlimited external tools over MCP (showing only a few at a time), and delegates to read-only subagents bound by the same rules.",
     c11: "Two doctrines make it safe for real work: error-as-value (a bad call comes back to the loop instead of crashing it) and journaled crash-resume (it verifies any side effect it can't prove was safe before repeating it).",
     c12: "Delta is a service behind a small HTTP seam. One binary runs many products, deploys anywhere, scales to zero, and can run on a flat subscription instead of metered tokens.",
@@ -2917,6 +2940,7 @@ platform event
 .arch .cap { font-family: var(--mono); font-size: 11.5px; color: var(--mutedink); margin: 14px 0 0; line-height: 1.5; }
 .arch .cap b { color: var(--ink); font-weight: 600; }
 @media (max-width: 620px) { .arch-parts { grid-template-columns: 1fr 1fr; } .arch-feeds { grid-template-columns: 1fr; } }
+@media (max-width: 440px) { .arch-parts { grid-template-columns: 1fr; } }
 
 /* ---- tool-call wire exchange ---- */
 .wire { display: flex; flex-direction: column; gap: 9px; margin: 20px 0; }
