@@ -2465,6 +2465,45 @@ platform event
     '<text class="vlab" x="4" y="61" text-anchor="start">a heavy one</text>' +
     '<rect class="vclay" x="74" y="51" width="266" height="14" rx="3"/><text class="vlab" x="340" y="61" text-anchor="end">~26k</text>' +
     '</svg>';
+  V.role =
+    '<svg viewBox="0 0 356 92">' +
+    '<text class="vlab" x="4" y="14">THE CONVERSATION IS JUST A LIST OF MESSAGES</text>' +
+    '<rect class="vslate" x="4" y="22" width="72" height="18" rx="5"/><text class="vt" x="40" y="35" text-anchor="middle" font-size="9">system</text>' +
+    '<rect class="vbox" x="82" y="22" width="270" height="18" rx="5"/><text class="vlab" x="90" y="35">the standing rules</text>' +
+    '<rect class="vsage" x="4" y="44" width="72" height="18" rx="5"/><text class="vt" x="40" y="57" text-anchor="middle" font-size="9">user</text>' +
+    '<rect class="vbox" x="82" y="44" width="270" height="18" rx="5"/><text class="vlab" x="90" y="57">what a person said</text>' +
+    '<rect class="vclay" x="4" y="66" width="72" height="18" rx="5"/><text class="vt" x="40" y="79" text-anchor="middle" font-size="8.5">assistant</text>' +
+    '<rect class="vbox" x="82" y="66" width="270" height="18" rx="5"/><text class="vlab" x="90" y="79">what the model said before</text>' +
+    '</svg>';
+  V.profile =
+    '<svg viewBox="0 0 356 90">' +
+    '<text class="vlab" x="4" y="14">A PROFILE SETS HOW MUCH AN AGENT MAY DO</text>' +
+    '<rect class="vsage" x="4" y="22" width="168" height="60" rx="9"/>' +
+    '<text class="vt" x="88" y="41" text-anchor="middle" font-size="11">chat</text>' +
+    '<text class="vlab" x="88" y="57" text-anchor="middle">read-only tools</text>' +
+    '<text class="vlab" x="88" y="71" text-anchor="middle">small budget, tight leash</text>' +
+    '<rect class="vclay" x="184" y="22" width="168" height="60" rx="9"/>' +
+    '<text class="vt" x="268" y="41" text-anchor="middle" font-size="11">work</text>' +
+    '<text class="vlab" x="268" y="57" text-anchor="middle">all tools, can act + write</text>' +
+    '<text class="vlab" x="268" y="71" text-anchor="middle">bigger budget, more autonomy</text>' +
+    '</svg>';
+  V.mcp =
+    '<svg viewBox="0 0 356 92">' +
+    '<rect class="vsage" x="4" y="35" width="96" height="34" rx="9"/><text class="vt" x="52" y="50" text-anchor="middle" font-size="10">DELTA</text><text class="vlab" x="52" y="63" text-anchor="middle">the client</text>' +
+    '<path class="vstroke-sage" d="M100 52 C150 52 176 24 224 24"/>' +
+    '<path class="vstroke-sage" d="M100 52 H224"/>' +
+    '<path class="vstroke-sage" d="M100 52 C150 52 176 80 224 80"/>' +
+    '<rect class="vslate" x="226" y="14" width="126" height="20" rx="6"/><text class="vt" x="289" y="28" text-anchor="middle" font-size="9">GitHub tools</text>' +
+    '<rect class="vslate" x="226" y="42" width="126" height="20" rx="6"/><text class="vt" x="289" y="56" text-anchor="middle" font-size="9">database tools</text>' +
+    '<rect class="vslate" x="226" y="70" width="126" height="20" rx="6"/><text class="vt" x="289" y="84" text-anchor="middle" font-size="9">your own tools</text>' +
+    '</svg>';
+  V.budget =
+    '<svg viewBox="0 0 356 72">' +
+    '<text class="vlab" x="4" y="14">A RUN STOPS AT A CEILING, NOT A TIMER</text>' +
+    '<rect class="vbox" x="4" y="24" width="104" height="16" rx="4"/><rect class="vfill-sage" x="6" y="26" width="62" height="12" rx="3"/><text class="vlab" x="56" y="56" text-anchor="middle">steps</text>' +
+    '<rect class="vbox" x="126" y="24" width="104" height="16" rx="4"/><rect class="vfill-sage" x="128" y="26" width="84" height="12" rx="3"/><text class="vlab" x="178" y="56" text-anchor="middle">tokens</text>' +
+    '<rect class="vbox" x="248" y="24" width="104" height="16" rx="4"/><rect class="vfill-clay" x="250" y="26" width="98" height="12" rx="3"/><text class="vlab" x="300" y="56" text-anchor="middle">dollars</text>' +
+    '</svg>';
   set("dotted", "Try it", "This is a glossary term. Hover, tap, or focus any dotted word to read a plain-English definition right here.");
   set("llm", "Large Language Model", "An AI trained on huge amounts of text to predict the next chunk of text. In practice: you give it words, it gives you words. It has no memory and takes no actions by itself.", { viz: V.llm, more: "It is a fixed function - same weights every call, no hidden server-side memory. Any 'memory' is just tokens you resend. A provider exposes it as one <code>HTTPS</code> request carrying JSON." });
   set("function", "Function", "A named piece of a program that takes some input, does one job, and hands back a result - like a machine you feed something into and get something out of. A model call works the same way: text in, text out, then it stops.");
@@ -2483,7 +2522,7 @@ platform event
   set("stream", "Streaming", "Sending the reply token-by-token as it is generated, so a screen can fill in live instead of waiting for the whole answer.");
   set("sse", "SSE (Server-Sent Events)", "A simple one-way channel that lets a server push a live stream of updates to a client over ordinary HTTP. Delta streams model output and task progress this way.");
   set("toolcall", "Tool call", "When the model, instead of writing prose, replies with a structured request to run a named function (a 'tool'). The harness runs it for real and feeds the result back.", { viz: V.toolcall, more: "The model emits a structured call (name + JSON arguments); the harness runs it and appends the result as a tool-role message, then calls again. That append-and-recall cycle is the agent loop." });
-  set("profile", "Profile", "A named permission set - e.g. 'chat' vs 'work' - that decides which tools an agent may use on a given run. Tighter profiles shrink the blast radius.");
+  set("profile", "Profile", "A named permission set - e.g. 'chat' vs 'work' - that decides which tools an agent may use on a given run. Tighter profiles shrink the blast radius.", { viz: V.profile, tag: "Delta", more: "Set in src/profiles.ts. The daemon's placement fixes the ceiling; an untrusted caller can only narrow it, never escalate. work = all tools, ~100 steps / 2M tokens / $5; chat = read-only tools, ~10 steps / 100k / $0.25." });
   set("bundle", "Bundle", "The five plain config files that define one agent: delta.env, vocab.json, POLICY.md, DELTA.md, PROMPT_CONTEXT.md. 'agent = engine + bundle + state.'", { viz: V.bundle, tag: "Delta" });
   set("writerail", "Write rail", "The controlled list of nouns and verbs (in vocab.json) an agent is allowed to write into its structured memory - so its records stay consistent instead of free-form.");
   set("daemon", "Daemon", "A long-running background program that stays up and answers requests, rather than a script you run once and exit.");
@@ -2491,7 +2530,7 @@ platform event
   set("sqlite", "SQLite", "A small, reliable database that lives in a single file - no separate server needed. Delta uses it for all durable state.");
   set("wal", "WAL mode", "'Write-Ahead Logging' - a SQLite setting where changes are appended to a log first, making writes durable and crash-safe so a turn is never half-written.");
   set("seam", "The seam", "Delta's public HTTP boundary - the handful of endpoints other software calls to use the agent. The harness is a service, not a chat window.", { viz: V.seam, tag: "Delta" });
-  set("mcp", "MCP (Model Context Protocol)", "An open standard for exposing tools and data to an AI agent over a common protocol. Delta is an MCP client: it can plug into any MCP tool server.");
+  set("mcp", "MCP (Model Context Protocol)", "An open standard for exposing tools and data to an AI agent over a common protocol. Delta is an MCP client: it can plug into any MCP tool server.", { viz: V.mcp });
   set("vector", "Vector store", "A database that finds text by meaning rather than exact words, often used for retrieval. Delta deliberately doesn't ship one in its core.");
   set("queued", "Queued run", "A unit of work written to disk the moment it arrives, before the caller is even answered - so nothing is lost to a crash between accepting and starting it.");
   set("idempotent", "Idempotent", "Safe to run more than once with the same result. Writing the same bytes to a file is idempotent; sending an email is not. Delta uses this property to decide what it may safely replay after a crash.");
@@ -2508,7 +2547,7 @@ platform event
   set("subscription", "Subscription billing", "Paying a flat monthly fee for model access (via a Codex/ChatGPT plan) instead of per-token metered API calls. Delta can run on either, which can make long-running agents dramatically cheaper.");
   set("https", "HTTPS request", "The ordinary encrypted web request your browser also uses. A model call is one HTTPS request to the provider's server: you POST some data, it sends data back.");
   set("json", "JSON", "A simple, plain-text way to write structured data as labelled fields and lists. It's the format both the request to a model and its reply are written in.");
-  set("role", "Message role", "A label on each message in the conversation you send: 'system' (the standing rules), 'user' (what a person said), or 'assistant' (what the model said before). Roles tell the model who said what.");
+  set("role", "Message role", "A label on each message in the conversation you send: 'system' (the standing rules), 'user' (what a person said), or 'assistant' (what the model said before). Roles tell the model who said what.", { viz: V.role });
   set("checkpoint", "Checkpoint", "A save of the agent's exact position - the transcript plus what it was about to do - written every turn, so the work can resume precisely if the process dies.", { viz: V.checkpoint, tag: "Delta", more: "Written per turn in one SQLite WAL transaction alongside the journal entry, so a crash resumes at the exact step without replaying a side effect that already completed." });
   set("transaction", "Transaction", "A group of database writes that either all succeed together or all fail together, never half. It's what lets Delta save a message and its journal entry as one indivisible step.");
   set("atomic", "Atomic write", "A write that either fully happens or not at all - there is no half-written in-between a crash could expose. Delta writes files by creating a temp file and renaming it into place.");
@@ -2526,7 +2565,7 @@ platform event
   set("broker", "Token broker", "A small service that mints short-lived, scoped access tokens for the subscription sign-in, so the long-lived credential never rides along inside the agent.");
   set("reasoningeffort", "Reasoning effort", "A per-request dial telling a reasoning model how hard to think before answering - trading speed and cost against depth. Delta can set it per task.");
   set("heartbeat", "Heartbeat", "A tiny, regular 'are you alive?' check between programs. One side pings the other every so often; a reply means it is up and healthy. Delta's GET /healthz is a heartbeat - it does no work, it just confirms the agent is running.");
-  set("budget", "Budget", "The spend ceiling on a single run - a cap on steps, tokens, and dollars. Delta stops a run when it hits the cap, not on a wall-clock timer, so a run ends when it is done, cancelled, or out of budget.");
+  set("budget", "Budget", "The spend ceiling on a single run - a cap on steps, tokens, and dollars. Delta stops a run when it hits the cap, not on a wall-clock timer, so a run ends when it is done, cancelled, or out of budget.", { viz: V.budget, tag: "Delta" });
   set("recall", "Recall", "A read-only tool that lets an agent look up its own earlier notes and this thread's history. Safe even in a locked-down chat placement, because it only reads - it never writes.");
   set("connect", "Delta Connect", "A separate, optional package that plugs a Delta agent into chat channels (Telegram first, then Slack, email, webhooks). It is not part of the engine - it is the thin edge that reaches the agent through the same public seam.");
   set("edge", "The edge", "Everything that lives outside the engine on purpose - channels, devices, connectors. Keeping them at the edge is what keeps the core small, dependency-free, and fast to start.");
