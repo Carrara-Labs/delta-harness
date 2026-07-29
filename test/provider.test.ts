@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { anthropicUsesAdaptive, chat, normalizeEffort, type ProviderConfig, warmupWire } from "../src/provider";
+import { anthropicUsesAdaptive, chat, chatVia, normalizeEffort, type ProviderConfig, warmupWire } from "../src/provider";
 
 describe("normalizeEffort", () => {
   test("normalizes case/space and passes ANY non-empty value through (the model is the authority)", () => {
@@ -400,7 +400,7 @@ describe("first-byte deadline (the resume-stall killer)", () => {
     expect(wall).toBeLessThan(3_000); // bounded by firstByteMs (+ jittered overhead), not 60s
   });
 
-  test("streamIdleMs:0 disables the first-byte deadline too (one escape hatch)", async () => {
+  test("firstByteMs stands alone: streamIdleMs:0 must NOT disable it (codex decoupling)", async () => {
     const t0 = performance.now();
     const result = await chat(
       {
@@ -410,7 +410,27 @@ describe("first-byte deadline (the resume-stall killer)", () => {
         maxRetries: 0,
         firstByteMs: 200,
         streamIdleMs: 0,
-        timeoutMs: 800, // the absolute cap is now the only bound — prove it's the one that fires
+        timeoutMs: 5_000,
+      },
+      { messages: [{ role: "user", content: "hi" }] },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("no response headers within 200ms");
+    expect(performance.now() - t0).toBeLessThan(2_000);
+  });
+
+  test("firstByteMs:0 + streamIdleMs:0 leaves only the absolute cap (explicit opt-out)", async () => {
+    const t0 = performance.now();
+    const result = await chat(
+      {
+        baseUrl: `http://localhost:${hang.port}/v1`,
+        apiKey: "test",
+        models: ["test/a"],
+        maxRetries: 0,
+        firstByteMs: 0,
+        streamIdleMs: 0,
+        timeoutMs: 800,
       },
       { messages: [{ role: "user", content: "hi" }] },
     );
@@ -437,16 +457,46 @@ describe("retry visibility (onRetry observer)", () => {
     expect(seen.every((s) => s.nextDelayMs > 0)).toBe(true); // both were retried, not exhausted
   });
 
-  test("an exhausted model reports nextDelayMs 0 (moving on, not sleeping)", async () => {
+  test("terminal failure of the last model is NOT reported as a retry (nothing follows)", async () => {
     reset(() => new Response("boom", { status: 500 }));
-    const seen: number[] = [];
+    const seen: string[] = [];
     const result = await chat(cfg({ maxRetries: 1 }), {
       messages: [{ role: "user", content: "hi" }],
-      onRetry: (i) => seen.push(i.nextDelayMs),
+      onRetry: (i) => seen.push(i.kind),
     });
     expect(result.ok).toBe(false);
-    expect(seen.length).toBe(2); // attempt 1 (retried), attempt 2 (exhausted)
-    expect(seen[1]).toBe(0);
+    expect(seen).toEqual(["retry"]); // attempt 1 retried; attempt 2's failure is terminal — silent
+  });
+
+  test("moving to the NEXT model reports kind next_model with no sleep", async () => {
+    reset(() => new Response("boom", { status: 500 }));
+    const seen: Array<{ kind: string; model: string; nextDelayMs: number }> = [];
+    const result = await chat(cfg({ maxRetries: 0, models: ["test/a", "test/b"] }), {
+      messages: [{ role: "user", content: "hi" }],
+      onRetry: (i) => seen.push({ kind: i.kind, model: i.model, nextDelayMs: i.nextDelayMs }),
+    });
+    expect(result.ok).toBe(false);
+    expect(seen).toEqual([{ kind: "next_model", model: "test/a", nextDelayMs: 0 }]);
+  });
+
+  test("provider failover reports kind next_provider from chatVia, and a throwing observer never breaks the call", async () => {
+    reset((n) => (n <= 1 ? new Response("boom", { status: 500 }) : sse(delta({ content: "ok" }, "stop"))));
+    const seen: string[] = [];
+    const result = await chatVia(
+      [
+        cfg({ maxRetries: 0, label: "primary" }),
+        cfg({ maxRetries: 0, label: "backup" }),
+      ],
+      {
+        messages: [{ role: "user", content: "hi" }],
+        onRetry: (i) => {
+          seen.push(i.kind);
+          throw new Error("observer bug"); // must never affect execution
+        },
+      },
+    );
+    expect(result.ok).toBe(true);
+    expect(seen).toEqual(["next_provider"]);
   });
 });
 

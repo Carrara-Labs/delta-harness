@@ -20,7 +20,7 @@ import { McpRegistry } from "./mcp";
 import { fileRefreshStore, RefreshingMcpCredential } from "./mcp-refresh";
 import { loadPolicy } from "./policy";
 import { loadPromptContext, renderTemplate, stableVars } from "./promptcontext";
-import { chatVia, warmupWire } from "./provider";
+import { chatVia, markWireSuspect, warmupWire } from "./provider";
 import { Queue } from "./queue";
 import { pruneLocalState } from "./retention";
 import type { Deps } from "./run";
@@ -227,17 +227,20 @@ const shutdown = (code: number, relinquish = true): void => {
 
 const beatMs = Math.floor(cfg.leaseTtlMs / 3);
 let lastBeat = Date.now();
+let rewarmedAt = 0;
 heartbeat = setInterval(() => {
   // Suspend/resume detector: this interval cannot tick while the VM is frozen, so a
-  // wall-clock gap far beyond the cadence means we just woke from a suspend (or a hard
-  // event-loop stall — same remedy). The keep-alive sockets in the fetch pool are dead
-  // behind a gone NAT path after a resume; re-establish the provider wire in the
-  // background BEFORE the next turn rides a corpse (field data 2026-07-29: ~300s of
-  // silent turn-1 stall on a third of prod runs).
+  // wall-clock gap far beyond the cadence means we likely woke from a suspend (or sat
+  // through a hard event-loop stall — same remedy). The keep-alive sockets in the fetch
+  // pool are dead behind a gone NAT path after a resume: mark the wire suspect (fresh
+  // sockets for the next 2 min — the hard guarantee) and rewarm in the background
+  // (single-flight + 60s cooldown, so stall storms can't amplify into probe storms).
   const gapMs = Date.now() - lastBeat;
   lastBeat = Date.now();
-  if (gapMs > Math.max(beatMs * 3, 60_000)) {
-    console.error(`delta: resume detected (heartbeat gap ${Math.round(gapMs / 1000)}s) — rewarming provider wire`);
+  if (gapMs > Math.max(beatMs * 3, 60_000) && Date.now() - rewarmedAt > 60_000) {
+    rewarmedAt = Date.now();
+    console.error(`delta: heartbeat gap ${Math.round(gapMs / 1000)}s (suspend/resume or stall) — refreshing provider wire`);
+    markWireSuspect();
     void warmupWire(cfg.providers);
   }
   // Renew our lease; if renewal fails because it lapsed — the classic case is a Fly

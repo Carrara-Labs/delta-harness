@@ -801,17 +801,21 @@ export async function executeRun(
       // PERSISTED (unlike the deltas): a host polling /v1/tasks/:id/events must be able
       // to say "provider is retrying" instead of shimmering through a silent stall —
       // the 2026-07-29 field data showed ~300s of turn-1 dead air with zero events.
+      // Telemetry hygiene (codex): a stable error CLASS + a short sanitized message,
+      // never 300 chars of provider-controlled text as an exported attribute.
       onRetry: (info) => {
         retries++;
         events.emit(
           "model.retry",
           { ...spine, turn },
           {
+            kind: info.kind,
             "gen_ai.request.model": info.model,
             ...(info.provider ? { "gen_ai.provider": info.provider } : {}),
             attempt: info.attempt,
             ...(info.status !== undefined ? { status: info.status } : {}),
-            message: info.error.slice(0, 300),
+            "error.type": classifyRetryError(info.status, info.error),
+            message: info.error.replace(/\s+/g, " ").slice(0, 160),
             next_delay_ms: info.nextDelayMs,
           },
         );
@@ -964,6 +968,18 @@ function pendingCalls(db: Database, run: RunRow, assistant: AssistantMsg) {
       .map((m) => (m as { tool_call_id: string }).tool_call_id),
   );
   return (assistant.tool_calls ?? []).filter((c) => !answered.has(c.id));
+}
+
+/** Stable, low-cardinality error class for a model.retry event — the exported facet.
+ * The free-text message stays short + sanitized; dashboards group on THIS. */
+function classifyRetryError(status: number | undefined, error: string): string {
+  if (status === 429) return "rate_limit";
+  if (status === 401 || status === 403) return "auth";
+  if (status !== undefined && status >= 500) return "server";
+  if (status !== undefined) return "client";
+  if (/timed out|timeout/i.test(error)) return "timeout";
+  if (/overloaded/i.test(error)) return "overloaded";
+  return "network";
 }
 
 /** A4 retry-loop breaker state (per run, in-memory). `disabled` = tools quarantined this run;

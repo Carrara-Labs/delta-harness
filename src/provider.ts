@@ -124,34 +124,49 @@ export function failoverWorthy(r: ModelResult): boolean {
   return s === undefined || s === 409 || s === 401 || s === 403 || s === 429 || s >= 500;
 }
 
-/** Re-establish the provider wire after a boot or a VM suspend/resume. Two jobs in
- * one loop: (1) pay DNS + TLS off the first turn's critical path, (2) DRAIN dead
- * pooled sockets — after a Firecracker resume the NAT path behind idle keep-alive
- * sockets is gone, and the pool hands those corpses to the first real call (field
- * data 2026-07-29: ~150s hang each, ~300s of silent turn-1 stall). Each probe rides
- * a pooled-or-fresh socket with a 3s deadline: a corpse dies cheap and is evicted, a
- * healthy wire answers fast. Stop after two consecutive quick successes or `max`
- * probes. Fire-and-forget; never on a turn's path; never throws. */
+/** Re-establish the provider wire after a boot or a VM suspend/resume — BEST-EFFORT
+ * preconnect. Two jobs in one loop: (1) pay DNS + TLS off the first turn's critical
+ * path, (2) opportunistically exercise pooled sockets — after a Firecracker resume the
+ * NAT path behind idle keep-alive sockets is gone, and the pool hands those corpses to
+ * the first real call (field data 2026-07-29: ~150s hang each, ~300s of silent turn-1
+ * stall). Bun documents same-host pooling but no socket-selection contract, so probes
+ * cannot GUARANTEE a drained pool — the hard guarantee is the wire-suspect window
+ * (keepalive:false, below); this makes the common case fast. Never throws, never
+ * rejects: an invalid configured baseUrl must not take the daemon down (codex P1). */
 export async function warmupWire(providers: ProviderConfig[], max = 8): Promise<void> {
-  const origins = [...new Set(providers.map((p) => new URL(p.baseUrl).origin))];
-  await Promise.all(
-    origins.map(async (origin) => {
-      let okStreak = 0;
-      for (let i = 0; i < max && okStreak < 2; i++) {
-        const t0 = performance.now();
-        try {
-          await fetch(origin, { method: "HEAD", signal: AbortSignal.timeout(3_000) });
-          const ms = Math.round(performance.now() - t0);
-          okStreak = ms < 1_500 ? okStreak + 1 : 0;
-          if (i > 0 || ms >= 1_500)
-            console.error(`[wire] warmup ${origin} answered in ${ms}ms (probe ${i + 1})`);
-        } catch {
-          okStreak = 0;
-          console.error(`[wire] warmup ${origin} probe ${i + 1} dead — evicted a stale socket`);
+  try {
+    const origins = [
+      ...new Set(
+        providers.flatMap((p) => {
+          try {
+            return [new URL(p.baseUrl).origin];
+          } catch {
+            return [];
+          }
+        }),
+      ),
+    ];
+    await Promise.all(
+      origins.map(async (origin) => {
+        let okStreak = 0;
+        for (let i = 0; i < max && okStreak < 2; i++) {
+          const t0 = performance.now();
+          try {
+            await fetch(origin, { method: "HEAD", signal: AbortSignal.timeout(3_000) });
+            const ms = Math.round(performance.now() - t0);
+            okStreak = ms < 1_500 ? okStreak + 1 : 0;
+            if (i > 0 || ms >= 1_500)
+              console.error(`[wire] warmup ${origin} answered in ${ms}ms (probe ${i + 1})`);
+          } catch {
+            okStreak = 0;
+            console.error(`[wire] warmup ${origin} probe ${i + 1} dead — evicted a stale socket`);
+          }
         }
-      }
-    }),
-  );
+      }),
+    );
+  } catch {
+    /* warmup is comfort + observability, never a failure mode */
+  }
 }
 
 /** Try each provider in order; fall through on a failover-worthy error, stamping
@@ -166,7 +181,7 @@ export async function warmupWire(providers: ProviderConfig[], max = 8): Promise<
  * error, exactly as a single provider already would. */
 export async function chatVia(providers: ProviderConfig[], req: ChatRequest): Promise<ModelResult> {
   let last: ModelResult = { ok: false, model: "", error: "no providers configured" };
-  for (const p of providers) {
+  for (const [i, p] of providers.entries()) {
     let streamed = false;
     const perAttempt: ChatRequest = req.onDelta
       ? {
@@ -180,6 +195,20 @@ export async function chatVia(providers: ProviderConfig[], req: ChatRequest): Pr
     const res = await chat(p, perAttempt);
     last = p.label ? { ...res, provider: p.label } : res;
     if (last.ok || last.aborted || streamed || !failoverWorthy(last)) return last;
+    // The provider-transition report lives HERE — chat() cannot know whether another
+    // provider exists. Terminal failure (no next provider) stays unreported: the turn's
+    // own error handling tells that story.
+    if (i + 1 < providers.length && !last.ok) {
+      reportRetry(req, {
+        kind: "next_provider",
+        ...(p.label ? { provider: p.label } : {}),
+        model: last.model,
+        attempt: i + 1,
+        ...(last.status !== undefined ? { status: last.status } : {}),
+        error: last.error,
+        nextDelayMs: 0,
+      });
+    }
   }
   return last;
 }
@@ -191,18 +220,14 @@ export type ChatRequest = {
   signal?: AbortSignal;
   /** Streaming text deltas (SSE progress later); assembly happens regardless. */
   onDelta?: (text: string) => void;
-  /** Fired on EVERY failed attempt the cascade absorbs (in-provider retry, next-model,
-   * next-provider). Purely observational — the caller surfaces honest "retrying" state
-   * (task event + telemetry) instead of the silent 5-minute stall a user read as a hang
-   * (field data 2026-07-29). Never affects execution. */
-  onRetry?: (info: {
-    provider?: string;
-    model: string;
-    attempt: number;
-    status?: number;
-    error: string;
-    nextDelayMs: number;
-  }) => void;
+  /** Fired at every TRANSITION the cascade absorbs after a failed attempt — retrying the
+   * same model, re-minting a credential, moving to the next model, or failing over to the
+   * next provider. NOT fired on a terminal failure (nothing follows — the turn's own error
+   * handling reports that). Purely observational: the caller surfaces honest "retrying"
+   * state (task event + telemetry) instead of the silent 5-minute stall a user read as a
+   * hang (field data 2026-07-29). Invocations are try/caught — a throwing observer can
+   * never affect execution. */
+  onRetry?: (info: RetryInfo) => void;
   /** Streaming extended-thinking / reasoning deltas, per wire (Anthropic `thinking_delta`,
    * OpenAI-compat `reasoning`/`reasoning_content`, Responses reasoning-summary). Purely
    * observational: it is NEVER coupled to the `emitted` failover guard, so a provider that
@@ -356,16 +381,32 @@ export function withTimeout(
   return parts.length === 1 ? (parts[0] as AbortSignal) : AbortSignal.any(parts);
 }
 
-/** Bound the connect + time-to-first-header window through the SAME idle controller
+/** Bound the connect + time-to-first-header window through the SAME watchdog controller
  * (one abort seam, no extra signal plumbing). Field data 2026-07-29: after a Fly
  * suspend/resume, the first provider call rode a dead socket and hung ~150s per
  * attempt — ~300s of silent turn-1 stall on a third of prod runs. Disarm the moment
- * fetch resolves; sseLines takes over from the first body chunk. */
+ * fetch resolves; sseLines takes over from the first body chunk. Aborts with a typed
+ * reason so the failure reads "first byte", never the absolute cap's number. */
 function armFirstByte(idle: AbortController | undefined, ms: number): () => void {
   if (!idle || ms <= 0) return () => {};
-  const t = setTimeout(() => idle.abort(), ms);
+  const t = setTimeout(
+    () => idle.abort(new DOMException(`no response headers within ${ms}ms`, "TimeoutError")),
+    ms,
+  );
   return () => clearTimeout(t);
 }
+
+/* After a suspend/resume the fetch pool may hold sockets whose NAT path died with the
+ * freeze. During a short suspect window every provider call opts OUT of connection
+ * reuse (Bun honors `keepalive: false` per request: fresh socket in, none pooled
+ * after — verified empirically 2026-07-29), trading one TLS handshake per call for
+ * immunity to the 150s dead-socket hang. The daemon marks the window on resume
+ * detection (index.ts heartbeat gap). */
+let wireSuspectUntil = 0;
+export function markWireSuspect(ms = 120_000): void {
+  wireSuspectUntil = Date.now() + ms;
+}
+const wireKeepalive = (): boolean => Date.now() >= wireSuspectUntil;
 
 /** Race a promise against an abort signal (with listener cleanup) — bounds work that
  * happens BEFORE fetch, like a broker credential mint, under the same deadline. */
@@ -403,9 +444,20 @@ function classifyTimeout(
   if (req.signal?.aborted) return { ok: false, model, error: "aborted", aborted: true };
   const name = (e as { name?: string } | undefined)?.name;
   if (name === "TimeoutError" || name === "AbortError") {
+    // A typed abort reason (the first-byte deadline) carries its own phase + number;
+    // only the bare/native abort falls back to the absolute cap's figure. Both shapes
+    // keep "timed out" (RETRIABLE) and "before first token" (the phase) in the text.
+    const msg = (e as { message?: string } | undefined)?.message;
+    const informative = msg && !/aborted|The operation/i.test(msg);
     return emitted
       ? { ok: false, model, error: "model stream stalled after first token" } // terminal: don't re-stream
-      : { ok: false, model, error: `model call timed out after ${ms}ms before first token` };
+      : {
+          ok: false,
+          model,
+          error: informative
+            ? `model call timed out before first token: ${msg}`
+            : `model call timed out after ${ms}ms before first token`,
+        };
   }
   return null;
 }
@@ -430,6 +482,39 @@ function normalizeError(body: string): string {
     if (code) return String(code).slice(0, 2000);
   } catch {}
   return body.slice(0, 2000) || "(empty error body)";
+}
+
+/** One cascade transition after a failed model attempt (see ChatRequest.onRetry). */
+export type RetryInfo = {
+  kind: "retry" | "reauth" | "next_model" | "next_provider";
+  provider?: string;
+  model: string;
+  attempt: number;
+  status?: number;
+  error: string;
+  nextDelayMs: number;
+};
+
+/** Report a cascade transition to the observer — guarded so a throwing observer can
+ * never affect model execution (onRetry is documented observational), and logged so a
+ * failed attempt is never silent even without an observer. */
+function reportRetry(req: ChatRequest, info: RetryInfo): void {
+  const next =
+    info.kind === "retry"
+      ? `retry in ${info.nextDelayMs}ms`
+      : info.kind === "reauth"
+        ? "re-minting credential"
+        : info.kind === "next_model"
+          ? "next model"
+          : "failing over to next provider";
+  console.error(
+    `[model retry] ${info.model} attempt ${info.attempt} failed (${info.status ?? "net"}: ${info.error.replace(/\s+/g, " ").slice(0, 160)}) → ${next}`,
+  );
+  try {
+    req.onRetry?.(info);
+  } catch {
+    /* observer bug ≠ turn failure */
+  }
 }
 
 export async function chat(cfg: ProviderConfig, req: ChatRequest): Promise<ModelResult> {
@@ -483,29 +568,42 @@ export async function chat(cfg: ProviderConfig, req: ChatRequest): Promise<Model
       if ((s === 401 || s === 403) && cfg.credential?.invalidate && !reauthed) {
         reauthed = true;
         attempt--;
+        reportRetry(req, {
+          kind: "reauth",
+          ...(cfg.label ? { provider: cfg.label } : {}),
+          model,
+          attempt: attempt + 2, // pre-decrement view: the attempt that just failed
+          ...(s !== undefined ? { status: s } : {}),
+          error: last.error,
+          nextDelayMs: 0,
+        });
         continue;
       }
       // Credential-wide failures aren't model-specific — don't try this provider's other models,
       // fail over to the next provider. A 429 is identity-wide only for a SHARED subscription
       // credential; a metered/keyed provider falls through to its normal retry+next-model path.
+      // chatVia owns the next_provider report — only IT knows whether another provider exists.
       if (s === 401 || s === 403 || s === 409 || (s === 429 && shared)) return last;
       const exhausted = !retriable(s, last.error) || attempt >= maxRetries;
-      const delay = exhausted ? 0 : Math.min(500 * 2 ** attempt + Math.random() * 250, 10_000);
-      // A failed attempt must never be silent: one log line + one observer callback per
-      // failure, whether we retry, move to the next model, or fail over entirely.
-      console.error(
-        `[model retry] ${model} attempt ${attempt + 1} failed (${s ?? "net"}: ${last.error.slice(0, 160)}) → ${exhausted ? "next model/provider" : `retry in ${delay}ms`}`,
-      );
-      req.onRetry?.({
-        ...(cfg.label ? { provider: cfg.label } : {}),
-        model,
-        attempt: attempt + 1,
-        ...(s !== undefined ? { status: s } : {}),
-        error: last.error,
-        nextDelayMs: delay,
-      });
-      if (exhausted) break; // next model
-      await Bun.sleep(delay);
+      const nextModel = cfg.models[cfg.models.indexOf(model) + 1];
+      // Report only real transitions: a retry that WILL happen, or a move to a model that
+      // EXISTS. The terminal failure of the last model is chatVia's (or the turn's) story.
+      if (!exhausted || nextModel) {
+        const delay = exhausted ? 0 : Math.min(500 * 2 ** attempt + Math.random() * 250, 10_000);
+        reportRetry(req, {
+          kind: exhausted ? "next_model" : "retry",
+          ...(cfg.label ? { provider: cfg.label } : {}),
+          model,
+          attempt: attempt + 1,
+          ...(s !== undefined ? { status: s } : {}),
+          error: last.error,
+          nextDelayMs: delay,
+        });
+        if (exhausted) break; // next model
+        await Bun.sleep(delay);
+      } else {
+        break; // last model exhausted — surface `last` to chatVia
+      }
       if (req.signal?.aborted) return { ok: false, model, error: "aborted", aborted: true };
     }
   }
@@ -602,7 +700,10 @@ async function streamOnce(
   const start = performance.now();
   const timeoutMs = cfg.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const idleMs = cfg.streamIdleMs ?? DEFAULT_IDLE_MS;
-  const idle = idleMs > 0 ? new AbortController() : undefined;
+  const fbMs = cfg.firstByteMs ?? DEFAULT_FIRST_BYTE_MS;
+  // Independent knobs, one controller: disabling the sparse-stream idle watchdog must
+  // not silently disable the first-byte deadline too (codex 0.2.5 review).
+  const idle = idleMs > 0 || fbMs > 0 ? new AbortController() : undefined;
   // One composed deadline for the WHOLE call — including the credential mint that happens
   // before fetch (a hung broker must not escape the timeout; codex #6).
   const sig = withTimeout(req.signal, timeoutMs, idle);
@@ -645,7 +746,7 @@ async function streamOnce(
   }
 
   let res: Response;
-  const disarmFB = armFirstByte(idle, cfg.firstByteMs ?? DEFAULT_FIRST_BYTE_MS);
+  const disarmFB = armFirstByte(idle, fbMs);
   try {
     res = await fetch(`${cfg.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
@@ -657,6 +758,7 @@ async function streamOnce(
       },
       body: JSON.stringify(body),
       signal: sig,
+      keepalive: wireKeepalive(),
     });
   } catch (e) {
     const t = classifyTimeout(model, e, req, emitted, timeoutMs);
@@ -691,7 +793,10 @@ async function streamOnce(
   const calls: WireToolCall[] = [];
 
   try {
-    for await (const data of sseLines(res.body, idle ? { ctrl: idle, ms: idleMs } : undefined)) {
+    for await (const data of sseLines(
+      res.body,
+      idle && idleMs > 0 ? { ctrl: idle, ms: idleMs } : undefined,
+    )) {
       if (data === "[DONE]") {
         terminal = true;
         break;
@@ -905,7 +1010,8 @@ async function streamAnthropic(
   const start = performance.now();
   const timeoutMs = cfg.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const idleMs = cfg.streamIdleMs ?? DEFAULT_IDLE_MS;
-  const idle = idleMs > 0 ? new AbortController() : undefined;
+  const fbMs = cfg.firstByteMs ?? DEFAULT_FIRST_BYTE_MS;
+  const idle = idleMs > 0 || fbMs > 0 ? new AbortController() : undefined;
   // One composed deadline for the WHOLE call — including the credential mint that happens
   // before fetch (a hung broker must not escape the timeout; codex #6).
   const sig = withTimeout(req.signal, timeoutMs, idle);
@@ -978,7 +1084,7 @@ async function streamAnthropic(
   }
 
   let res: Response;
-  const disarmFB = armFirstByte(idle, cfg.firstByteMs ?? DEFAULT_FIRST_BYTE_MS);
+  const disarmFB = armFirstByte(idle, fbMs);
   try {
     res = await fetch(`${cfg.baseUrl.replace(/\/+$/, "")}/messages`, {
       method: "POST",
@@ -991,6 +1097,7 @@ async function streamAnthropic(
       },
       body: JSON.stringify(body),
       signal: sig,
+      keepalive: wireKeepalive(),
     });
   } catch (e) {
     const t = classifyTimeout(model, e, req, emitted, timeoutMs);
@@ -1022,7 +1129,7 @@ async function streamAnthropic(
   const partialInput = new Map<number, string>(); // tool_use block index → json accumulator
 
   try {
-    for await (const data of sseLines(res.body, idle ? { ctrl: idle, ms: idleMs } : undefined)) {
+    for await (const data of sseLines(res.body, idle && idleMs > 0 ? { ctrl: idle, ms: idleMs } : undefined)) {
       if (!data || data === "[DONE]") continue;
       let ev: AnthropicEvent;
       try {
@@ -1195,7 +1302,8 @@ async function streamResponses(
   const start = performance.now();
   const timeoutMs = cfg.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const idleMs = cfg.streamIdleMs ?? DEFAULT_IDLE_MS;
-  const idle = idleMs > 0 ? new AbortController() : undefined;
+  const fbMs = cfg.firstByteMs ?? DEFAULT_FIRST_BYTE_MS;
+  const idle = idleMs > 0 || fbMs > 0 ? new AbortController() : undefined;
   // One composed deadline for the WHOLE call — including the credential mint that happens
   // before fetch (a hung broker must not escape the timeout; codex #6).
   const sig = withTimeout(req.signal, timeoutMs, idle);
@@ -1237,7 +1345,7 @@ async function streamResponses(
   }
 
   let res: Response;
-  const disarmFB = armFirstByte(idle, cfg.firstByteMs ?? DEFAULT_FIRST_BYTE_MS);
+  const disarmFB = armFirstByte(idle, fbMs);
   try {
     res = await fetch(`${cfg.baseUrl.replace(/\/+$/, "")}/responses`, {
       method: "POST",
@@ -1249,6 +1357,7 @@ async function streamResponses(
       },
       body: JSON.stringify(body),
       signal: sig,
+      keepalive: wireKeepalive(),
     });
   } catch (e) {
     const t = classifyTimeout(model, e, req, emitted, timeoutMs);
@@ -1282,7 +1391,7 @@ async function streamResponses(
   const byItem = new Map<string, WireToolCall>(); // function_call item_id → call
 
   try {
-    for await (const data of sseLines(res.body, idle ? { ctrl: idle, ms: idleMs } : undefined)) {
+    for await (const data of sseLines(res.body, idle && idleMs > 0 ? { ctrl: idle, ms: idleMs } : undefined)) {
       if (!data || data === "[DONE]") continue;
       let ev: ResponsesEvent;
       try {
