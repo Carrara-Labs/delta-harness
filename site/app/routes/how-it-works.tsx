@@ -61,6 +61,10 @@ export default function HowItWorks() {
                 Delta is the open source runtime for long-running autonomous agents. You hold the
                 judgment and the last word. It systematizes the knowledge work beneath you.
               </p>
+              <p className="hiw-cap">
+                Never built an agent before? <a href="/learn/">Start from zero &rarr;</a> a guided
+                walk from &ldquo;what is an LLM call?&rdquo; to the metal.
+              </p>
             </div>
             <aside className="hiw-hero-panel">
               <p className="hiw-panel-cap">What you get</p>

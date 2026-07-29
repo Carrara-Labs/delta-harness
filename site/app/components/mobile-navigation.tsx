@@ -23,6 +23,11 @@ type NavItem = {
 
 const navigation: NavItem[] = [
   {
+    href: "/learn/",
+    label: "Learn",
+    description: "Zero to metal: a guided teardown for anyone",
+  },
+  {
     href: "/how-it-works",
     label: "How it works",
     description: "A visual crash course on the runtime",
