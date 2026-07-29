@@ -802,7 +802,7 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 
       <p class="lead">Imagine you ask an assistant: "What's the weather in Paris, and should I bring an umbrella to my 3pm?" A raw model can <em>write</em> a confident answer, but it can't actually look up the forecast or read your calendar. It will guess. To do the job for real, something has to let the model <strong>act</strong>, then feed the results back so it can continue.</p>
 
-      <p>The breakthrough idea is the <span class="term" data-t="toolcall">tool call</span>. Instead of only writing prose, the model is allowed to reply with a structured request like <em>"call <code>get_weather(city: 'Paris')</code>."</em> The surrounding program runs that function for real, then hands the answer back to the model as more text. The model reads it and decides what to do next. Repeat until the job is done. That repetition is <strong>the agent loop</strong>.</p>
+      <p>The breakthrough idea is the <span class="term" data-t="toolcall">tool call</span>. Instead of only writing prose, the model is allowed to reply with a structured request like <em>"call <code>get_weather(city: 'Paris')</code>."</em> The surrounding program runs that function for real, then hands the answer back to the model as more text. The model reads it and decides what to do next. Repeat until the job is done. That repetition is <strong>the agent loop</strong>. A tool call is still just text - text in a strict shape the harness knows how to read - so nothing from chapter 1 has changed; we have only agreed on a format the model can use to <em>ask</em> for an action.</p>
 
       <div class="fig">
         <div class="flow">
@@ -810,29 +810,34 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
           <div class="arw">→</div>
           <div class="node clay"><span class="h">2 · It asks for a tool</span><span class="d">get_weather("Paris")</span></div>
           <div class="arw">→</div>
-          <div class="node slate"><span class="h">3 · Run the tool</span><span class="d">real API returns "14°, rain"</span></div>
+          <div class="node slate"><span class="h">3 · Run the tool</span><span class="d">weather service returns "14°, rain"</span></div>
           <div class="arw">↺</div>
-          <div class="node sage"><span class="h">4 · Feed result back</span><span class="d">loop, until it answers</span></div>
+          <div class="node sage"><span class="h">4 · Feed result back</span><span class="d">then back to step 1, until it answers</span></div>
         </div>
-        <p class="cap"><b>The agent loop.</b> Call → act → observe → repeat. The model drives; the harness does the hands. When the model replies with prose instead of a tool request, the loop ends and that prose is the answer.</p>
+        <p class="cap"><b>The agent loop.</b> Call → act → observe → <b>back to the top</b>, again and again. The model drives; the harness does the hands. When the model replies with plain prose instead of a tool request, the loop ends and that prose is the answer.</p>
       </div>
 
       <div class="viz">
         <div class="vhead"><span class="vtag">Look inside</span><span class="vttl">What a tool call actually is</span></div>
-        <p class="vsub">Not magic - structured text. You advertise the tools, the model picks one, you run it and hand the result back. One real exchange, in shape:</p>
+        <p class="vsub">Not magic - just structured text. The <span class="term" data-t="harness">harness</span> advertises the tools, the model picks one, the harness runs it, and hands the result back - then the model can ask for another. To read the blocks below: the braces and quotes are <span class="term" data-t="json">JSON</span>, a compact way to write named values, so <code>{ "city": "Paris" }</code> just means the city is Paris.</p>
         <div class="wire">
-          <div class="wire-msg you"><div class="wl"><span>1 · you → model</span><span>prompt + tool menu</span></div><pre><span class="c"># the conversation so far, plus a list of tools it may call</span>
-messages: [ … "should I bring an umbrella to my 3pm?" ]
+          <div class="wire-msg you"><div class="wl"><span>1 · harness → model</span><span>the task + a menu of tools</span></div><pre><span class="c"># the conversation so far, plus the tools it may call</span>
+messages: [ … "umbrella for my 3pm outdoor plan?" ]
 tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</span> ]</pre></div>
           <div class="wire-arrow">↓</div>
-          <div class="wire-msg model"><div class="wl"><span>2 · model → you</span><span>not prose - a tool call</span></div><pre>{ <span class="k">"tool_call"</span>: <span class="s">"get_weather"</span>,
-  <span class="k">"arguments"</span>: { <span class="k">"city"</span>: <span class="s">"Paris"</span> } }</pre></div>
+          <div class="wire-msg model"><div class="wl"><span>2 · model → harness</span><span>not prose - a tool call</span></div><pre>{ <span class="k">"tool_call"</span>: <span class="s">"get_weather"</span>,
+  <span class="k">"arguments"</span>: { <span class="k">"city"</span>: <span class="s">"Paris"</span> } }   <span class="c">← run get_weather for Paris</span></pre></div>
           <div class="wire-arrow">↓</div>
-          <div class="wire-msg you"><div class="wl"><span>3 · you → model</span><span>you run it, feed the result back</span></div><pre>{ <span class="k">"temp_c"</span>: <span class="s">14</span>, <span class="k">"condition"</span>: <span class="s">"rain"</span> }</pre></div>
+          <div class="wire-msg you"><div class="wl"><span>3 · harness → model</span><span>it runs the tool, hands back the result</span></div><pre>{ <span class="k">"temp_c"</span>: <span class="s">14</span>, <span class="k">"condition"</span>: <span class="s">"rain"</span> }</pre></div>
           <div class="wire-arrow">↓</div>
-          <div class="wire-msg model"><div class="wl"><span>4 · model → you</span><span>now it can answer for real</span></div><pre>Yes - it's 14°C and raining in Paris. Bring an umbrella.</pre></div>
+          <div class="wire-msg model"><div class="wl"><span>4 · model → harness</span><span>still not done - it asks for a second tool</span></div><pre>{ <span class="k">"tool_call"</span>: <span class="s">"read_calendar"</span>,
+  <span class="k">"arguments"</span>: { <span class="k">"when"</span>: <span class="s">"today 3pm"</span> } }</pre></div>
+          <div class="wire-arrow">↓</div>
+          <div class="wire-msg you"><div class="wl"><span>5 · harness → model</span><span>the second result, handed back</span></div><pre>{ <span class="k">"event"</span>: <span class="s">"walk in the park"</span>, <span class="k">"outdoor"</span>: <span class="s">true</span> }</pre></div>
+          <div class="wire-arrow">↓</div>
+          <div class="wire-msg model"><div class="wl"><span>6 · model → harness</span><span>now it has enough to answer</span></div><pre>Your 3pm is an outdoor walk, and it's 14°C and raining in Paris. Bring an umbrella.</pre></div>
         </div>
-        <p class="vsub" style="margin:12px 0 0">Steps 2 and 3 are the whole trick. The harness runs the real function between them and loops - that is the agent loop above, seen up close.</p>
+        <p class="vsub" style="margin:12px 0 0">The model went round the loop <b>twice</b> - weather, then calendar - before it could answer. That is exactly why one call isn't enough. The harness runs each real tool in between and keeps handing results back until the model stops asking.</p>
       </div>
 
       <p>This one pattern is what turns a text predictor into something that can research, calculate, file, and follow multi-step plans. But notice everything the loop now needs to manage: which tools exist, how to run them safely, what to do when a tool fails, how much the whole thing is costing, and what to keep versus forget as the history grows. None of that is the model's job. It's the harness's job.</p>
@@ -840,7 +845,7 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
       <details class="deeper">
         <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">how tool calling works</span><span class="peek">schemas in, tool_call out</span></summary>
         <div class="db">
-          <p>Modern providers support tool-calling natively. Alongside the messages, you also send a list of tool <em>schemas</em> - each one just a name, a description, and the shape of the arguments it accepts. Given that menu, the model can reply with a <span class="term" data-t="toolcall">tool call</span> instead of prose.</p>
+          <p>Modern providers support tool-calling as a built-in feature. Alongside the messages, you also send a list of tool <em>schemas</em> - each one just a name, a description, and the shape of the arguments it accepts. Given that menu, the model can reply with a <span class="term" data-t="toolcall">tool call</span> instead of prose.</p>
           <p>Your loop does the rest: it runs the requested tool for real, appends the result as a new <code>tool</code> message, and calls the model again. Read, act, feed back, repeat.</p>
           <p>The loop is where the hard decisions live: when to stop (the model wrote prose, or you hit a limit), whether to run several tool calls at once or one at a time, and how to keep the ever-growing transcript inside the <span class="term" data-t="context">context window</span>. None of that is the model's job - it is the harness's.</p>
         </div>
