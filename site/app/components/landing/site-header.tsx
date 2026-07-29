@@ -47,7 +47,6 @@ export function SiteHeader() {
         </a>
 
         <div className="nav-links">
-          <a href="/learn/">Learn</a>
           <a
             href="/how-it-works"
             className={active("/how-it-works")}
@@ -55,6 +54,7 @@ export function SiteHeader() {
           >
             How it works
           </a>
+          <a href="/learn/">Learn</a>
           <a href="/docs/">Documentation</a>
           <a
             href="/changelog"
