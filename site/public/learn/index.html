@@ -959,27 +959,6 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
         <p class="cap"><b>Three parts, one agent.</b> Change the bundle and the same engine becomes a different worker. Keep the state and it remembers across restarts.</p>
       </div>
 
-      <div class="arch">
-        <div class="arch-seam"><span class="sl">The seam · HTTP in / out</span><span class="sr">POST /v1/responses · POST /v1/tasks · GET /healthz</span></div>
-        <div class="arch-engine">
-          <div class="el"><span>Engine · the binary, names no product</span><span>&lt;2k-token spine</span></div>
-          <div class="arch-parts">
-            <div class="arch-part"><span class="pn">Run loop</span><span class="pd">the turn cycle + budgets</span></div>
-            <div class="arch-part"><span class="pn">Provider</span><span class="pd">model calls · failover · cache</span></div>
-            <div class="arch-part"><span class="pn">Tools</span><span class="pd">builtins + MCP client</span></div>
-            <div class="arch-part"><span class="pn">Context</span><span class="pd">compaction · spill</span></div>
-            <div class="arch-part"><span class="pn">Memory</span><span class="pd">scoped recall + reflect</span></div>
-            <div class="arch-part"><span class="pn">Safety</span><span class="pd">untrusted · SSRF · guards</span></div>
-          </div>
-        </div>
-        <div class="arch-link">↑ reads the bundle at boot ···· writes new state every turn ↓</div>
-        <div class="arch-feeds">
-          <div class="arch-col bundle"><p class="cl2">Bundle · config you version like code</p><div class="chips2"><span class="c2">delta.env</span><span class="c2">vocab.json</span><span class="c2">POLICY.md</span><span class="c2">DELTA.md</span><span class="c2">PROMPT_CONTEXT.md</span></div></div>
-          <div class="arch-col state"><p class="cl2">State · local SQLite (WAL)</p><div class="chips2"><span class="c2">messages</span><span class="c2">journal</span><span class="c2">memory</span><span class="c2">revisions</span><span class="c2">events</span></div></div>
-        </div>
-        <p class="cap"><b>The whole system on one page.</b> Requests enter through the seam - the web addresses along the top, which we unpack right below. The product-free engine runs the loop, reading the <b>bundle</b> for identity and rules and the <b>state</b> for memory, and writing fresh state on every turn. The rest of this page zooms into each box.</p>
-      </div>
-
       <style>
       .doors { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 18px 0; }
       .door { border: 1px solid var(--line-strong); border-radius: 14px; background: var(--card); padding: 18px 20px; }
@@ -987,21 +966,46 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
       .door .dname { font-size: 16.5px; font-weight: 640; margin: 0 0 9px; line-height: 1.25; }
       .door > p { max-width: none; margin: 0; font-size: 14px; color: var(--mutedink); line-height: 1.5; }
       .door .dpath { font-family: var(--mono); font-size: 11.5px; color: var(--mutedink); border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
-      @media (max-width: 620px) { .doors { grid-template-columns: 1fr; } }
+      .verbs { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 16px 0; }
+      .verb-card { border: 1px solid var(--line-strong); border-radius: 14px; background: var(--card); padding: 15px 18px; }
+      .verb-card .vk { display: inline-block; font-family: var(--mono); font-size: 12px; font-weight: 700; letter-spacing: .04em; color: var(--sage); background: color-mix(in srgb, var(--sage) 10%, var(--paper)); border: 1px solid color-mix(in srgb, var(--sage) 30%, var(--line)); border-radius: 6px; padding: 3px 10px; }
+      .verb-card .vt { display: block; font-size: 15.5px; font-weight: 640; margin: 10px 0 4px; }
+      .verb-card .vd { display: block; font-size: 13.5px; color: var(--mutedink); line-height: 1.5; }
+      .anat { display: flex; flex-direction: column; gap: 9px; }
+      .anat-row { display: grid; grid-template-columns: 108px 1fr; gap: 14px; align-items: baseline; }
+      .anat .seg { font-family: var(--mono); font-size: 13.5px; font-weight: 600; color: var(--sage); background: color-mix(in srgb, var(--sage) 10%, var(--paper)); border: 1px solid color-mix(in srgb, var(--sage) 28%, var(--line)); border-radius: 7px; padding: 6px 4px; text-align: center; }
+      .anat .lab { font-size: 13.5px; color: var(--mutedink); line-height: 1.5; }
+      .anat .lab b { color: var(--ink); font-weight: 640; }
+      @media (max-width: 620px) { .doors, .verbs { grid-template-columns: 1fr; } .anat-row { grid-template-columns: 1fr; gap: 3px; } .anat .seg { justify-self: start; padding: 6px 12px; } }
       </style>
       <h3>How you talk to it: the seam</h3>
-      <p>Before we zoom into the three parts, a word about that top row of the diagram, because it is the one genuinely new idea here. You don't open Delta the way you open an app. It runs quietly as a <em>service</em>, and other software talks to it through an <span class="term" data-t="api">API</span>. An API is simply how one program asks another to do something: your software sends a request through a doorway, the other program does the work, and the answer comes back out.</p>
+      <p>There is one genuinely new idea in this chapter, so let's take it slowly. Delta has no app you open. It runs quietly as a <em>service</em> in the background, and everything talks to it the same way - a website, a script, a chat app - through an <span class="term" data-t="api">API</span>.</p>
+      <p><strong>An API is just a way for one program to ask another to do something.</strong> One program sends a request through a doorway; the other does the work and passes the answer back. That is the entire idea.</p>
       <div class="fig">
         <div class="flow">
           <div class="node sage"><span class="h">Your software</span><span class="d">a website, a script, a chat app</span></div>
           <div class="arw">→</div>
           <div class="node clay"><span class="h">The seam</span><span class="d">Delta's one small front door</span></div>
           <div class="arw">→</div>
-          <div class="node slate"><span class="h">The agent</span><span class="d">does the work, sends the answer back</span></div>
+          <div class="node slate"><span class="h">The agent</span><span class="d">does the work, answers back</span></div>
         </div>
-        <p class="cap"><b>The seam is Delta's doorway.</b> It is the only way in - everything the outside world can ask an agent to do passes through it, and the set of doors is kept deliberately tiny.</p>
+        <p class="cap"><b>The seam is that doorway.</b> "Seam" is simply our name for Delta's API - the small, fixed set of doors the outside world uses. Everything an agent can be asked to do passes through it, and nothing else.</p>
       </div>
-      <p>Two of those doors do the real work. They differ in just one thing: how long the job takes.</p>
+      <p>Every request through the doorway is two things: a <strong>verb</strong> (what you want to do) and an <strong>address</strong> (what you want to do it to). You only ever need two verbs.</p>
+      <div class="verbs">
+        <div class="verb-card"><span class="vk">GET</span><span class="vt">Read something</span><span class="vd">Fetch information without changing anything - like checking whether the agent is awake.</span></div>
+        <div class="verb-card"><span class="vk">POST</span><span class="vt">Send something</span><span class="vd">Hand data in and make the agent act - like giving it a question to answer or a task to run.</span></div>
+      </div>
+      <p>The address is a <em>path</em>, read left to right. Take the one you'll use most and pull it apart:</p>
+      <div class="fig">
+        <div class="anat">
+          <div class="anat-row"><code class="seg">POST</code><span class="lab"><b>The verb.</b> "Send this in and act on it." (A GET here would only read.)</span></div>
+          <div class="anat-row"><code class="seg">/v1</code><span class="lab"><b>The version.</b> Version 1 of the API. A later version can be added without breaking code that already uses v1.</span></div>
+          <div class="anat-row"><code class="seg">/responses</code><span class="lab"><b>The thing you want.</b> Here, a response from the agent.</span></div>
+        </div>
+        <p class="cap"><b>How to read an endpoint.</b> Put it together and <code>POST /v1/responses</code> means "send a message to version 1's <em>responses</em> door, and get the agent's answer." Read one, and you can read them all.</p>
+      </div>
+      <p>With that, Delta's whole seam is just two working doors and a heartbeat. The two doors differ in one thing: how long the job takes.</p>
       <div class="doors">
         <div class="door">
           <p class="dwhen">For a quick turn</p>
@@ -1039,6 +1043,29 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
 
       <h3>The state</h3>
       <p>Everything the agent has actually done: its run history, its scoped memories, its progress on the current task. It lives in a local database so it survives a crash, a restart, or a redeploy. Chapters 8, 9, and 11 are all about this.</p>
+
+      <h3>The whole system, on one page</h3>
+      <p>You've now met all three parts and the doorway they sit behind. Here they are together - the same picture from the top of a real Delta agent.</p>
+      <div class="arch">
+        <div class="arch-seam"><span class="sl">The seam · HTTP in / out</span><span class="sr">POST /v1/responses · POST /v1/tasks · GET /healthz</span></div>
+        <div class="arch-engine">
+          <div class="el"><span>Engine · the binary, names no product</span><span>&lt;2k-token spine</span></div>
+          <div class="arch-parts">
+            <div class="arch-part"><span class="pn">Run loop</span><span class="pd">the turn cycle + budgets</span></div>
+            <div class="arch-part"><span class="pn">Provider</span><span class="pd">model calls · failover · cache</span></div>
+            <div class="arch-part"><span class="pn">Tools</span><span class="pd">builtins + MCP client</span></div>
+            <div class="arch-part"><span class="pn">Context</span><span class="pd">compaction · spill</span></div>
+            <div class="arch-part"><span class="pn">Memory</span><span class="pd">scoped recall + reflect</span></div>
+            <div class="arch-part"><span class="pn">Safety</span><span class="pd">untrusted · SSRF · guards</span></div>
+          </div>
+        </div>
+        <div class="arch-link">↑ reads the bundle at boot ···· writes new state every turn ↓</div>
+        <div class="arch-feeds">
+          <div class="arch-col bundle"><p class="cl2">Bundle · config you version like code</p><div class="chips2"><span class="c2">delta.env</span><span class="c2">vocab.json</span><span class="c2">POLICY.md</span><span class="c2">DELTA.md</span><span class="c2">PROMPT_CONTEXT.md</span></div></div>
+          <div class="arch-col state"><p class="cl2">State · local SQLite (WAL)</p><div class="chips2"><span class="c2">messages</span><span class="c2">journal</span><span class="c2">memory</span><span class="c2">revisions</span><span class="c2">events</span></div></div>
+        </div>
+        <p class="cap"><b>Everything you just met, in one place.</b> Requests come in through the seam at the top. The product-free engine runs the loop, reading the <b>bundle</b> for who the agent is and the <b>state</b> for what it remembers, and writing fresh state on every turn. Each box on this map is a chapter later on.</p>
+      </div>
 
       <div class="note">
         <p class="nt">Why the split is the whole point</p>
