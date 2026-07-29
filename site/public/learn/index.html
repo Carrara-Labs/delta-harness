@@ -379,7 +379,7 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
    On narrow screens keep a readable minimum and scroll inside the box (never
    the page) so SVG labels don't shrink into illegibility. */
 .hfig { max-width: 620px; margin: 4px auto 0; overflow-x: auto; }
-@media (max-width: 560px) { .hfig svg { min-width: 480px; } }
+@media (max-width: 560px) { .hfig svg { min-width: 600px; } }
 
 /* cause -> effect -> payoff rows (ch4 thesis) */
 .causal { display: flex; flex-direction: column; gap: 11px; }
@@ -546,7 +546,7 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 .tokchip.b { background: color-mix(in srgb, var(--sage) 9%, var(--muted)); color: var(--ink); }
 .tokstat { display: flex; gap: 22px; flex-wrap: wrap; font-family: var(--mono); font-size: 12.5px; }
 .tokstat b { font-size: 20px; font-weight: 700; letter-spacing: -.02em; display: block; color: var(--ink); }
-.tokstat .lb { color: var(--mutedink); font-size: 11px; letter-spacing: .04em; }
+.tokstat .lb { color: var(--mutedink); font-size: 12.5px; letter-spacing: .04em; }
 
 /* ---- budget meter ---- */
 .meter { margin: 8px 0; }
@@ -559,7 +559,7 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 
 /* ---- loop simulator ---- */
 .simu-stage { display: grid; grid-template-columns: 1fr; gap: 16px; }
-.simu-track { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+.simu-track { display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 8px; align-items: stretch; }
 .simu-node { flex: 1 1 132px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); padding: 11px 13px; min-width: 0; transition: all .25s; position: relative; }
 .simu-node .sn { font-family: var(--mono); font-size: 12px; font-weight: 700; display: block; }
 .simu-node .sd { font-size: 12.5px; color: var(--mutedink); line-height: 1.35; margin-top: 2px; }
@@ -610,7 +610,7 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 .prodgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 22px 0; }
 .prodcard { border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 18px 20px; }
 .prodcard .pk { font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--sage); margin: 0 0 8px; }
-.prodcard h4 { margin: 0 0 8px; font-size: 16px; }
+.prodcard h4 { margin: 0 0 8px; font-size: 16px; font-family: var(--sans); }
 .prodcard p { margin: 0 0 8px; font-size: 13.5px; color: var(--mutedink); line-height: 1.5; max-width: none; }
 .prodcard p:last-child { margin-bottom: 0; }
 @media (max-width: 620px) { .prodgrid { grid-template-columns: 1fr; } }
@@ -1742,7 +1742,7 @@ A teammate can act on your reply without re-checking it.
       </details>
 
       <h3>Subagents - delegating safely</h3>
-      <p>For a big task, the agent can fan out helpers. Delta's <span class="term" data-t="research">research</span> subagents run <em>in the same process</em>, up to three at a time, and are <strong>read-only by construction</strong>: a helper is handed only tools explicitly marked read-only, and can never write memory, spawn more helpers, or run forever.</p>
+      <p>For a big task, the agent can fan out helpers, and there are two kinds. A <span class="term" data-t="research">research</span> helper runs <em>in the same process</em>, up to three at a time, and is <strong>read-only by construction</strong>: it is handed only tools marked read-only, so it can look things up but never write. A heavier <span class="term" data-t="subagent">spawn_subagent</span> starts an isolated child process whose own profile decides whether it may write. Either way, both are capped by a budget, neither can spawn a further helper or run forever, and the parent is charged for the work.</p>
       <div class="note">
         <p class="nt">Same rules, not just same rights</p>
         <p>A subagent is built from the <em>same spine</em> as its parent - the same identity, the same safety norms, the same policy. So a helper inherits the parent's operating rules along with its capabilities: powerful and constrained, not powerful and loose. Only the helper's short summary re-enters the parent's context; its full findings go to a file. All of a child's cost is charged back to the parent, once.</p>
@@ -1859,12 +1859,14 @@ A teammate can act on your reply without re-checking it.
     .usecases { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin: 24px 0; }
     .usecase { border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 18px 20px; }
     .usecase .uk { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--sage); margin: 0 0 6px; }
-    .usecase h4 { margin: 0 0 8px; font-size: 16px; }
+    .usecase h4 { margin: 0 0 8px; font-size: 16px; font-family: var(--sans); }
     .usecase p { margin: 0; font-size: 13.5px; color: var(--mutedink); line-height: 1.5; max-width: none; }
     @media (max-width: 720px) { .usecases { grid-template-columns: 1fr; } }
     .ep { display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: baseline; padding: 12px 0; border-bottom: 1px solid var(--line); }
     .ep:first-of-type { border-top: 1px solid var(--line); }
     .ep .verb { font-family: var(--mono); font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px; background: color-mix(in srgb, var(--sage) 14%, transparent); color: var(--sage); white-space: nowrap; }
+    .ep .verb.get { background: color-mix(in srgb, var(--slate) 15%, transparent); color: var(--slate); }
+    .ep .verb.del { background: color-mix(in srgb, var(--clay) 15%, transparent); color: var(--clay); }
     .ep .path { font-family: var(--mono); font-weight: 600; font-size: 13.5px; }
     .ep .desc { font-size: 13px; color: var(--mutedink); margin-top: 3px; }
     .roadmap-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 22px 0; }
@@ -1905,10 +1907,11 @@ A teammate can act on your reply without re-checking it.
       <div class="fig">
         <div class="ep"><span class="verb">POST</span><div><span class="path">/v1/responses</span><div class="desc">A synchronous turn. Send a message, get the answer back (or stream it live).</div></div></div>
         <div class="ep"><span class="verb">POST</span><div><span class="path">/v1/tasks</span><div class="desc">A long-running task. Returns a task id immediately, streams progress, can be cancelled.</div></div></div>
-        <div class="ep"><span class="verb">GET · DELETE</span><div><span class="path">/v1/tasks/:id · /events</span><div class="desc">Poll a task's status, tail its live progress events, or <code>DELETE</code> to cancel it.</div></div></div>
-        <div class="ep"><span class="verb">GET</span><div><span class="path">/v1/queue</span><div class="desc">The queued and running rows - what the daemon is working on right now.</div></div></div>
+        <div class="ep"><span class="verb get">GET</span><div><span class="path">/v1/tasks/:id · /events</span><div class="desc">Poll a task's status, or tail its live progress events.</div></div></div>
+        <div class="ep"><span class="verb del">DELETE</span><div><span class="path">/v1/tasks/:id</span><div class="desc">Cancel a running task.</div></div></div>
+        <div class="ep"><span class="verb get">GET</span><div><span class="path">/v1/queue</span><div class="desc">The queued and running rows - what the daemon is working on right now.</div></div></div>
         <div class="ep"><span class="verb">POST</span><div><span class="path">/v1/files</span><div class="desc">Hand the agent files; verified images can later be shown to the model.</div></div></div>
-        <div class="ep"><span class="verb">GET</span><div><span class="path">/healthz · /v1/busy</span><div class="desc">Liveness, and "is it safe to suspend?" - so the agent can scale to zero when idle.</div></div></div>
+        <div class="ep"><span class="verb get">GET</span><div><span class="path">/healthz · /v1/busy</span><div class="desc">Liveness, and "is it safe to suspend?" - so the agent can scale to zero when idle.</div></div></div>
         <p class="cap"><b>The core surface.</b> The seam accepts an OpenAI-Responses-shaped request (a string <code>input</code>), so simple client code carries over. When a control token is configured, <code>/v1/*</code> requires a bearer token and <code>/healthz</code> stays open; a bare local dev daemon runs unauthenticated. (The optional Cockpit adds <code>/dev</code> routes.)</p>
       </div>
 
@@ -2970,7 +2973,7 @@ platform event
 .brick-count b { color: var(--sage); font-size: 15px; }
 .brick-count code { color: var(--ink); }
 .brick-grid { display: flex; flex-wrap: wrap; gap: 5px; }
-.brick-chip { font-family: var(--mono); font-size: 11px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--muted); color: var(--mutedink); opacity: .5; transition: all .18s; }
+.brick-chip { font-family: var(--mono); font-size: 12px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--muted); color: var(--mutedink); opacity: .8; transition: all .18s; }
 .brick-chip.active { opacity: 1; border-color: var(--sage); background: color-mix(in srgb, var(--sage) 15%, var(--card)); color: var(--ink); font-weight: 600; }
 .brick-more { font-family: var(--mono); font-size: 11px; padding: 4px 8px; color: var(--mutedink); align-self: center; }
 
