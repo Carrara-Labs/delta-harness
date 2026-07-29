@@ -1191,7 +1191,7 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
 
       <div class="note">
         <p class="nt">Why the split is the whole point</p>
-        <p>Because the engine is product-free, one team can run many different agents on the same reviewed binary, and Delta itself can improve the engine for everyone without touching anyone's bundle. "Same engine, different bundle" is the mechanism that keeps the core small.</p>
+        <p>Because the engine is product-free, one team can run many different agents on the same binary, and Delta itself can improve the engine for everyone without touching anyone's bundle. "Same engine, different bundle" is the mechanism that keeps the core small.</p>
       </div>
 
       <details class="deeper">
@@ -1849,7 +1849,7 @@ A teammate can act on your reply without re-checking it.
         <div class="usecase"><p class="uk">Vertical product</p><h4>Aperture</h4><p>An AI recruiter. The same engine, a recruiting bundle - running intake calls, drafting, and revising against human feedback.</p></div>
         <div class="usecase"><p class="uk">Chat channel</p><h4>Ferni on Telegram</h4><p>A Delta agent reachable from a messaging app via a thin connector, scaling to zero between messages.</p></div>
       </div>
-      <p>Three very different products, one reviewed binary. That is the payoff of the <a class="link" href="#c5">engine + bundle + state</a> split: Delta improves the engine for all of them at once, and none of them fork it.</p>
+      <p>Three very different products, one binary. That is the payoff of the <a class="link" href="#c5">engine + bundle + state</a> split: Delta improves the engine for all of them at once, and none of them fork it.</p>
 
       <h3>Running it for real</h3>
       <p>Because the whole runtime is one small self-contained binary with a local database, operating it is deliberately boring. Four things you get for free:</p>
@@ -1944,7 +1944,7 @@ platform event
       </details>
 
       <h3>Reaching wide, staying safe</h3>
-      <p>The two choices compose into one operating decision. Put Connect in front of a public Telegram DM and bind that agent to the <code>chat</code> profile: it can search the web and answer, but a hijacked message can't make it spend real money or change a single file. Point your own trusted channel at a <code>work</code> agent and it can do the entire job, autonomously. Same engine, same reviewed binary - two completely different blast radii, and the core never grew a line of channel code to get there.</p>
+      <p>The two choices compose into one operating decision. Put Connect in front of a public Telegram DM and bind that agent to the <code>chat</code> profile: it can search the web and answer, but a hijacked message can't make it spend real money or change a single file. Point your own trusted channel at a <code>work</code> agent and it can do the entire job, autonomously. Same engine, same binary - two completely different blast radii, and the core never grew a line of channel code to get there.</p>
       <div class="note">
         <p class="nt">The whole philosophy in miniature</p>
         <p>A lesser design bakes channels and a sprawling permissions matrix into the agent and calls it "features." Delta does the opposite: the engine stays a small, legible loop; reach is an optional edge you bolt on; power is a dial you turn. Leanness in the core, choice at the boundary.</p>
@@ -2025,7 +2025,7 @@ platform event
       <p>None of this came off a whiteboard. We run Delta in production - the <strong>Company Brain</strong> agent fleet and <strong>Aperture</strong> - and we improve the engine from what real tasks actually need. Ship it, watch it work, fold the lesson back into the core: that loop is why an engine this small keeps pace with the frontier instead of falling behind it.</p>
       <div class="note">
         <p class="nt">Why it earns its place</p>
-        <p>The proof is concrete, not adjectives: an idle agent costs storage pennies, and one small engine runs both Company Brain's autonomous fleet and Aperture's product feature without a fork. Lean, cheap, legible enough to read in an afternoon - and parity-or-ahead with systems many times its size. That is the whole argument for Delta: small on purpose, and it holds. We're opening it up because a stable, lean harness is something other people should be able to build their own solutions on, too.</p>
+        <p>The proof is concrete, not adjectives: an idle agent costs storage pennies, and one small engine runs both Company Brain's autonomous agents and Aperture's product feature without a fork. Lean, cheap, legible enough to read in an afternoon - and parity-or-ahead with systems many times its size. That is the whole argument for Delta: small on purpose, and it holds. We're opening it up because a stable, lean harness is something other people should be able to build their own solutions on, too.</p>
       </div>
     </section>
 
@@ -2100,7 +2100,7 @@ platform event
         <dt>Reflect loop</dt><dd>Turning a human's review correction into a durable, scoped lesson.</dd>
         <dt>MCP</dt><dd>The open protocol Delta uses (as a client) to plug into external tools.</dd>
         <dt>Subagent</dt><dd>An in-process, read-only helper built from the same spine, so same rules apply.</dd>
-        <dt>Error-as-value</dt><dd>A failed call returns a clean result the loop reads. The daemon never crashes.</dd>
+        <dt>Error-as-value</dt><dd>A failed call returns a clean result the loop reads, so a bad call doesn't crash the daemon.</dd>
       </dl>
 
       <div class="endcta">
@@ -2650,7 +2650,7 @@ platform event
     c9: "When history would overflow, Delta summarises old turns into Goal / Progress / Next / Artifacts and keeps the recent ones, never dropping a load-bearing fact.",
     c10: "Delta ships a small set of hands, plugs into unlimited external tools over MCP (showing only a few at a time), and delegates to read-only subagents bound by the same rules.",
     c11: "Two doctrines make it safe for real work: error-as-value (never crashes on a bad call) and journaled crash-resume (never repeats a side effect it can't prove was safe).",
-    c12: "Delta is a service behind a small HTTP seam. One reviewed binary runs many products, deploys anywhere, scales to zero, and can run on a flat subscription instead of metered tokens.",
+    c12: "Delta is a service behind a small HTTP seam. One binary runs many products, deploys anywhere, scales to zero, and can run on a flat subscription instead of metered tokens.",
     c13: "The roadmap is grounded in real usage, and the 'not building' list is deliberate: each omission keeps the core small and legible."
   };
   Object.keys(RECAP).forEach(function (id) {
