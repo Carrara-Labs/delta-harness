@@ -965,7 +965,16 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
       .door .dwhen { font-family: var(--mono); font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--sage); margin: 0 0 6px; }
       .door .dname { font-size: 16.5px; font-weight: 640; margin: 0 0 9px; line-height: 1.25; }
       .door > p { max-width: none; margin: 0; font-size: 14px; color: var(--mutedink); line-height: 1.5; }
-      .door .dpath { font-family: var(--mono); font-size: 11.5px; color: var(--mutedink); border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
+      .door .dpath { display: flex; align-items: center; gap: 9px; border-top: 1px solid var(--line); margin-top: 12px; padding-top: 11px; }
+      /* HTTP method badges, the look developers know from real API docs */
+      .method { display: inline-block; font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: .05em; padding: 3px 8px; border-radius: 5px; color: #fff; }
+      .method.get { background: #3f5a80; }
+      .method.post { background: #3d6b4f; }
+      .epath { font-family: var(--mono); font-size: 13px; color: var(--ink); }
+      .beat { border: 1px solid var(--line-strong); border-radius: 14px; background: var(--card); padding: 15px 18px; margin: 14px 0 0; }
+      .beat .beat-ep { display: flex; align-items: center; gap: 9px; margin: 0 0 8px; }
+      .beat .beat-body { margin: 0; max-width: none; font-size: 13.5px; color: var(--mutedink); line-height: 1.5; }
+      .beat .beat-body b { color: var(--ink); }
       .verbs { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 16px 0; }
       .verb-card { border: 1px solid var(--line-strong); border-radius: 14px; background: var(--card); padding: 15px 18px; }
       .verb-card .vk { display: inline-block; font-family: var(--mono); font-size: 12px; font-weight: 700; letter-spacing: .04em; color: var(--sage); background: color-mix(in srgb, var(--sage) 10%, var(--paper)); border: 1px solid color-mix(in srgb, var(--sage) 30%, var(--line)); border-radius: 6px; padding: 3px 10px; }
@@ -1005,22 +1014,26 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
         </div>
         <p class="cap"><b>How to read an endpoint.</b> Put it together and <code>POST /v1/responses</code> means "send a message to version 1's <em>responses</em> door, and get the agent's answer." Read one, and you can read them all.</p>
       </div>
-      <p>With that, Delta's whole seam is just two working doors and a heartbeat. The two doors differ in one thing: how long the job takes.</p>
+      <p>With that, Delta's whole seam is just two working doors and a <span class="term" data-t="heartbeat">heartbeat</span>. The two doors differ in one thing: how long the job takes.</p>
       <div class="doors">
         <div class="door">
           <p class="dwhen">For a quick turn</p>
           <p class="dname">Ask, and wait for the answer</p>
           <p>Send a question or a small task, and the answer comes straight back - or streams in live, word by word, as it is written.</p>
-          <p class="dpath">POST /v1/responses</p>
+          <p class="dpath"><span class="method post">POST</span><span class="epath">/v1/responses</span></p>
         </div>
         <div class="door">
           <p class="dwhen">For a long job</p>
           <p class="dname">Start it, then check back</p>
           <p>Hand over work that could run for minutes or hours. You get a ticket back right away, follow its progress, and collect the result when it is done - and you can cancel it any time.</p>
-          <p class="dpath">POST /v1/tasks</p>
+          <p class="dpath"><span class="method post">POST</span><span class="epath">/v1/tasks</span></p>
         </div>
       </div>
-      <p>A third door, <code>GET /healthz</code>, isn't for work at all - it is a heartbeat the host uses to check the agent is awake. In every case it is plain text in and the agent's work out: no special app and no SDK, just an ordinary web request your code already knows how to make. Chapter 12 lists the full set of doors.</p>
+      <div class="beat">
+        <p class="beat-ep"><span class="method get">GET</span><span class="epath">/healthz</span></p>
+        <p class="beat-body"><b>The heartbeat - it does no work.</b> A <span class="term" data-t="heartbeat">heartbeat</span> is a tiny "are you alive?" check between programs. The host pings this door every so often; a reply means the agent is up and ready. That is its whole job - it proves the lights are on, nothing more.</p>
+      </div>
+      <p>In every case it is plain text in and the agent's work out: no special app and no SDK, just an ordinary web request your code already knows how to make. Chapter 12 lists the full set of doors.</p>
       <p>Why build it as a thing-you-call instead of a bot that sits running all day? Because a service can be <strong>summoned when there's work and sleep when there isn't</strong>. An always-on program burns money every hour whether or not anyone needs it; a callable agent costs almost nothing while idle and wakes in about a second when a request arrives (chapter 14 shows exactly how). Just as important, <em>any</em> software can drive it - a web app, a nightly script, a chat connector - not only a chat box welded to the front. One small, well-defined front door buys three things at once: cheaper to run, easy to build products on top of, and a tiny surface to secure.</p>
 
       <h3>The engine</h3>
@@ -2283,6 +2296,7 @@ platform event
   set("untrusted", "Untrusted input", "Any text from the outside world - web pages, tool results, documents - that could hide instructions trying to hijack the agent. Delta wraps it and labels it 'data, not instructions.'");
   set("broker", "Token broker", "A small service that mints short-lived, scoped access tokens for the subscription sign-in, so the long-lived credential never rides along inside the agent.");
   set("reasoningeffort", "Reasoning effort", "A per-request dial telling a reasoning model how hard to think before answering - trading speed and cost against depth. Delta can set it per task.");
+  set("heartbeat", "Heartbeat", "A tiny, regular 'are you alive?' check between programs. One side pings the other every so often; a reply means it is up and healthy. Delta's GET /healthz is a heartbeat - it does no work, it just confirms the agent is running.");
   set("budget", "Budget", "The spend ceiling on a single run - a cap on steps, tokens, and dollars. Delta stops a run when it hits the cap, not on a wall-clock timer, so a run ends when it is done, cancelled, or out of budget.");
   set("recall", "Recall", "A read-only tool that lets an agent look up its own earlier notes and this thread's history. Safe even in a locked-down chat placement, because it only reads - it never writes.");
   set("connect", "Delta Connect", "A separate, optional package that plugs a Delta agent into chat channels (Telegram first, then Slack, email, webhooks). It is not part of the engine - it is the thin edge that reaches the agent through the same public seam.");
