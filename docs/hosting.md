@@ -65,6 +65,17 @@ loop until deadline (~45s):
   refused/dropped → sleep 250ms, retry
 ```
 
+**After a resume, the daemon heals its own provider wire (0.2.5).** A VM frozen for more
+than a few minutes comes back with dead keep-alive sockets in its HTTP pool - the NAT path
+behind them expired while it slept - and on earlier engines the first model call could ride
+one for minutes (measured: a 251s silent first-turn stall whose parallel fresh-socket probe
+answered in 1ms). 0.2.5 closes this daemon-side: a first-byte deadline bounds any dead
+socket (`DELTA_FIRST_BYTE_MS`, default 30s), calls after a detected resume or >5 minutes of
+wire silence bypass the connection pool entirely, and the origin is re-probed in the
+background. Hosts need no changes - but if your UI polls `/v1/tasks/:id/events`, fold the
+new `model.retry` events into an honest "provider is retrying" state instead of a generic
+spinner.
+
 ### 2. Busy check before suspend
 
 Never suspend a machine that still owes work. Ask the daemon:
