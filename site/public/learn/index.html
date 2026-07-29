@@ -880,7 +880,7 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
         <p class="vsub" style="margin:12px 0 0">That is three model calls and two tool rounds - weather, then calendar - before the model had enough to answer. That is exactly why one call isn't enough: the harness runs each real tool in between and keeps handing results back until the model stops asking.</p>
       </div>
 
-      <p>This one pattern is what turns a text predictor into something that can research, calculate, file, and follow multi-step plans. But notice everything the loop now needs to manage: which tools exist, how to run them safely, what to do when a tool fails, how much the whole thing is costing, and what to keep versus forget as the history grows. None of that is the model's job. It's the harness's job.</p>
+      <p>This one pattern is what turns a text predictor into something that can look things up, calculate, save results in the right place, and finish work that takes several steps. But notice everything the loop now needs to manage: which tools exist, how to run them safely, what to do when a tool fails, how much the whole thing is costing, and what to keep versus forget as the history grows. None of that is the model's job. It's the harness's job.</p>
 
       <details class="deeper">
         <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">how tool calling works</span><span class="peek">schemas in, tool_call out</span></summary>
@@ -962,7 +962,7 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
 
       <p>The name comes from engineering: a "wiring harness" is the bundle of cabling that holds a component in place and connects it to everything it needs. An AI harness does the same for the model - it holds the model in place and wires it to tools, memory, and a place to run safely.</p>
 
-      <h3>Two design centers</h3>
+      <h3>Two kinds of harness</h3>
       <p>Harnesses are not all pointed at the same kind of work. Most can do a bit of both, but their defaults are <em>designed around</em> one kind, and that shapes everything:</p>
       <div class="centers">
         <div class="ccard">
@@ -1018,7 +1018,7 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
       <h2>Why we built Delta.</h2>
       <p class="dek">There were already good harnesses by 2026. Delta exists because we wanted a few things at once that none of them gave us: small enough to fully understand, lean enough to run for pennies, and shaped for real work rather than for writing code.</p>
 
-      <p class="lead">We didn't start from a blank page. We studied three capable open harnesses closely - we even cloned their real source to do it - and learned a lot from each. Here is the honest version: what every one got right, where it didn't fit us, and the thesis that made us build our own anyway.</p>
+      <p class="lead">We didn't start from a blank page. We studied three capable harnesses whose code anyone can read - we downloaded it and traced how each one works - and learned a lot from each. Here is the honest version: what every one got right, where it didn't fit us, and the thesis that made us build our own anyway.</p>
 
       <h3>What we learned from the field</h3>
       <div class="fig">
@@ -1034,7 +1034,7 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
       </div>
 
       <h3>Our thesis: small on purpose</h3>
-      <p>So we built the opposite of a framework: something deliberately tiny. "Small" here is not an aesthetic - it buys three specific things, each a plain cause and effect.</p>
+      <p>So we built a small, reusable engine instead of a big system that tries to bundle in every possible feature. "Small" here is not an aesthetic - it buys three specific things, each a plain cause and effect.</p>
       <div class="fig">
         <div class="causal">
           <div class="crow"><span class="cwhat">A small permanent prompt</span><span class="carw">→</span><span class="cwhy">less text is sent and processed on every single call</span><span class="carw">→</span><span class="cpay">cheaper + faster</span></div>
@@ -1187,7 +1187,7 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
         <p class="beat-ep"><span class="method get">GET</span><span class="epath">/healthz</span></p>
         <p class="beat-body"><b>The heartbeat - it does no work.</b> A <span class="term" data-t="heartbeat">heartbeat</span> is a tiny "are you alive?" check between programs. The host pings this door every so often; a reply means the agent is running and reachable. That is its whole job - it proves the lights are on, nothing more.</p>
       </div>
-      <p>In every case it is plain text in and the agent's work out: no special app and no SDK, just an ordinary web request your code already knows how to make. Chapter 12 lists the full set of doors.</p>
+      <p>In every case it is plain text in and the agent's work out: no special app to install and no Delta-specific coding kit, just an ordinary web request your code already knows how to make. Chapter 12 lists the full set of doors.</p>
       <p>Why build it as a thing-you-call instead of a bot that sits running all day? Because one small, well-defined seam pays off in three separate ways - and it helps to see them as separate:</p>
       <div class="fig">
         <div class="causal">
@@ -1260,7 +1260,7 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
         <div class="db">
           <p>The bundle format and the "apply" primitive live in <code>src/bundle.ts</code>; the <code>init</code> and <code>apply</code> commands you type are wired in <code>src/cli.ts</code>.</p>
           <p>The <span class="term" data-t="spine">spine</span> (the prompt) is assembled in <code>src/spine.ts</code>. Order matters: <code>POLICY.md</code> is rendered as the <em>last instruction layer</em> so nothing above can override it (the tool catalog is printed after it), loaded via <code>src/policy.ts</code>; live values like the date are substituted from <code>PROMPT_CONTEXT.md</code> by <code>src/promptcontext.ts</code>.</p>
-          <p>All durable state is <span class="term" data-t="sqlite">SQLite</span> in <span class="term" data-t="wal">WAL mode</span> (<code>src/db.ts</code>), <span class="term" data-t="checkpoint">checkpointed</span> every turn - the property that makes the whole thing crash-safe.</p>
+          <p>The run's operational state is <span class="term" data-t="sqlite">SQLite</span> in <span class="term" data-t="wal">WAL mode</span> (<code>src/db.ts</code>), <span class="term" data-t="checkpoint">checkpointed</span> every turn - the property that makes the whole thing crash-safe. (The agent's learned <code>DELTA.md</code> is durable file state alongside it.)</p>
         </div>
       </details>
     </section>
@@ -1362,10 +1362,10 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
       <div class="fig">
         <div class="tsteps">
           <div class="tstep"><div class="body">
-            <p class="tt">A message arrives and becomes a durable row</p>
+            <p class="tt">A message arrives and is saved to disk first</p>
             <p class="td">Before the caller even gets a reply, the request is written to disk as a <span class="term" data-t="queued">queued</span> run. If the power dies one millisecond later, the work is not lost.</p>
             <details class="deeper">
-              <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">on this step</span><span class="peek">saved before it's even acked</span></summary>
+              <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">on this step</span><span class="peek">saved before we even reply</span></summary>
               <div class="db">
                 <p>A caller reaches Delta at one of two endpoints: <code>POST /v1/responses</code> for a quick synchronous turn, or <code>POST /v1/tasks</code> for a long-running job. Either way the request is written to the database inside a single <span class="term" data-t="transaction">transaction</span> - fully saved or not at all - <em>before</em> Delta acknowledges it. Two messages in the same conversation run one after another; different conversations run at the same time (<span class="term" data-t="concurrency">concurrency</span>).</p>
                 <span class="k">At the code</span>
@@ -1387,7 +1387,7 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
           </div></div>
           <div class="tstep"><div class="body">
             <p class="tt">Check the budget - the spend ceiling that bounds the loop</p>
-            <p class="td">Delta counts steps taken, fresh tokens spent, and dollars spent. If any ceiling is hit, the run stops here - marked stopped, not crashed. There is <strong>no wall-clock deadline</strong> on the task itself; the budget is what bounds it (though a task also ends when the model writes a final answer, the caller cancels, or a call fails unrecoverably).</p>
+            <p class="td">Delta counts steps taken, fresh tokens spent, and dollars spent. If any ceiling is reached, Delta ends the run with a recorded <em>budget-exhausted</em> failure - the process itself has not crashed, it just refuses to spend more. There is <strong>no wall-clock deadline</strong> on the task itself; the budget is what bounds it (a task also ends when the model writes a final answer, the caller cancels, or a call fails unrecoverably).</p>
             <details class="deeper">
               <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">on this step</span><span class="peek">you pay for fresh tokens only</span></summary>
               <div class="db">
@@ -1736,7 +1736,7 @@ A teammate can act on your reply without re-checking it.
       <details class="deeper code">
         <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">at the code</span><span class="peek">src/mcp.ts, 60-tool cap</span></summary>
         <div class="db">
-          <p><code>src/mcp.ts</code> speaks both transports an <span class="term" data-t="mcp">MCP</span> server can use (HTTP and stdio). The key safety number is <code>MAX_RESIDENT_TOOLS = 60</code>: even if a server exposes hundreds of tools, the initial "resident" set in the prompt is capped at 60 schemas, so a huge server can't blow the per-turn token budget on step one (tools the agent then activates are added as it goes).</p>
+          <p><code>src/mcp.ts</code> speaks both transports an <span class="term" data-t="mcp">MCP</span> server can use (HTTP and stdio). The key safety number is <code>MAX_RESIDENT_TOOLS = 60</code> (in <code>src/run.ts</code>): even if a server exposes hundreds of tools, the initial "resident" set in the prompt is capped at 60 schemas, so a huge server can't blow the per-turn token budget on step one (tools the agent then activates are added as it goes).</p>
           <p>When the model calls <code>search_tools</code>, Delta activates the top few matches for the rest of the run, and that activation survives a restart - so the agent doesn't have to re-discover its tools after a crash.</p>
         </div>
       </details>
@@ -1977,7 +1977,7 @@ A teammate can act on your reply without re-checking it.
           </ul>
         </div>
       </div>
-      <p>The two are strictly ordered: <code>chat</code> is "no more permissive" than <code>work</code> - a subset of the tools and a smaller budget. And here is the rule that makes it safe: <strong>the daemon's placement sets the ceiling, and a caller can only ask for something tighter, never wilder.</strong> An untrusted message can never talk an agent into more power than the operator granted it.</p>
+      <p>The two are strictly ordered: <code>chat</code> is "no more permissive" than <code>work</code> - a subset of the tools and a smaller budget. And here is the rule that makes it safe: <strong>when the operator starts an agent, they pick the most powerful profile it may ever use; a later message can ask for less, never more.</strong> An untrusted message can never talk an agent into more power than the operator granted it.</p>
       <details class="deeper">
         <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">how the ceiling actually holds</span><span class="peek">narrow-only, never escalate</span></summary>
         <div class="db">
@@ -2018,7 +2018,7 @@ platform event
       <details class="deeper code">
         <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">at the code</span><span class="peek">a separate package, zero deps</span></summary>
         <div class="db">
-          <p>Delta Connect ships as <code>@carrara-labs/delta-connect</code>, versioned independently of the engine, with zero runtime dependencies (Bun, <code>bun:sqlite</code>, and raw <code>fetch</code>). The durable spine is <code>src/store.ts</code> (inbox, sessions, outbox, and an atomic <code>commitTurn</code>); the dispatch loop that writes before it delivers is <code>src/core.ts</code>; the Telegram codec and long-poll ingress are <code>src/telegram.ts</code>; a single turn against the seam is <code>src/agent.ts</code>.</p>
+          <p>Delta Connect ships as its own package, <code>@carrara-labs/delta-connect</code> (a separate repo, versioned independently of the engine), with zero runtime dependencies (Bun, <code>bun:sqlite</code>, and raw <code>fetch</code>). Inside <em>that</em> package: the durable spine is <code>store.ts</code> (inbox, sessions, outbox, and an atomic <code>commitTurn</code>); the dispatch loop that writes before it delivers is <code>core.ts</code>; the Telegram codec and long-poll ingress are <code>telegram.ts</code>; a single turn against the seam is <code>agent.ts</code>. None of this lives in the harness itself - that is the whole point.</p>
           <p>The same connector runs two ways behind one interface (<code>src/supervisor.ts</code>): a local keep-alive on an always-on box, or a Fly start/suspend that wakes the agent on demand. Shipped so far: a Telegram DM connector (v0.1), then a <code>/new</code> command and inbound file receipt (v0.2) - each validated live before release.</p>
         </div>
       </details>
@@ -2044,7 +2044,7 @@ platform event
       <div class="fig">
         <div class="score">
           <div class="srow"><div class="sinfo"><span class="sname">System-prompt size</span><span class="sproof">Its resident prompt targets under 2k tokens, where heavier harnesses bootstrap near 26k - a saving paid back on every single call.</span></div><span class="sverdict ahead">ahead</span></div>
-          <div class="srow"><div class="sinfo"><span class="sname">Context management</span><span class="sproof">Tiered compaction plus recall keep a multi-hour run inside the window without losing the goal (chapter 9).</span></div><span class="sverdict ahead">ahead</span></div>
+          <div class="srow"><div class="sinfo"><span class="sname">Context management</span><span class="sproof">Summarising older messages in stages, plus pulling back saved lessons, keeps a multi-hour run inside the model's size limit without losing the goal (chapter 9).</span></div><span class="sverdict ahead">ahead</span></div>
           <div class="srow"><div class="sinfo"><span class="sname">Memory &amp; learning</span><span class="sproof">Scoped, deterministic recall straight from SQLite - no vector store to run, tune, or let drift (chapter 8).</span></div><span class="sverdict ahead">ahead</span></div>
           <div class="srow"><div class="sinfo"><span class="sname">Tool system &amp; MCP</span><span class="sproof">A full MCP client with progressive tool disclosure - the same surface the others offer (chapter 10).</span></div><span class="sverdict parity">parity</span></div>
           <div class="srow"><div class="sinfo"><span class="sname">Subagents / delegation</span><span class="sproof">In-process read-only research helpers plus a full spawned subagent, matching the field (chapter 10).</span></div><span class="sverdict parity">parity</span></div>
@@ -2063,7 +2063,7 @@ platform event
           <div class="cbrow"><div class="cbname">OpenClaw · 100%</div><div class="cbtrack"><div class="cbfill big" data-w="100%"></div></div></div>
           <div class="cbrow"><div class="cbname">Delta · ~1.8%</div><div class="cbtrack"><div class="cbfill small" data-w="1.8%"></div></div></div>
         </div>
-        <p class="cap"><b>Parity-or-ahead on every dimension, at a fraction of the size.</b> Not one dimension where Delta falls behind, in roughly 1.8% of OpenClaw's code, with zero runtime dependencies.</p>
+        <p class="cap"><b>By our own bar, Delta met or beat every dimension - at a fraction of the size.</b> This is our teardown, not a third-party benchmark: we set the fourteen tests and scored them, in roughly 1.8% of OpenClaw's code, with zero runtime dependencies. Read it as our honest assessment, not a neutral referee's.</p>
       </div>
       <div class="note">
         <p class="nt">Read this honestly</p>
@@ -2081,7 +2081,7 @@ platform event
         <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">at the code</span><span class="peek">/v1/busy, the Machines API, not fly-proxy</span></summary>
         <div class="db">
           <p>The signal is <code>GET /v1/busy</code>, served from <code>src/server.ts</code> and computed in <code>src/queue.ts</code> (<code>activity()</code> returns <code>busy: running + queued &gt; 0</code>, read straight from the durable run table, not an in-memory flag). The lifecycle contract - wake before dispatch, busy-check before suspend, suspend after a terminal state - is documented in <code>docs/hosting.md</code>.</p>
-          <p>The repo is explicit that this must be driven by the host's control plane through the platform's Machines API, <em>not</em> by <code>fly-proxy</code> autostop, precisely because fire-and-forget tasks hold no inbound connection. Flipping a machine from <code>stop</code> to <code>suspend</code> cut a measured cold start from ~4.7s to ~1.1s. A WAL <span class="term" data-t="checkpoint">checkpoint</span> every turn is what makes a resume a continuation, not a loss.</p>
+          <p>The repo is explicit that this must be driven by the host's control plane through the platform's Machines API, <em>not</em> by <code>fly-proxy</code> autostop, precisely because fire-and-forget tasks hold no inbound connection. Flipping a machine from <code>stop</code> to <code>suspend</code> cut a measured cold start from ~4.7s to ~1.1s. A per-turn <span class="term" data-t="checkpoint">checkpoint</span> - the transcript plus intent, saved atomically - is what makes a resume a continuation, not a loss.</p>
         </div>
       </details>
 
@@ -2122,7 +2122,7 @@ platform event
           <p class="rck">Queued next - "the self-aware turn"</p>
           <ul>
             <li><strong>Budget self-awareness</strong> - a coarse "near the cap, wrap up" signal the model can see.</li>
-            <li><strong>Turn-failure integrity</strong> - a committed learning must never persist silently on a failed turn.</li>
+            <li><strong>Turn-failure integrity</strong> - if a task fails, any lesson it started to save is removed or marked untrusted, never left to quietly become permanent.</li>
             <li><strong>Cost pre-flight</strong> - reserve headroom before a call so a turn can't overshoot its cap.</li>
             <li><strong>Assistant profile</strong> + an operator-facing <strong>selectable skills backend</strong> (per-task reasoning effort already shipped).</li>
           </ul>
