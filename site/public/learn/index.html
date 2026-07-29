@@ -980,16 +980,44 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
         <p class="cap"><b>The whole system on one page.</b> Requests enter through the seam - the web addresses along the top, which we unpack right below. The product-free engine runs the loop, reading the <b>bundle</b> for identity and rules and the <b>state</b> for memory, and writing fresh state on every turn. The rest of this page zooms into each box.</p>
       </div>
 
+      <style>
+      .doors { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 18px 0; }
+      .door { border: 1px solid var(--line-strong); border-radius: 14px; background: var(--card); padding: 18px 20px; }
+      .door .dwhen { font-family: var(--mono); font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--sage); margin: 0 0 6px; }
+      .door .dname { font-size: 16.5px; font-weight: 640; margin: 0 0 9px; line-height: 1.25; }
+      .door > p { max-width: none; margin: 0; font-size: 14px; color: var(--mutedink); line-height: 1.5; }
+      .door .dpath { font-family: var(--mono); font-size: 11.5px; color: var(--mutedink); border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
+      @media (max-width: 620px) { .doors { grid-template-columns: 1fr; } }
+      </style>
       <h3>How you talk to it: the seam</h3>
-      <p>Before we zoom into the three parts, one thing about that top row of the diagram. You don't open Delta the way you open an app. It runs quietly as a <em>service</em>, and other software talks to it through an <span class="term" data-t="api">API</span> - a small, fixed set of web addresses you can send a request to. Think of a counter with a few clearly-labelled windows: you walk up to the right window, hand in your request, and get something back. Delta's whole set of windows is deliberately tiny, and we call it the <span class="term" data-t="seam">seam</span>. Everything the outside world can ask an agent to do goes through it, and nothing else does.</p>
-      <p>Two windows do the real work, and a third just checks the lights are on:</p>
+      <p>Before we zoom into the three parts, a word about that top row of the diagram, because it is the one genuinely new idea here. You don't open Delta the way you open an app. It runs quietly as a <em>service</em>, and other software talks to it through an <span class="term" data-t="api">API</span>. An API is simply how one program asks another to do something: your software sends a request through a doorway, the other program does the work, and the answer comes back out.</p>
       <div class="fig">
-        <div class="ep"><span class="verb">POST</span><div><span class="path">/v1/responses</span><div class="desc"><b>Ask and wait.</b> You send a message in and get the agent's answer back, or watch it stream in live. Best for a quick turn - a question, a small task.</div></div></div>
-        <div class="ep"><span class="verb">POST</span><div><span class="path">/v1/tasks</span><div class="desc"><b>Start a long job.</b> You get a ticket (an <code>id</code>) back straight away, then follow the task's progress and collect the result when it's done. It can be cancelled. Best for work that runs for minutes or hours.</div></div></div>
-        <div class="ep"><span class="verb">GET</span><div><span class="path">/healthz</span><div class="desc"><b>Is it awake?</b> A tiny liveness check the host uses to know the agent is up and ready - no work, just a heartbeat.</div></div></div>
-        <p class="cap"><b>Plain text in, the agent's work out.</b> No special client and no SDK required - just an ordinary web request your code already knows how to make. Chapter 12 lists the full set of windows.</p>
+        <div class="flow">
+          <div class="node sage"><span class="h">Your software</span><span class="d">a website, a script, a chat app</span></div>
+          <div class="arw">→</div>
+          <div class="node clay"><span class="h">The seam</span><span class="d">Delta's one small front door</span></div>
+          <div class="arw">→</div>
+          <div class="node slate"><span class="h">The agent</span><span class="d">does the work, sends the answer back</span></div>
+        </div>
+        <p class="cap"><b>The seam is Delta's doorway.</b> It is the only way in - everything the outside world can ask an agent to do passes through it, and the set of doors is kept deliberately tiny.</p>
       </div>
-      <p>Why build it as a thing-you-call instead of a bot that sits running all day? Because a service can be <strong>summoned when there's work and sleep when there isn't</strong>. An always-on daemon burns money every hour whether or not anyone needs it; a callable agent costs almost nothing while idle and wakes in about a second when a request arrives (chapter 14 shows exactly how). Just as important, <em>any</em> software can drive it - a web app, a nightly script, a chat connector - not only a chat box welded to the front. One small, well-defined front door buys three things at once: it is cheaper to run, easy to build products on top of, and a tiny surface to secure.</p>
+      <p>Two of those doors do the real work. They differ in just one thing: how long the job takes.</p>
+      <div class="doors">
+        <div class="door">
+          <p class="dwhen">For a quick turn</p>
+          <p class="dname">Ask, and wait for the answer</p>
+          <p>Send a question or a small task, and the answer comes straight back - or streams in live, word by word, as it is written.</p>
+          <p class="dpath">POST /v1/responses</p>
+        </div>
+        <div class="door">
+          <p class="dwhen">For a long job</p>
+          <p class="dname">Start it, then check back</p>
+          <p>Hand over work that could run for minutes or hours. You get a ticket back right away, follow its progress, and collect the result when it is done - and you can cancel it any time.</p>
+          <p class="dpath">POST /v1/tasks</p>
+        </div>
+      </div>
+      <p>A third door, <code>GET /healthz</code>, isn't for work at all - it is a heartbeat the host uses to check the agent is awake. In every case it is plain text in and the agent's work out: no special app and no SDK, just an ordinary web request your code already knows how to make. Chapter 12 lists the full set of doors.</p>
+      <p>Why build it as a thing-you-call instead of a bot that sits running all day? Because a service can be <strong>summoned when there's work and sleep when there isn't</strong>. An always-on program burns money every hour whether or not anyone needs it; a callable agent costs almost nothing while idle and wakes in about a second when a request arrives (chapter 14 shows exactly how). Just as important, <em>any</em> software can drive it - a web app, a nightly script, a chat connector - not only a chat box welded to the front. One small, well-defined front door buys three things at once: cheaper to run, easy to build products on top of, and a tiny surface to secure.</p>
 
       <h3>The engine</h3>
       <p>A single downloadable binary. It contains the agent loop, the model client with failover, the built-in tools, the context manager, the memory adapters, and every safety rail. It knows nothing about your product. You never edit it; you configure it.</p>
