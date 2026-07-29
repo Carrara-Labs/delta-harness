@@ -6,6 +6,45 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-07-30
+
+The stall release. Prod field data (Aperture, 2026-07-29) showed a third of quick-search runs
+losing ~250-300 SECONDS to a silent turn-1 stall: the first provider call after a Fly
+suspend/resume rode a dead pooled keep-alive socket, hung in connect/first-header where only the
+600s absolute cap looks, retried invisibly, and neither logs nor telemetry said a word. Lab
+reproduction nailed the mechanism — after a 13-minute suspend hold, the pooled-socket call stalled
+251s while a parallel fresh-socket probe answered in 1ms. This release makes that class of stall
+(a) nearly impossible, (b) cheap when it happens anyway, and (c) loudly visible.
+
+### Added
+
+- **First-byte deadline** (`DELTA_FIRST_BYTE_MS`, default 30s; `firstByteMs` per provider). Bounds
+  connect + time-to-first-header — the one phase the per-chunk idle watchdog cannot see (it arms
+  only once a body stream exists). Rides the same watchdog controller, aborts with a typed reason
+  ("no response headers within Nms"), stays retriable, and is independent of `DELTA_STREAM_IDLE_MS`
+  (idle 0 does not disable it; first-byte 0 is its own explicit opt-out).
+- **Wire-suspect windows — fresh sockets when the pool can't be trusted.** Two triggers, one
+  mechanism: after a detected suspend/resume (heartbeat wall-clock gap; single-flight, 60s
+  cooldown), and implicitly for any call after >5 minutes of wire silence — the resumed task's
+  first call cannot wait for the heartbeat to notice. A suspect call opts out of connection reuse
+  (`keepalive: false`, verified per-request pool bypass on Bun 1.3.13), trading one TLS handshake
+  for immunity to the dead-socket hang.
+- **`warmupWire`** — best-effort preconnect at boot and on resume detection: 3s HEAD probes per
+  provider origin pay DNS + TLS off the first turn's path and opportunistically drain dead pooled
+  sockets. Never throws, never rejects, never on a turn's path.
+- **Retry visibility, end to end.** Every cascade transition after a failed attempt is reported: a
+  `model.retry` PERSISTED task event (kind `retry` / `reauth` / `next_model` / `next_provider`, a
+  stable `error.type` class, sanitized short message) rides `/v1/tasks/:id/events` so hosts can
+  render honest "provider is retrying" state; one console line per failed attempt; `model.call`
+  gains `wall_ms` + `retries` so `wall_ms - latency_ms` exposes any invisible pre-call stall in
+  telemetry forever. `chatVia` owns the next-provider report (only it knows one exists); terminal
+  failures are NOT reported as retries; observer callbacks are try/caught by contract.
+
+### Fixed
+
+- A failed model attempt is no longer silent in the daemon logs (previously only successful calls
+  printed a `[turn N]` line — a 300s retry storm logged nothing).
+
 ## [0.2.4] — 2026-07-28
 
 Harden what shipped + close the remaining Aperture field-report gaps. Five code audits of the 0.2.3
