@@ -378,6 +378,15 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 /* inline (in-chapter) diagram wrapper - reuses every .vfig shape class above */
 .hfig { max-width: 620px; margin: 4px auto 0; }
 
+/* cause -> effect -> payoff rows (ch4 thesis) */
+.causal { display: flex; flex-direction: column; gap: 11px; }
+.crow { display: grid; grid-template-columns: 1.15fr auto 1.35fr auto 0.95fr; gap: 11px; align-items: center; }
+.crow .cwhat { font-weight: 640; font-size: 13.5px; color: var(--ink); }
+.crow .cwhy { font-size: 13px; color: var(--mutedink); line-height: 1.45; }
+.crow .cpay { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--sage); background: color-mix(in srgb, var(--sage) 10%, var(--paper)); border: 1px solid color-mix(in srgb, var(--sage) 28%, var(--line)); border-radius: 7px; padding: 6px 8px; text-align: center; }
+.crow .carw { color: var(--sage); font-weight: 700; }
+@media (max-width: 620px) { .crow { grid-template-columns: 1fr; gap: 3px; padding: 8px 0; border-bottom: 1px solid var(--line); } .crow .carw { display: none; } .crow .cpay { justify-self: start; } }
+
 /* =========================================================================
    Reusable component blocks
    ========================================================================= */
@@ -976,19 +985,27 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
             <tr><td><strong>Hermes</strong></td><td>Its conviction that an agent should <span class="term" data-t="reflect">reflect</span> on its own work and improve itself over time. That idea shaped how we think about learning.</td><td>Also heavy, carrying machinery we didn't need. Powerful, but not the small, sharp shape we were after.</td></tr>
           </tbody>
         </table>
-        <p class="cap"><b>We built on their good ideas, not against them.</b> Delta already has its own self-improvement loop, and our roadmap credits the other ideas we mean to fold in - error classification, tool-call repair for weaker models - each to the system we learned it from.</p>
+        <p class="cap"><b>We built on their good ideas, not against them.</b> Delta already has its own optional self-improvement loop, and our roadmap credits the other ideas we mean to fold in - error classification, tool-call repair for weaker models - each to the system we learned it from.</p>
       </div>
 
       <h3>Our thesis: small on purpose</h3>
-      <p>So we built the opposite of a framework. Delta is deliberately tiny - little enough code that one person can read the whole engine in an afternoon, hack it, and configure it to a specific job. Leanness here isn't taste; it is what makes an agent cheap to run, leaves a smaller surface to defend when you expose it, and lets you bend it to a new task fast. Every one of the choices below is a deliberate subtraction.</p>
+      <p>So we built the opposite of a framework: something deliberately tiny. "Small" here is not an aesthetic - it buys three specific things, each a plain cause and effect.</p>
+      <div class="fig">
+        <div class="causal">
+          <div class="crow"><span class="cwhat">A small permanent prompt</span><span class="carw">→</span><span class="cwhy">less text is sent and processed on every single call</span><span class="carw">→</span><span class="cpay">cheaper + faster</span></div>
+          <div class="crow"><span class="cwhat">A small engine: few code paths, no add-on packages</span><span class="carw">→</span><span class="cwhy">less to read, audit, and defend (fewer doors and code paths an attacker can try)</span><span class="carw">→</span><span class="cpay">safer</span></div>
+          <div class="crow"><span class="cwhat">A product-free engine</span><span class="carw">→</span><span class="cwhy">a new product is a change of config, not a fork of the code</span><span class="carw">→</span><span class="cpay">adapts fast</span></div>
+        </div>
+        <p class="cap"><b>Why small wins.</b> Note that it is the small <em>prompt</em> that lowers the model bill, and the small <em>codebase</em> that lowers risk - two different kinds of small, each doing real work. Every choice in the table below is one of these subtractions, made on purpose.</p>
+      </div>
       <div class="fig">
         <table class="tbl">
           <thead><tr><th>Choice</th><th>What it means</th><th>Why it matters</th></tr></thead>
           <tbody>
             <tr><td><strong>Tiny spine</strong></td><td>The permanent system prompt targets under 2,000 <span class="term" data-t="token">tokens</span>.</td><td>Cheaper, faster, and the model stays focused on the task, not on reading its own manual.</td></tr>
             <tr><td><strong>Product-neutral engine</strong></td><td>The engine names no product. What the agent <em>is</em> comes from a config <span class="term" data-t="bundle">bundle</span>.</td><td>One engine runs a recruiter, a research assistant, or a knowledge base - no forks.</td></tr>
-            <tr><td><strong>Budgets, not timers</strong></td><td>Work is bounded by money/tokens/steps, not a wall-clock deadline.</td><td>A task can run for minutes or hours; it stops when it's spent its allowance, and can resume.</td></tr>
-            <tr><td><strong>Error-as-value</strong></td><td>A failed tool or model call returns a clean result the loop can read.</td><td>The daemon never crashes on a bad call; the agent sees the failure and adapts.</td></tr>
+            <tr><td><strong>Budgets, not timers</strong></td><td>Work is bounded by money/tokens/steps, with no overall wall-clock deadline.</td><td>A task can run for minutes or hours; it stops when it's spent its allowance, and can resume. (Individual calls still time out if they hang.)</td></tr>
+            <tr><td><strong>Error-as-value</strong></td><td>A failed tool or model call returns a clean result the loop can read.</td><td>A managed failure comes back to the loop instead of crashing it; the agent sees it and adapts.</td></tr>
             <tr><td><strong>Lean by construction</strong></td><td>Zero runtime dependencies; a component is added only when it earns its place.</td><td>Small attack surface, tiny footprint, nothing to patch that isn't load-bearing.</td></tr>
           </tbody>
         </table>
@@ -996,24 +1013,24 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
       </div>
 
       <h3>What it's for</h3>
-      <p>All of that leanness is in service of one runtime doing two very different jobs equally well. This is the whole reason Delta exists.</p>
+      <p>All of that leanness is in service of one runtime designed to do two very different jobs. This is the whole reason Delta exists.</p>
       <div class="roadmap-cards">
         <div class="rc">
           <p class="rck">1 · Autonomous knowledge-work agents</p>
           <ul>
             <li>A teammate that does a whole job end to end, not a chatbot that answers one question and stops.</li>
-            <li>We run a fleet of them ourselves inside <strong>Company Brain</strong> - autonomous agents with real tools and real company context, working on their own.</li>
+            <li>We run them ourselves inside <strong>Company Brain</strong> - autonomous agents with real tools and real company context, working on their own.</li>
           </ul>
         </div>
         <div class="rc">
           <p class="rck">2 · Agentic product features</p>
           <ul>
-            <li>Take a one-shot AI feature inside a product and make it genuinely agentic: autonomous, safe, and fine-tuned to that single job.</li>
-            <li>It can learn per user, per team, or per organisation, so the feature sharpens for everyone who uses it. <strong>Aperture</strong>, our AI recruiter, is built this way.</li>
+            <li>Take a one-shot AI feature inside a product and make it genuinely agentic: autonomous, guarded, and shaped to that single job.</li>
+            <li>It can learn per user, per task type, or per organisation, so the feature sharpens for everyone who uses it. <strong>Aperture</strong>, our AI recruiter, is built this way.</li>
           </ul>
         </div>
       </div>
-      <p>Same engine, same reviewed binary, both shapes. The rest of this page builds that machine up piece by piece - and once you understand every part, <a class="link" href="#c14">the case for Delta</a> puts the whole comparison back together, with the numbers.</p>
+      <p>The same engine, configured two ways, runs both shapes. The rest of this page builds that machine up piece by piece - and once you understand every part, <a class="link" href="#c14">the case for Delta</a> puts the whole comparison back together, with the numbers.</p>
 
       <details class="deeper">
         <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">what Delta deliberately is not</span><span class="peek">the leanness is by subtraction</span></summary>
@@ -2498,7 +2515,7 @@ platform event
     '<svg viewBox="0 0 356 74">' +
     '<text class="vlab" x="4" y="15">SYSTEM PROMPT CARRIED ON EVERY CALL</text>' +
     '<text class="vlab" x="4" y="37" text-anchor="start">Delta</text>' +
-    '<rect class="vsage" x="74" y="27" width="40" height="14" rx="3"/><text class="vlab" x="120" y="37">under 2k tokens</text>' +
+    '<rect class="vsage" x="74" y="27" width="40" height="14" rx="3"/><text class="vlab" x="120" y="37">targets ~2k tokens</text>' +
     '<text class="vlab" x="4" y="61" text-anchor="start">a heavy one</text>' +
     '<rect class="vclay" x="74" y="51" width="266" height="14" rx="3"/><text class="vlab" x="340" y="61" text-anchor="end">~26k</text>' +
     '</svg>';
@@ -2575,7 +2592,7 @@ platform event
   set("idempotent", "Idempotent", "Safe to run more than once with the same result. Writing the same bytes to a file is idempotent; sending an email is not. Delta uses this property to decide what it may safely replay after a crash.");
   set("readonly", "Read-only tool", "A tool that only observes and never changes anything. Delta hands subagents an allowlist of strictly read-only tools, so a helper can never write, delete, or send.");
   set("journal", "Journal", "A durable log that records a tool as 'about to run' before it runs and 'done' after. It's what lets Delta resume mid-tool without repeating a side effect.");
-  set("spine", "Spine", "Delta's system prompt: the small (under 2,000-token) cached instruction block assembled from the bundle and placed at the top of every model call.", { viz: V.spine, tag: "Delta", more: "Assembled in <code>src/spine.ts</code> and marked cacheable, so the provider's prompt cache holds it across a run. A heavier harness reportedly bootstraps ~26k tokens of standing instructions; every call pays that gap in money and speed." });
+  set("spine", "Spine", "Delta's system prompt: a small, cached instruction block assembled from the bundle and placed at the top of every model call. It targets under ~2,000 tokens - a design goal the engine aims for, not a hard cap it enforces.", { viz: V.spine, tag: "Delta", more: "Assembled in <code>src/spine.ts</code> and marked cacheable, so the provider's prompt cache holds it across a run. A heavier harness reportedly bootstraps ~26k tokens of standing instructions; every call pays that gap in money and speed." });
   set("remember", "remember (tool)", "The tool the agent uses to rewrite its own DELTA.md self-file - saving what it learned. The write is atomic, size-capped, and reversible, and takes effect on the next run.");
   set("namespace", "Namespace", "The scope that separates one agent's memories from another's. By default it's derived from the agent's identity noun (so renaming that noun re-scopes its memory), unless an explicit override is set.");
   set("promptcache", "Prompt cache", "A provider feature that avoids re-charging full price to re-read the unchanged front of a prompt. Delta marks its stable spine and older messages cacheable, which keeps long runs cheap.");
