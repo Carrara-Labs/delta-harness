@@ -383,6 +383,21 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 /* callout */
 .note { border: 1px solid var(--line); border-left: 3px solid var(--sage); border-radius: 10px; background: color-mix(in srgb, var(--sage) 5%, var(--card)); padding: 16px 18px; margin: 24px 0; }
 .note.clay { border-left-color: var(--clay); background: color-mix(in srgb, var(--clay) 6%, var(--card)); }
+
+/* generation strip - shows a reply being built one token at a time (ch1) */
+.genrow { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.genseed { font-family: var(--mono); font-size: 13px; color: var(--mutedink); background: var(--muted); border-radius: 6px; padding: 5px 9px; }
+.genarw { color: var(--sage); font-weight: 700; }
+.genchip { font-family: var(--mono); font-size: 13px; color: var(--ink); background: color-mix(in srgb, var(--sage) 15%, var(--paper)); border: 1px solid color-mix(in srgb, var(--sage) 45%, transparent); border-radius: 6px; padding: 5px 9px; animation: genpop .45s ease both; }
+.genchip:nth-of-type(1) { animation-delay: .05s; }
+.genchip:nth-of-type(2) { animation-delay: .35s; }
+.genchip:nth-of-type(3) { animation-delay: .65s; }
+.genchip:nth-of-type(4) { animation-delay: .95s; }
+.genchip.mut { color: var(--mutedink); background: var(--muted); border-color: var(--line-strong); }
+.gencur { color: var(--sage); font-weight: 700; animation: genblink 1.1s steps(2) infinite; }
+@keyframes genpop { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+@keyframes genblink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .genchip, .gencur { animation: none; } }
 .note .nt { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--sage); margin: 0 0 6px; }
 .note.clay .nt { color: var(--clay); }
 .note p { margin: 0; font-size: 14.5px; color: var(--mutedink); max-width: none; }
@@ -692,7 +707,7 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
       <h2>What is an LLM call?</h2>
       <p class="dek">The single most important thing to understand. Everything else is built on top of this one move.</p>
 
-      <p class="lead">A <span class="term" data-t="llm">large language model</span> (LLM) is a program that does exactly one thing: you give it some text, and it gives you back the text it predicts should come next. That's it. That single request-and-reply is called a <strong>call</strong>.</p>
+      <p class="lead">A <span class="term" data-t="llm">large language model</span> (LLM) is a program that does exactly one thing: you give it some text, and it gives you back the text it predicts should come next. It builds that reply one small chunk at a time - predict a chunk, add it to the end, predict the next - until it decides to stop. That single request-and-reply is called a <strong>call</strong>.</p>
 
       <div class="fig">
         <div class="flow">
@@ -702,10 +717,19 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
           <div class="arw">→</div>
           <div class="node clay"><span class="h">Its text</span><span class="d">"Soft grey sky weeping…"</span></div>
         </div>
-        <p class="cap"><b>One call.</b> Text in, text out. The model is a function. It runs once and returns.</p>
+        <p class="cap"><b>One call.</b> Text in, text out. The model is a <span class="term" data-t="function">function</span>: it takes what you send, produces one reply, and then stops.</p>
       </div>
 
-      <p>The text you send in is called the <span class="term" data-t="prompt">prompt</span>. The text that comes back is the <span class="term" data-t="completion">completion</span>. Under the hood, both are chopped into <span class="term" data-t="token">tokens</span> - little chunks of characters - because the model thinks in tokens, not letters or words.</p>
+      <div class="fig">
+        <p class="cap" style="margin:0 0 11px">↓ <b>Zoom in on that reply.</b> The model does not write the whole thing at once. It adds one chunk, then predicts the next from everything so far, over and over:</p>
+        <div class="genrow">
+          <span class="genseed">Write a haiku about rain</span>
+          <span class="genarw">→</span>
+          <span class="genchip">Soft</span><span class="genchip">grey</span><span class="genchip">sky</span><span class="genchip">weeping</span><span class="genchip mut">…</span><span class="gencur" aria-hidden="true">▏</span>
+        </div>
+      </div>
+
+      <p>The text you send in is called the <span class="term" data-t="prompt">prompt</span>. The text that comes back is the <span class="term" data-t="completion">completion</span>. Each chunk it predicts is a <span class="term" data-t="token">token</span> - a little piece of characters - because the model reads and writes in tokens, not letters or whole words.</p>
 
       <div class="viz tok">
         <div class="vhead"><span class="vtag">Try it</span><span class="vttl">See text become tokens</span></div>
@@ -715,17 +739,17 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
         <div class="tokstat">
           <span><b id="tokN">0</b><span class="lb">tokens</span></span>
           <span><b id="tokC">0</b><span class="lb">characters</span></span>
-          <span><b id="tokCost">$0.00</b><span class="lb">to send once (~$3 / 1M)</span></span>
+          <span><b id="tokCost">$0.00</b><span class="lb">to send once (example: $3 / 1M tokens)</span></span>
         </div>
-        <p class="vsub" style="margin:12px 0 0">This split is approximate (real tokenizers are trained), but the idea is exact: dots mark spaces, and a long chat is just thousands of these, re-sent every call.</p>
+        <p class="vsub" style="margin:12px 0 0">This split is a rough stand-in - real models learn their own splitting rules, so real counts differ. The idea is exact, though: dots mark spaces, and a long chat is just thousands of these chunks, re-sent every call.</p>
       </div>
 
       <h3>Four things that are true of every call</h3>
       <ul>
         <li><strong>It is <span class="term" data-t="stateless">stateless</span>.</strong> The model remembers nothing between calls. Each call starts from a blank slate. If you want it to "remember" the earlier conversation, you have to paste that history back in every single time.</li>
-        <li><strong>It has a size limit.</strong> Everything you send plus everything it replies must fit inside the <span class="term" data-t="context">context window</span> - a fixed budget of tokens. Go over it and the provider rejects the request outright - nothing falls off quietly - so a harness has to keep the conversation inside that budget (chapter 9).</li>
-        <li><strong>It costs money and time.</strong> You pay per token, both for what you send and what you get back. Bigger prompts cost more and take longer.</li>
-        <li><strong>It can be steered but not commanded.</strong> A special <span class="term" data-t="system">system prompt</span> sets the rules and personality; a setting called <span class="term" data-t="temperature">temperature</span> tunes how predictable-versus-creative the reply is.</li>
+        <li><strong>It has a size limit.</strong> Everything you send plus everything it replies must fit inside the <span class="term" data-t="context">context window</span> - a fixed budget of tokens. Go over it and the <span class="term" data-t="provider">provider</span> refuses the request outright - nothing falls off quietly - so a harness has to keep the conversation inside that budget (chapter 9).</li>
+        <li><strong>It costs money and time.</strong> Most hosted models charge per token - for what you send and for what comes back - so bigger prompts cost more and take longer.</li>
+        <li><strong>It can be steered but not commanded.</strong> It is always predicting likely text, not following orders, so instructions guide it but never fully bind it. A special <span class="term" data-t="system">system prompt</span> sets the standing rules and personality; a setting called <span class="term" data-t="temperature">temperature</span> tunes how predictable-versus-creative the reply is.</li>
       </ul>
 
       <div class="viz">
@@ -749,7 +773,7 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 
       <div class="note clay">
         <p class="nt">The key limitation</p>
-        <p>A raw model cannot press a button, look something up, save a file, or check whether it was right. It can only produce text. That single limitation is the reason harnesses exist.</p>
+        <p>A raw model cannot press a button, look something up, save a file, or check whether it was right. It can only produce text. That single limitation is the reason <span class="term" data-t="harness">harnesses</span> exist.</p>
       </div>
 
       <details class="deeper">
@@ -2443,11 +2467,13 @@ platform event
     '</svg>';
   set("dotted", "Try it", "This is a glossary term. Hover, tap, or focus any dotted word to read a plain-English definition right here.");
   set("llm", "Large Language Model", "An AI trained on huge amounts of text to predict the next chunk of text. In practice: you give it words, it gives you words. It has no memory and takes no actions by itself.", { viz: V.llm, more: "It is a fixed function - same weights every call, no hidden server-side memory. Any 'memory' is just tokens you resend. A provider exposes it as one <code>HTTPS</code> request carrying JSON." });
+  set("function", "Function", "A named piece of a program that takes some input, does one job, and hands back a result - like a machine you feed something into and get something out of. A model call works the same way: text in, text out, then it stops.");
+  set("provider", "Model provider", "The company or service that runs the model on its own servers and answers your calls over the internet - OpenAI, Anthropic, Google, or a gateway like OpenRouter that forwards to many of them.");
   set("prompt", "Prompt", "The text you send into the model - the instructions plus any context and conversation history you want it to consider.");
   set("completion", "Completion", "The text the model sends back: its predicted continuation of your prompt.");
   set("token", "Token", "The unit a model reads and writes in - a short chunk of characters (roughly ¾ of a word). Costs and size limits are all counted in tokens, not letters.", { viz: V.token });
   set("stateless", "Stateless", "Keeps no memory between calls. Each request is judged only on what you send in that request; the model forgets everything the instant it replies.", { viz: V.stateless });
-  set("context", "Context window", "The maximum number of tokens a single call can hold - prompt plus reply combined. Exceed it and the oldest content must be dropped or summarised.", { viz: V.context, more: "Going over is a hard API error, not a silent drop - so the harness has to trim or compact the transcript before the call, never after." });
+  set("context", "Context window", "The most tokens a single call can hold - prompt plus reply combined. If it would overflow, the harness has to shorten the history before sending; otherwise the model service refuses the whole call.", { viz: V.context, more: "Going over is a hard API error, not a silent drop - so the harness has to trim or compact the transcript before the call, never after." });
   set("system", "System prompt", "A special top instruction that sets the model's rules, role, and boundaries. It frames every reply but can still be worked around, which is why hard rules also live in policy.");
   set("temperature", "Temperature", "A dial from 0 to ~1 controlling randomness. Low = predictable and repeatable; high = more varied and creative.");
   set("harness", "Harness", "The program that runs the agent loop around a model - holding its tools, memory, budget, and safety, and recovering from failures. The model is the engine; the harness is everything around it.", { viz: V.harness });
