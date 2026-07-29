@@ -7,7 +7,9 @@ context, subagents, and self-improvement, in one lean TypeScript-on-Bun binary.
 [![license](https://img.shields.io/npm/l/@carrara-labs/delta-harness?color=%23555)](./LICENSE)
 [![built with Bun](https://img.shields.io/badge/built%20with-Bun-fbf0df)](https://bun.sh)
 
-**[deltaharness.dev](https://deltaharness.dev)** · **[Docs](https://deltaharness.dev/docs/)** · **[GitHub](https://github.com/Carrara-Labs/delta-harness)**
+**[deltaharness.dev](https://deltaharness.dev)** · **[Learn (zero → metal)](https://deltaharness.dev/learn/)** · **[Docs](https://deltaharness.dev/docs/)** · **[GitHub](https://github.com/Carrara-Labs/delta-harness)**
+
+> New to harnesses? **[deltaharness.dev/learn](https://deltaharness.dev/learn/)** is a guided teardown that walks anyone from "what is an LLM call?" to the precise machinery of this engine, with a definition for every term and three reading depths (plain → builder → metal).
 
 A single-binary daemon: a **<2k-token prompt spine** and a durable tool-call loop that combine
 built-in workspace capabilities with external systems over MCP. Zero runtime deps · SQLite WAL
