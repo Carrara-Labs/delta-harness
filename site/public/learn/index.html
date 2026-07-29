@@ -353,7 +353,7 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) #tip .tip-tag { color: #12100a; } }
 #tip .tip-title { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--ink); letter-spacing: .01em; }
 #tip .tip-viz { margin: 12px 0 0; padding: 14px 15px; background: color-mix(in srgb, var(--sage) 5%, var(--paper)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-#tip .tip-viz svg { display: block; width: 100%; height: auto; overflow: visible; }
+.vfig svg { display: block; width: 100%; height: auto; overflow: visible; }
 #tip .tip-body { padding: 13px 16px 15px; font-size: 13.5px; line-height: 1.52; color: var(--ink); }
 #tip .tip-body code { font-family: var(--mono); font-size: .84em; background: var(--muted); padding: 1px 5px; border-radius: 4px; }
 #tip .tip-more { margin: 0 16px 15px; padding: 9px 12px 10px; border-radius: 9px; background: color-mix(in srgb, var(--slate) 9%, var(--paper)); border: 1px solid color-mix(in srgb, var(--slate) 24%, transparent); font-size: 12.5px; line-height: 1.46; color: var(--mutedink); }
@@ -361,20 +361,22 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 #tip .tip-more code { font-family: var(--mono); font-size: .88em; }
 /* diagram primitives - referenced by the inline SVGs so a diagram is a few
    short shapes plus a class, never a wall of inline styling. */
-#tip .tip-viz .vbox { fill: var(--card); stroke: var(--line-strong); stroke-width: 1.5; }
-#tip .tip-viz .vsage { fill: color-mix(in srgb, var(--sage) 17%, var(--paper)); stroke: var(--sage); stroke-width: 1.5; }
-#tip .tip-viz .vslate { fill: color-mix(in srgb, var(--slate) 16%, var(--paper)); stroke: var(--slate); stroke-width: 1.5; }
-#tip .tip-viz .vclay { fill: color-mix(in srgb, var(--clay) 16%, var(--paper)); stroke: var(--clay); stroke-width: 1.5; }
-#tip .tip-viz .vfill-sage { fill: var(--sage); }
-#tip .tip-viz .vfill-slate { fill: var(--slate); }
-#tip .tip-viz .vfill-clay { fill: var(--clay); }
-#tip .tip-viz .vfill-mut { fill: color-mix(in srgb, var(--mutedink) 22%, var(--paper)); stroke: var(--line-strong); stroke-width: 1.2; }
-#tip .tip-viz .vt { fill: var(--ink); font-family: var(--mono); font-size: 11px; font-weight: 600; }
-#tip .tip-viz .vlab { fill: var(--mutedink); font-family: var(--sans); font-size: 9.5px; font-weight: 600; letter-spacing: .02em; }
-#tip .tip-viz .vsagetext { fill: var(--sage); font-family: var(--sans); font-size: 9.5px; font-weight: 700; }
-#tip .tip-viz .vstroke { stroke: var(--mutedink); stroke-width: 1.4; fill: none; }
-#tip .tip-viz .vstroke-sage { stroke: var(--sage); stroke-width: 1.6; fill: none; }
-#tip .tip-viz .vdash { stroke: var(--line-strong); stroke-width: 1.3; fill: none; stroke-dasharray: 3 3; }
+.vfig .vbox { fill: var(--card); stroke: var(--line-strong); stroke-width: 1.5; }
+.vfig .vsage { fill: color-mix(in srgb, var(--sage) 17%, var(--paper)); stroke: var(--sage); stroke-width: 1.5; }
+.vfig .vslate { fill: color-mix(in srgb, var(--slate) 16%, var(--paper)); stroke: var(--slate); stroke-width: 1.5; }
+.vfig .vclay { fill: color-mix(in srgb, var(--clay) 16%, var(--paper)); stroke: var(--clay); stroke-width: 1.5; }
+.vfig .vfill-sage { fill: var(--sage); }
+.vfig .vfill-slate { fill: var(--slate); }
+.vfig .vfill-clay { fill: var(--clay); }
+.vfig .vfill-mut { fill: color-mix(in srgb, var(--mutedink) 22%, var(--paper)); stroke: var(--line-strong); stroke-width: 1.2; }
+.vfig .vt { fill: var(--ink); font-family: var(--mono); font-size: 11px; font-weight: 600; }
+.vfig .vlab { fill: var(--mutedink); font-family: var(--sans); font-size: 9.5px; font-weight: 600; letter-spacing: .02em; }
+.vfig .vsagetext { fill: var(--sage); font-family: var(--sans); font-size: 9.5px; font-weight: 700; }
+.vfig .vstroke { stroke: var(--mutedink); stroke-width: 1.4; fill: none; }
+.vfig .vstroke-sage { stroke: var(--sage); stroke-width: 1.6; fill: none; }
+.vfig .vdash { stroke: var(--line-strong); stroke-width: 1.3; fill: none; stroke-dasharray: 3 3; }
+/* inline (in-chapter) diagram wrapper - reuses every .vfig shape class above */
+.hfig { max-width: 620px; margin: 4px auto 0; }
 
 /* =========================================================================
    Reusable component blocks
@@ -865,7 +867,37 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
       <h2>So what is a harness?</h2>
       <p class="dek">Now the word can mean something precise, because you've seen the problem it solves.</p>
 
-      <p class="lead">A <span class="term" data-t="harness">harness</span> is the program that runs the agent loop safely and reliably. The model is the engine; the harness is everything around the engine that turns raw prediction into dependable work: it holds the tools, keeps the memory, enforces a budget, survives crashes, and decides what the model sees on each call.</p>
+      <p class="lead">A <span class="term" data-t="harness">harness</span> is the program that runs the agent loop. The model is the engine; the harness is everything around the engine that turns raw prediction into dependable work. A strong one - like Delta - holds the tools, keeps the memory, enforces a budget, survives crashes, and decides what the model sees on each call. The model predicts; the harness runs and equips it; and together they are what people mean by an <span class="term" data-t="agent">agent</span> - a system working toward a task on its own.</p>
+
+      <div class="fig">
+        <div class="vfig hfig">
+          <svg viewBox="0 0 600 226" role="img" aria-label="A diagram: a task enters the harness, which surrounds the model and runs the loop, with memory and budget beside it and checkpoint and crash recovery underneath, then the answer leaves.">
+            <rect class="vfill-mut" x="2" y="94" width="56" height="34" rx="7"/>
+            <text class="vlab" x="30" y="115" text-anchor="middle" font-size="10.5">a task</text>
+            <path class="vstroke-sage" d="M60 111 H76"/><path class="vfill-sage" d="M75 106 l9 5 -9 5 z"/>
+            <rect class="vbox" x="86" y="12" width="430" height="202" rx="14"/>
+            <text class="vlab" x="100" y="34" font-size="11">THE HARNESS - it runs and equips the model</text>
+            <rect class="vsage" x="104" y="50" width="120" height="58" rx="10"/>
+            <text class="vt" x="164" y="76" text-anchor="middle" font-size="12">THE MODEL</text>
+            <text class="vlab" x="164" y="94" text-anchor="middle" font-size="10.5">predicts</text>
+            <rect class="vslate" x="300" y="56" width="104" height="46" rx="9"/>
+            <text class="vt" x="352" y="83" text-anchor="middle" font-size="12">a tool</text>
+            <path class="vstroke-sage" d="M226 70 H298"/><path class="vfill-sage" d="M297 65 l9 5 -9 5 z"/>
+            <text class="vlab" x="262" y="62" text-anchor="middle" font-size="10">asks to act</text>
+            <path class="vstroke" d="M300 90 H228"/><path class="vfill-mut" d="M229 85 l-9 5 9 5 z"/>
+            <text class="vlab" x="262" y="104" text-anchor="middle" font-size="10">result back</text>
+            <rect class="vsage" x="418" y="52" width="88" height="22" rx="5"/><text class="vt" x="462" y="67" text-anchor="middle" font-size="10.5">memory</text>
+            <rect class="vsage" x="418" y="80" width="88" height="22" rx="5"/><text class="vt" x="462" y="95" text-anchor="middle" font-size="10.5">budget</text>
+            <line class="vdash" x1="100" y1="128" x2="502" y2="128"/>
+            <text class="vlab" x="100" y="148" font-size="10.5">and underneath, so a crash never loses its place:</text>
+            <rect class="vslate" x="104" y="158" width="192" height="28" rx="7"/><text class="vt" x="200" y="176" text-anchor="middle" font-size="11">checkpoint every turn</text>
+            <rect class="vslate" x="312" y="158" width="192" height="28" rx="7"/><text class="vt" x="408" y="176" text-anchor="middle" font-size="11">crash recovery</text>
+            <path class="vstroke-sage" d="M516 111 H534"/><path class="vfill-sage" d="M533 106 l9 5 -9 5 z"/>
+            <rect class="vsage" x="544" y="94" width="54" height="34" rx="7"/><text class="vt" x="571" y="115" text-anchor="middle" font-size="10.5">answer</text>
+          </svg>
+        </div>
+        <p class="cap"><b>The model predicts. The harness remembers, acts, limits, and recovers.</b> Together, they are the agent. Everything in the rest of this page is a piece of that outer box.</p>
+      </div>
 
       <div class="cmp">
         <div class="col bad">
@@ -879,7 +911,7 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
           </ul>
         </div>
         <div class="col good">
-          <h4>The model + a harness</h4>
+          <h4>The model + a strong harness (like Delta)</h4>
           <ul>
             <li>Runs a loop until the job is done</li>
             <li>Remembers across turns and restarts</li>
@@ -890,15 +922,15 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
         </div>
       </div>
 
-      <p>The name comes from engineering: a "test harness" or "wiring harness" is the scaffolding that holds a component in place and connects it to everything it needs. An AI harness holds the model in place and wires it to tools, memory, and a safe runtime.</p>
+      <p>The name comes from engineering: a "wiring harness" is the bundle of cabling that holds a component in place and connects it to everything it needs. An AI harness does the same for the model - it holds the model in place and wires it to tools, memory, and a place to run safely.</p>
 
-      <h3>Two kinds of harness</h3>
-      <p>Not all harnesses want the same thing, and this distinction matters for understanding Delta:</p>
+      <h3>Two design centers</h3>
+      <p>Harnesses are not all pointed at the same kind of work. The line is not a wall - many can do a bit of both - but each one is <em>designed around</em> a center of gravity, and that shapes its defaults:</p>
       <ul>
-        <li><strong>Coding agents</strong> live in your code editor and terminal. Their world is files, diffs, and shell commands. They optimise for editing repositories. (Claude Code, and much of what OpenClaw-style tools do, are here.)</li>
-        <li><strong>Working agents</strong> do knowledge work that isn't coding: triaging messages, researching, drafting, keeping a knowledge base current, following a recurring procedure. Their world is tools and documents over long-running tasks.</li>
+        <li><strong>Coding agents</strong> are built for changing software. A typical job: find a login bug, edit the files, run the tests, and hand back the changed code. Claude Code is a clear example.</li>
+        <li><strong>Working agents</strong> are built for knowledge work that isn't coding. A typical job: read the new client messages, look up the facts that are missing, draft a briefing, update the shared notes, and pick the thread back up tomorrow.</li>
       </ul>
-      <p><strong>Delta is a working-agent harness.</strong> Its own tagline puts it bluntly: <em>"Echoes think, Deltas do."</em> That single choice explains most of what makes it different, which is the next chapter.</p>
+      <p><strong>Delta is designed as a working-agent harness</strong> (it can still hand a coding task off to a separate coding tool when needed). Its tagline puts the split bluntly - <em>"Echoes think, Deltas do"</em> - where an Echo is an agent that only thinks and chats, and a Delta is one built to act. That single choice explains most of what makes it different, which is the next chapter.</p>
 
       <details class="deeper">
         <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">the seven jobs a harness owns</span><span class="peek">and why swapping any changes it</span></summary>
@@ -919,8 +951,8 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
       <details class="deeper code">
         <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">at the code</span><span class="peek">one Bun binary + SQLite</span></summary>
         <div class="db">
-          <p>Delta is a single self-contained <span class="term" data-t="daemon">daemon</span> - a long-running background program - compiled with <span class="term" data-t="bun">Bun</span> into one binary, using <span class="term" data-t="sqlite">SQLite</span> (a database that is just a file) for all durable state. No separate database server, no cluster of services to stand up.</p>
-          <p>Instead of being a chat window, it exposes an HTTP <span class="term" data-t="seam">seam</span> - a small set of endpoints like <code>POST /v1/responses</code> and <code>POST /v1/tasks</code> that other software calls. The harness is a <em>service</em>, which is what lets one binary sit behind many different products.</p>
+          <p>Delta is a single self-contained <span class="term" data-t="daemon">daemon</span> - a long-running background program - compiled with <span class="term" data-t="bun">Bun</span> into one binary, using <span class="term" data-t="sqlite">SQLite</span> (a database that is just a file) for all of a run's operational state. No separate database server, no cluster of services to stand up.</p>
+          <p>Instead of being a chat window, it exposes an HTTP <span class="term" data-t="seam">seam</span> - a small set of endpoints like <code>POST /v1/responses</code> and <code>POST /v1/tasks</code> that other software calls. The harness is a <em>service</em>, which is what lets the same binary be deployed behind many different products.</p>
           <p>Measured cost of that leanness: about 30 MB of memory and a cold start under 50 milliseconds.</p>
         </div>
       </details>
@@ -2109,7 +2141,7 @@ platform event
     var g = GLOSSARY[key];
     if (!g) return;
     var html = '<div class="tip-head"><span class="tip-tag">' + (g.tag || "Concept") + '</span><span class="tip-title">' + (g.t || key) + '</span></div>';
-    if (g.viz) html += '<div class="tip-viz" aria-hidden="true">' + g.viz + '</div>';
+    if (g.viz) html += '<div class="tip-viz vfig" aria-hidden="true">' + g.viz + '</div>';
     html += '<div class="tip-body">' + g.d + '</div>';
     if (g.more) html += '<div class="tip-more"><b>If you work in tech</b>' + g.more + '</div>';
     tip.innerHTML = html;
@@ -2521,6 +2553,8 @@ platform event
   set("system", "System prompt", "A special top instruction that sets the model's rules, role, and boundaries. It frames every reply but can still be worked around, which is why hard rules also live in policy.");
   set("temperature", "Temperature", "A dial from 0 to ~1 controlling randomness. Low = predictable and repeatable; high = more varied and creative.");
   set("harness", "Harness", "The program that runs the agent loop around a model - holding its tools, memory, budget, and safety, and recovering from failures. The model is the engine; the harness is everything around it.", { viz: V.harness });
+  set("agent", "Agent", "A model plus the harness around it, working toward a task on its own - deciding what to do, calling tools, and continuing until the job is done or the budget runs out. The model is the brain; the harness is the body.", { viz: V.harness, tag: "Concept" });
+  set("runtime", "Runtime", "The place a program actually runs - the surrounding software that loads it, gives it memory and access to the system, and carries out its instructions. A harness gives the model a safe runtime to act in.");
   set("api", "API", "A defined way for one program to call another over the network. You reach a model by sending an HTTP request to the provider's API.", { viz: V.api, more: "Concretely one HTTP endpoint: a method (<code>GET</code> to read, <code>POST</code> to do) plus a path (<code>/v1/responses</code>), a JSON body in, a JSON or streamed body back." });
   set("openrouter", "OpenRouter", "A gateway that speaks one common API in front of many model providers, used as a backup route so an agent isn't tied to a single vendor.");
   set("usage", "Usage", "The record a provider returns with each reply: how many tokens went in and came out. It is what the bill - and Delta's budget guards - are computed from.");
