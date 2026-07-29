@@ -2040,7 +2040,7 @@ platform event
       <p class="lead">One promise ran through this whole page: that a small, sharp core could hold its own against heavy frameworks without carrying their weight. Back in <a class="link" href="#c4">chapter 4</a> you had to take that on faith. Now that you know what each capability actually is, you can judge it for yourself.</p>
 
       <h3>Parity or ahead, at a fraction of the size</h3>
-      <p>We ran a feature-by-feature teardown of Delta against the real, cloned source of the same three systems from chapter 4 - Pi, OpenClaw, and Hermes - scoring fourteen capability dimensions. These are the exact things this page just taught you, so you can now read the verdicts for yourself. It is our own read, not a third-party benchmark: <strong>parity</strong> means Delta holds its own against the field on that dimension; <strong>ahead</strong> means it does as much with noticeably less. Judge each row against what you now know it means.</p>
+      <p>We compared Delta against the same three systems from chapter 4 - Pi, OpenClaw, and Hermes - across fourteen questions, each one something this page just taught you (can it survive a crash? manage a long conversation? cap spending?). We read their code to answer each one. The scores are <strong>our own assessment, not an independent test</strong>: <strong>parity</strong> means Delta holds its own on that dimension; <strong>ahead</strong> means it does the job at least as well while running on far less code. Read each verdict against what you now know it means.</p>
       <div class="fig">
         <div class="score">
           <div class="srow"><div class="sinfo"><span class="sname">System-prompt size</span><span class="sproof">Its resident prompt targets under 2k tokens, where heavier harnesses bootstrap near 26k - a saving paid back on every single call.</span></div><span class="sverdict ahead">ahead</span></div>
@@ -2158,7 +2158,7 @@ platform event
         <div class="mrow"><div class="mq"><span class="x">✕</span><span>"The AI model and the harness are the same thing."</span></div><div class="ma"><span class="c">✓</span><span>The model only turns text into text. The harness is the separate program around it that loops, holds the tools and memory, enforces a budget, and recovers from crashes. Delta is a harness; it <em>calls</em> a model.</span></div></div>
         <div class="mrow"><div class="mq"><span class="x">✕</span><span>"Agents remember things on their own."</span></div><div class="ma"><span class="c">✓</span><span>A model is stateless - it forgets everything the instant it replies. Any memory is something the harness stores and re-injects into the next call. "Memory" is an engineering feature, not a property of the model.</span></div></div>
         <div class="mrow"><div class="mq"><span class="x">✕</span><span>"A bigger system prompt makes a smarter agent."</span></div><div class="ma"><span class="c">✓</span><span>Often the opposite. A huge prompt costs more, runs slower, and buries the task. Delta aims to keep its spine near 2,000 tokens so the model spends its attention on the work, not on reading its own manual.</span></div></div>
-        <div class="mrow"><div class="mq"><span class="x">✕</span><span>"You need a vector database for an agent to have memory."</span></div><div class="ma"><span class="c">✓</span><span>Not necessarily. Delta uses scoped local tables with deterministic recall - the same query over the same rows returns the same learnings - and ships no vector store in its core. Meaning-based retrieval is a choice, not a requirement.</span></div></div>
+        <div class="mrow"><div class="mq"><span class="x">✕</span><span>"You need a vector database for an agent to have memory."</span></div><div class="ma"><span class="c">✓</span><span>Not necessarily. Delta stores memories as ordinary rows and finds them again with predictable word-matching - the same query over the same rows returns the same learnings - and ships no vector store in its core. A fancier system that searches by <em>meaning</em> can be added, but basic memory does not require one.</span></div></div>
         <div class="mrow"><div class="mq"><span class="x">✕</span><span>"Long-running means it runs on a timer, and a crash restarts it."</span></div><div class="ma"><span class="c">✓</span><span>It runs on a budget (steps, tokens, dollars), not a clock, and it checkpoints every turn. A crash resumes exactly where it stopped, reusing finished work and verifying any action it can't prove was safe before repeating it.</span></div></div>
       </div>
 
@@ -2179,8 +2179,8 @@ platform event
         <dt>Scoped memory</dt><dd>Learnings filed by audience so one user's lesson never leaks to another.</dd>
         <dt>Reflect loop</dt><dd>Turning a human's review correction into a durable, scoped lesson.</dd>
         <dt>MCP</dt><dd>The open protocol Delta uses (as a client) to plug into external tools.</dd>
-        <dt>Subagent</dt><dd>An in-process, read-only helper built from the same spine, so same rules apply.</dd>
-        <dt>Error-as-value</dt><dd>A failed call returns a clean result the loop reads, so a bad call doesn't crash the daemon.</dd>
+        <dt>Subagent</dt><dd>A helper the agent spins up for part of a task: a read-only in-process "research" one, or a heavier isolated child that obeys its own profile.</dd>
+        <dt>Error-as-value</dt><dd>A managed model or tool failure comes back as a value the loop reads, instead of throwing and ending the run.</dd>
       </dl>
 
       <div class="endcta">
