@@ -1974,6 +1974,7 @@ The values below are the current public operating surface. Unless noted otherwis
 | `DELTA_PROVIDERS` | empty | JSON array of fallback provider objects. |
 | `DELTA_MODEL_TIMEOUT_MS` | `600000` | Absolute model-call ceiling. |
 | `DELTA_STREAM_IDLE_MS` | `60000` | Abort a model stream after this long without a network chunk. `0` disables. |
+| `DELTA_FIRST_BYTE_MS` | `30000` | Deadline for connect + first response header on a model call - the phase a dead socket after a VM resume otherwise hangs in. `0` disables. |
 | `DELTA_VISION` | auto | `1` forces vision support; `0` disables it. |
 | `DELTA_VISION_MODELS` | built-in regex | Custom regular expression for automatic vision detection. |
 
