@@ -333,17 +333,48 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
   cursor: help; color: inherit; font-weight: 500;
 }
 .term:hover, .term:focus-visible { background: color-mix(in srgb, var(--sage) 12%, transparent); outline: none; border-radius: 3px; }
+/* The glossary tooltip is a full little card: a labelled header, an optional
+   hand-drawn diagram, a plain-English body, and an optional "going deeper" note
+   for readers who already work in tech. It matches the page theme (not inverted)
+   so the diagrams, which are built from the same colour tokens, always read. */
 #tip {
-  position: fixed; z-index: 200; max-width: 320px; padding: 13px 15px 14px;
-  background: var(--ink); color: var(--paper); border-radius: 11px; font-size: 13.5px; line-height: 1.5;
-  box-shadow: 0 12px 34px rgba(0,0,0,.28); opacity: 0; transform: translateY(4px); pointer-events: none;
-  transition: opacity .13s ease, transform .13s ease;
+  position: fixed; z-index: 200; width: min(384px, calc(100vw - 22px));
+  background: var(--card); color: var(--ink);
+  border: 1px solid var(--line-strong); border-radius: 15px;
+  box-shadow: 0 20px 54px rgba(0,0,0,.22), 0 3px 10px rgba(0,0,0,.09);
+  opacity: 0; transform: translateY(7px) scale(.984); pointer-events: none;
+  transition: opacity .15s ease, transform .15s ease;
+  overflow: hidden;
 }
-#tip.on { opacity: 1; transform: translateY(0); }
-#tip .tt { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--sage-soft); display: block; margin-bottom: 5px; }
-:root[data-theme="dark"] #tip, :root:not([data-theme="light"]) #tip { background: #f4efe6; color: #14110b; box-shadow: 0 12px 34px rgba(0,0,0,.5); }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) #tip { background: #f4efe6; color: #14110b; } }
-:root[data-theme="dark"] #tip .tt, :root:not([data-theme="light"]) #tip .tt { color: var(--sage-deep, #4f6b4a); }
+#tip.on { opacity: 1; transform: translateY(0) scale(1); }
+#tip .tip-head { display: flex; align-items: center; gap: 9px; padding: 13px 16px 0; }
+#tip .tip-tag { font-family: var(--mono); font-size: 9px; letter-spacing: .13em; text-transform: uppercase; color: #fff; background: var(--sage); padding: 3px 7px 2.5px; border-radius: 5px; font-weight: 700; flex: none; }
+:root[data-theme="dark"] #tip .tip-tag, :root:not([data-theme="light"]) #tip .tip-tag { color: #12100a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) #tip .tip-tag { color: #12100a; } }
+#tip .tip-title { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--ink); letter-spacing: .01em; }
+#tip .tip-viz { margin: 12px 0 0; padding: 14px 15px; background: color-mix(in srgb, var(--sage) 5%, var(--paper)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+#tip .tip-viz svg { display: block; width: 100%; height: auto; overflow: visible; }
+#tip .tip-body { padding: 13px 16px 15px; font-size: 13.5px; line-height: 1.52; color: var(--ink); }
+#tip .tip-body code { font-family: var(--mono); font-size: .84em; background: var(--muted); padding: 1px 5px; border-radius: 4px; }
+#tip .tip-more { margin: 0 16px 15px; padding: 9px 12px 10px; border-radius: 9px; background: color-mix(in srgb, var(--slate) 9%, var(--paper)); border: 1px solid color-mix(in srgb, var(--slate) 24%, transparent); font-size: 12.5px; line-height: 1.46; color: var(--mutedink); }
+#tip .tip-more b { color: var(--slate); font-family: var(--mono); font-size: 9.5px; letter-spacing: .09em; text-transform: uppercase; display: block; margin-bottom: 3px; font-weight: 700; }
+#tip .tip-more code { font-family: var(--mono); font-size: .88em; }
+/* diagram primitives - referenced by the inline SVGs so a diagram is a few
+   short shapes plus a class, never a wall of inline styling. */
+#tip .tip-viz .vbox { fill: var(--card); stroke: var(--line-strong); stroke-width: 1.5; }
+#tip .tip-viz .vsage { fill: color-mix(in srgb, var(--sage) 17%, var(--paper)); stroke: var(--sage); stroke-width: 1.5; }
+#tip .tip-viz .vslate { fill: color-mix(in srgb, var(--slate) 16%, var(--paper)); stroke: var(--slate); stroke-width: 1.5; }
+#tip .tip-viz .vclay { fill: color-mix(in srgb, var(--clay) 16%, var(--paper)); stroke: var(--clay); stroke-width: 1.5; }
+#tip .tip-viz .vfill-sage { fill: var(--sage); }
+#tip .tip-viz .vfill-slate { fill: var(--slate); }
+#tip .tip-viz .vfill-clay { fill: var(--clay); }
+#tip .tip-viz .vfill-mut { fill: color-mix(in srgb, var(--mutedink) 22%, var(--paper)); stroke: var(--line-strong); stroke-width: 1.2; }
+#tip .tip-viz .vt { fill: var(--ink); font-family: var(--mono); font-size: 11px; font-weight: 600; }
+#tip .tip-viz .vlab { fill: var(--mutedink); font-family: var(--sans); font-size: 9.5px; font-weight: 600; letter-spacing: .02em; }
+#tip .tip-viz .vsagetext { fill: var(--sage); font-family: var(--sans); font-size: 9.5px; font-weight: 700; }
+#tip .tip-viz .vstroke { stroke: var(--mutedink); stroke-width: 1.4; fill: none; }
+#tip .tip-viz .vstroke-sage { stroke: var(--sage); stroke-width: 1.6; fill: none; }
+#tip .tip-viz .vdash { stroke: var(--line-strong); stroke-width: 1.3; fill: none; stroke-dasharray: 3 3; }
 
 /* =========================================================================
    Reusable component blocks
@@ -2048,7 +2079,11 @@ platform event
     var key = el.getAttribute("data-t");
     var g = GLOSSARY[key];
     if (!g) return;
-    tip.innerHTML = '<span class="tt">' + (g.t || key) + '</span>' + g.d;
+    var html = '<div class="tip-head"><span class="tip-tag">' + (g.tag || "Concept") + '</span><span class="tip-title">' + (g.t || key) + '</span></div>';
+    if (g.viz) html += '<div class="tip-viz" aria-hidden="true">' + g.viz + '</div>';
+    html += '<div class="tip-body">' + g.d + '</div>';
+    if (g.more) html += '<div class="tip-more"><b>If you work in tech</b>' + g.more + '</div>';
+    tip.innerHTML = html;
     tip.setAttribute("aria-hidden", "false");
     tip.classList.add("on");
     activeTerm = el;
@@ -2056,14 +2091,18 @@ platform event
   }
   function positionTip(el) {
     var r = el.getBoundingClientRect();
-    /* measure */
+    /* measure at origin, then place */
     tip.style.left = "0px"; tip.style.top = "0px";
     var tr = tip.getBoundingClientRect();
-    var pad = 10;
+    var pad = 11;
     var left = r.left + r.width / 2 - tr.width / 2;
     left = Math.max(pad, Math.min(left, window.innerWidth - tr.width - pad));
-    var top = r.top - tr.height - 9;
-    if (top < pad) top = r.bottom + 9; /* flip below if no room above */
+    var above = r.top - tr.height - 10;
+    var below = r.bottom + 10;
+    var top;
+    if (above >= pad) top = above;                                   /* prefer above */
+    else if (below + tr.height <= window.innerHeight - pad) top = below; /* else below */
+    else top = Math.max(pad, window.innerHeight - tr.height - pad);  /* else clamp on-screen */
     tip.style.left = left + "px";
     tip.style.top = top + "px";
   }
@@ -2237,58 +2276,222 @@ platform event
 <script id="glossary-data">
 (function () {
   var G = window.__DH_GLOSSARY__ || {};
-  function set(k, t, d) { G[k] = { t: t, d: d }; }
+  function set(k, t, d, x) {
+    G[k] = { t: t, d: d };
+    if (x) { if (x.viz) G[k].viz = x.viz; if (x.more) G[k].more = x.more; if (x.tag) G[k].tag = x.tag; }
+  }
+
+  /* -----------------------------------------------------------------------
+     Diagram library. Each is a tiny inline SVG built from the .v* classes in
+     the stylesheet, so it re-colours itself for light and dark automatically.
+     A diagram never puts text on a saturated fill (only on tints or the card),
+     which keeps every label readable in both themes.
+     ----------------------------------------------------------------------- */
+  var V = {};
+  V.llm =
+    '<svg viewBox="0 0 356 82">' +
+    '<rect class="vfill-mut" x="2" y="26" width="94" height="30" rx="6"/>' +
+    '<text class="vlab" x="49" y="20" text-anchor="middle">TEXT IN</text>' +
+    '<text class="vt" x="49" y="45" text-anchor="middle" font-size="10">Hi there</text>' +
+    '<path class="vstroke-sage" d="M102 41 H126"/><path class="vfill-sage" d="M125 36 l9 5 -9 5 z"/>' +
+    '<rect class="vsage" x="138" y="20" width="80" height="42" rx="10"/>' +
+    '<text class="vt" x="178" y="38" text-anchor="middle" font-size="10">THE</text>' +
+    '<text class="vt" x="178" y="51" text-anchor="middle" font-size="10">MODEL</text>' +
+    '<path class="vstroke-sage" d="M222 41 H246"/><path class="vfill-sage" d="M245 36 l9 5 -9 5 z"/>' +
+    '<rect class="vfill-mut" x="258" y="26" width="96" height="30" rx="6"/>' +
+    '<text class="vlab" x="306" y="20" text-anchor="middle">TEXT OUT</text>' +
+    '<text class="vt" x="306" y="45" text-anchor="middle" font-size="10">Hello!</text>' +
+    '</svg>';
+  V.token =
+    '<svg viewBox="0 0 356 64">' +
+    '<text class="vlab" x="4" y="15">ONE WORD</text>' +
+    '<text class="vt" x="4" y="41" font-size="14">understanding</text>' +
+    '<path class="vstroke-sage" d="M120 36 H150"/><path class="vfill-sage" d="M149 31 l9 5 -9 5 z"/>' +
+    '<text class="vlab" x="164" y="15">TOKENS (chunks)</text>' +
+    '<rect class="vsage" x="164" y="25" width="54" height="26" rx="5"/><text class="vt" x="191" y="42" text-anchor="middle" font-size="10">under</text>' +
+    '<rect class="vsage" x="224" y="25" width="54" height="26" rx="5"/><text class="vt" x="251" y="42" text-anchor="middle" font-size="10">stand</text>' +
+    '<rect class="vsage" x="284" y="25" width="42" height="26" rx="5"/><text class="vt" x="305" y="42" text-anchor="middle" font-size="10">ing</text>' +
+    '</svg>';
+  V.stateless =
+    '<svg viewBox="0 0 356 78">' +
+    '<rect class="vbox" x="4" y="20" width="150" height="44" rx="8"/>' +
+    '<text class="vlab" x="79" y="15" text-anchor="middle">CALL 1</text>' +
+    '<text class="vt" x="79" y="39" text-anchor="middle" font-size="10">"My name is Sam"</text>' +
+    '<text class="vlab" x="79" y="56" text-anchor="middle">starts blank</text>' +
+    '<path class="vdash" d="M160 42 H196"/>' +
+    '<text class="vlab" x="178" y="34" text-anchor="middle">no</text><text class="vlab" x="178" y="60" text-anchor="middle">memory</text>' +
+    '<rect class="vbox" x="202" y="20" width="150" height="44" rx="8"/>' +
+    '<text class="vlab" x="277" y="15" text-anchor="middle">CALL 2</text>' +
+    '<text class="vt" x="277" y="39" text-anchor="middle" font-size="10">"What is my name?"</text>' +
+    '<text class="vlab" x="277" y="56" text-anchor="middle">also blank</text>' +
+    '</svg>';
+  V.context =
+    '<svg viewBox="0 0 356 70">' +
+    '<text class="vlab" x="4" y="15">CONTEXT WINDOW - one fixed token budget</text>' +
+    '<rect class="vbox" x="4" y="23" width="348" height="30" rx="7"/>' +
+    '<rect class="vsage" x="8" y="27" width="196" height="22" rx="4"/>' +
+    '<rect class="vclay" x="322" y="27" width="26" height="22" rx="4"/>' +
+    '<line class="vdash" x1="210" y1="25" x2="210" y2="51"/>' +
+    '<text class="vlab" x="106" y="66" text-anchor="middle">used: prompt + reply</text>' +
+    '<text class="vlab" x="255" y="66" text-anchor="middle">free</text>' +
+    '<text class="vlab" x="352" y="66" text-anchor="end">over = rejected</text>' +
+    '</svg>';
+  V.toolcall =
+    '<svg viewBox="0 0 356 92">' +
+    '<rect class="vsage" x="30" y="34" width="104" height="38" rx="9"/>' +
+    '<text class="vt" x="82" y="57" text-anchor="middle" font-size="11">MODEL</text>' +
+    '<rect class="vslate" x="222" y="34" width="104" height="38" rx="9"/>' +
+    '<text class="vt" x="274" y="57" text-anchor="middle" font-size="11">TOOL</text>' +
+    '<path class="vstroke-sage" d="M136 44 H218"/><path class="vfill-sage" d="M217 39 l9 5 -9 5 z"/>' +
+    '<text class="vlab" x="177" y="30" text-anchor="middle">"run search(...)"</text>' +
+    '<path class="vstroke" d="M220 62 H138"/><path class="vfill-mut" d="M139 57 l-9 5 9 5 z"/>' +
+    '<text class="vlab" x="177" y="86" text-anchor="middle">result comes back - repeat</text>' +
+    '</svg>';
+  V.harness =
+    '<svg viewBox="0 0 356 98">' +
+    '<rect class="vbox" x="4" y="16" width="348" height="78" rx="11"/>' +
+    '<text class="vlab" x="16" y="33">THE HARNESS (the program around the model)</text>' +
+    '<rect class="vsage" x="16" y="43" width="92" height="42" rx="9"/>' +
+    '<text class="vt" x="62" y="60" text-anchor="middle" font-size="10">THE</text>' +
+    '<text class="vt" x="62" y="73" text-anchor="middle" font-size="10">MODEL</text>' +
+    '<rect class="vslate" x="124" y="45" width="102" height="17" rx="4"/><text class="vlab" x="132" y="57">tools + memory</text>' +
+    '<rect class="vslate" x="124" y="66" width="102" height="17" rx="4"/><text class="vlab" x="132" y="78">budget + safety</text>' +
+    '<rect class="vclay" x="234" y="45" width="104" height="17" rx="4"/><text class="vlab" x="242" y="57">the loop</text>' +
+    '<rect class="vclay" x="234" y="66" width="104" height="17" rx="4"/><text class="vlab" x="242" y="78">crash recovery</text>' +
+    '</svg>';
+  V.api =
+    '<svg viewBox="0 0 356 84">' +
+    '<rect class="vslate" x="4" y="28" width="96" height="38" rx="9"/>' +
+    '<text class="vt" x="52" y="45" text-anchor="middle" font-size="10">YOUR</text><text class="vt" x="52" y="58" text-anchor="middle" font-size="10">APP</text>' +
+    '<rect class="vsage" x="256" y="28" width="96" height="38" rx="9"/>' +
+    '<text class="vt" x="304" y="45" text-anchor="middle" font-size="10">THE</text><text class="vt" x="304" y="58" text-anchor="middle" font-size="10">SERVER</text>' +
+    '<path class="vstroke-sage" d="M104 38 H252"/><path class="vfill-sage" d="M251 33 l9 5 -9 5 z"/>' +
+    '<text class="vlab" x="178" y="30" text-anchor="middle">request: "please do X"</text>' +
+    '<path class="vstroke" d="M252 56 H106"/><path class="vfill-mut" d="M107 51 l-9 5 9 5 z"/>' +
+    '<text class="vlab" x="178" y="74" text-anchor="middle">reply: the answer</text>' +
+    '</svg>';
+  V.seam =
+    '<svg viewBox="0 0 356 122">' +
+    '<rect class="vbox" x="90" y="8" width="176" height="30" rx="9"/>' +
+    '<text class="vt" x="178" y="22" text-anchor="middle" font-size="10">THE DELTA AGENT</text>' +
+    '<text class="vlab" x="178" y="33" text-anchor="middle">one background service</text>' +
+    '<path class="vstroke" d="M178 38 V48"/>' +
+    '<rect class="vsage" x="18" y="50" width="188" height="20" rx="5"/><text class="vt" x="28" y="64" font-size="9">POST /v1/responses</text><text class="vlab" x="284" y="64" text-anchor="middle">quick answer</text>' +
+    '<rect class="vsage" x="18" y="74" width="188" height="20" rx="5"/><text class="vt" x="28" y="88" font-size="9">POST /v1/tasks</text><text class="vlab" x="284" y="88" text-anchor="middle">long job + progress</text>' +
+    '<rect class="vslate" x="18" y="98" width="188" height="20" rx="5"/><text class="vt" x="28" y="112" font-size="9">GET /healthz</text><text class="vlab" x="284" y="112" text-anchor="middle">alive? (heartbeat)</text>' +
+    '</svg>';
+  V.checkpoint =
+    '<svg viewBox="0 0 356 82">' +
+    '<text class="vlab" x="4" y="15">EACH TURN SAVES ITS EXACT POSITION</text>' +
+    '<line class="vstroke" x1="20" y1="36" x2="336" y2="36"/><path class="vfill-mut" d="M335 31 l9 5 -9 5 z"/>' +
+    '<text class="vlab" x="332" y="28" text-anchor="end">time</text>' +
+    '<circle class="vfill-sage" cx="40" cy="36" r="5"/><path class="vstroke-sage" d="M40 41 V56"/><rect class="vsage" x="24" y="56" width="32" height="16" rx="4"/><text class="vt" x="40" y="68" text-anchor="middle" font-size="7.5">save</text>' +
+    '<circle class="vfill-sage" cx="130" cy="36" r="5"/><path class="vstroke-sage" d="M130 41 V56"/><rect class="vsage" x="114" y="56" width="32" height="16" rx="4"/><text class="vt" x="130" y="68" text-anchor="middle" font-size="7.5">save</text>' +
+    '<circle class="vfill-sage" cx="220" cy="36" r="5"/><path class="vstroke-sage" d="M220 41 V56"/><rect class="vsage" x="204" y="56" width="32" height="16" rx="4"/><text class="vt" x="220" y="68" text-anchor="middle" font-size="7.5">save</text>' +
+    '<circle class="vfill-sage" cx="310" cy="36" r="5"/><path class="vstroke-sage" d="M310 41 V56"/><rect class="vsage" x="294" y="56" width="32" height="16" rx="4"/><text class="vt" x="310" y="68" text-anchor="middle" font-size="7.5">save</text>' +
+    '</svg>';
+  V.scaletozero =
+    '<svg viewBox="0 0 356 82">' +
+    '<rect class="vbox" x="4" y="28" width="84" height="30" rx="8"/><text class="vlab" x="46" y="40" text-anchor="middle">no work</text><text class="vlab" x="46" y="52" text-anchor="middle">coming in</text>' +
+    '<path class="vstroke" d="M92 43 H118"/><path class="vfill-mut" d="M117 38 l9 5 -9 5 z"/>' +
+    '<rect class="vslate" x="126" y="28" width="76" height="30" rx="8"/><text class="vt" x="164" y="47" text-anchor="middle" font-size="11">SLEEP</text>' +
+    '<text class="vlab" x="164" y="74" text-anchor="middle">$0, memory kept</text>' +
+    '<path class="vstroke-sage" d="M206 43 H232"/><path class="vfill-sage" d="M231 38 l9 5 -9 5 z"/>' +
+    '<text class="vlab" x="298" y="30" text-anchor="middle">a request arrives</text>' +
+    '<rect class="vsage" x="240" y="36" width="112" height="26" rx="7"/><text class="vt" x="296" y="53" text-anchor="middle" font-size="10">awake in ~1s</text>' +
+    '</svg>';
+  V.failover =
+    '<svg viewBox="0 0 356 88">' +
+    '<rect class="vslate" x="4" y="34" width="70" height="28" rx="8"/><text class="vt" x="39" y="52" text-anchor="middle" font-size="10">a call</text>' +
+    '<path class="vstroke" d="M78 48 H108"/><path class="vfill-mut" d="M107 43 l9 5 -9 5 z"/>' +
+    '<rect class="vbox" x="120" y="20" width="120" height="28" rx="8"/><text class="vt" x="176" y="38" text-anchor="middle" font-size="10">provider A</text>' +
+    '<text class="vfill-clay" x="228" y="43" font-size="22" text-anchor="middle">&#215;</text>' +
+    '<text class="vlab" x="180" y="15" text-anchor="middle">down</text>' +
+    '<path class="vstroke-sage" d="M180 50 V64"/><path class="vfill-sage" d="M175 63 l5 9 5 -9 z"/>' +
+    '<rect class="vsage" x="120" y="66" width="120" height="26" rx="8"/><text class="vt" x="180" y="83" text-anchor="middle" font-size="9">provider B - answers</text>' +
+    '<text class="vlab" x="300" y="50" text-anchor="middle">auto-retry</text><text class="vlab" x="300" y="62" text-anchor="middle">on a backup</text>' +
+    '</svg>';
+  V.compaction =
+    '<svg viewBox="0 0 356 80">' +
+    '<text class="vlab" x="4" y="15">A LONG CHAT, KEPT INSIDE THE BUDGET</text>' +
+    '<rect class="vfill-mut" x="6" y="30" width="7" height="26" rx="2"/><rect class="vfill-mut" x="17" y="30" width="7" height="26" rx="2"/><rect class="vfill-mut" x="28" y="30" width="7" height="26" rx="2"/><rect class="vfill-mut" x="39" y="30" width="7" height="26" rx="2"/><rect class="vfill-mut" x="50" y="30" width="7" height="26" rx="2"/><rect class="vfill-mut" x="61" y="30" width="7" height="26" rx="2"/><rect class="vfill-mut" x="72" y="30" width="7" height="26" rx="2"/><rect class="vfill-mut" x="83" y="30" width="7" height="26" rx="2"/>' +
+    '<text class="vlab" x="48" y="70" text-anchor="middle">the old turns</text>' +
+    '<path class="vstroke-sage" d="M98 43 H124"/><path class="vfill-sage" d="M123 38 l9 5 -9 5 z"/>' +
+    '<rect class="vsage" x="134" y="30" width="78" height="26" rx="7"/><text class="vt" x="173" y="47" text-anchor="middle" font-size="9">summary</text>' +
+    '<text class="vt" x="222" y="47" text-anchor="middle" font-size="13">+</text>' +
+    '<rect class="vslate" x="232" y="30" width="120" height="26" rx="7"/><text class="vt" x="292" y="47" text-anchor="middle" font-size="9">recent turns</text>' +
+    '<text class="vlab" x="292" y="70" text-anchor="middle">kept word for word</text>' +
+    '</svg>';
+  V.bundle =
+    '<svg viewBox="0 0 356 96">' +
+    '<rect class="vsage" x="4" y="36" width="64" height="30" rx="8"/><text class="vt" x="36" y="55" text-anchor="middle" font-size="9.5">engine</text>' +
+    '<text class="vt" x="80" y="56" text-anchor="middle" font-size="14">+</text>' +
+    '<rect class="vbox" x="94" y="12" width="150" height="76" rx="9"/><text class="vlab" x="169" y="27" text-anchor="middle">bundle: 5 plain files</text>' +
+    '<rect class="vslate" x="102" y="33" width="134" height="14" rx="3"/><text class="vlab" x="108" y="43">delta.env  ·  vocab.json</text>' +
+    '<rect class="vslate" x="102" y="49" width="134" height="14" rx="3"/><text class="vlab" x="108" y="59">DELTA.md  ·  POLICY.md</text>' +
+    '<rect class="vslate" x="102" y="65" width="134" height="14" rx="3"/><text class="vlab" x="108" y="75">PROMPT_CONTEXT.md</text>' +
+    '<text class="vt" x="258" y="56" text-anchor="middle" font-size="14">=</text>' +
+    '<rect class="vclay" x="272" y="36" width="80" height="30" rx="8"/><text class="vt" x="312" y="55" text-anchor="middle" font-size="10">one agent</text>' +
+    '</svg>';
+  V.spine =
+    '<svg viewBox="0 0 356 74">' +
+    '<text class="vlab" x="4" y="15">SYSTEM PROMPT CARRIED ON EVERY CALL</text>' +
+    '<text class="vlab" x="4" y="37" text-anchor="start">Delta</text>' +
+    '<rect class="vsage" x="74" y="27" width="40" height="14" rx="3"/><text class="vlab" x="120" y="37">under 2k tokens</text>' +
+    '<text class="vlab" x="4" y="61" text-anchor="start">a heavy one</text>' +
+    '<rect class="vclay" x="74" y="51" width="266" height="14" rx="3"/><text class="vlab" x="340" y="61" text-anchor="end">~26k</text>' +
+    '</svg>';
   set("dotted", "Try it", "This is a glossary term. Hover, tap, or focus any dotted word to read a plain-English definition right here.");
-  set("llm", "Large Language Model", "An AI trained on huge amounts of text to predict the next chunk of text. In practice: you give it words, it gives you words. It has no memory and takes no actions by itself.");
+  set("llm", "Large Language Model", "An AI trained on huge amounts of text to predict the next chunk of text. In practice: you give it words, it gives you words. It has no memory and takes no actions by itself.", { viz: V.llm, more: "It is a fixed function - same weights every call, no hidden server-side memory. Any 'memory' is just tokens you resend. A provider exposes it as one <code>HTTPS</code> request carrying JSON." });
   set("prompt", "Prompt", "The text you send into the model - the instructions plus any context and conversation history you want it to consider.");
   set("completion", "Completion", "The text the model sends back: its predicted continuation of your prompt.");
-  set("token", "Token", "The unit a model reads and writes in - a short chunk of characters (roughly ¾ of a word). Costs and size limits are all counted in tokens, not letters.");
-  set("stateless", "Stateless", "Keeps no memory between calls. Each request is judged only on what you send in that request; the model forgets everything the instant it replies.");
-  set("context", "Context window", "The maximum number of tokens a single call can hold - prompt plus reply combined. Exceed it and the oldest content must be dropped or summarised.");
+  set("token", "Token", "The unit a model reads and writes in - a short chunk of characters (roughly ¾ of a word). Costs and size limits are all counted in tokens, not letters.", { viz: V.token });
+  set("stateless", "Stateless", "Keeps no memory between calls. Each request is judged only on what you send in that request; the model forgets everything the instant it replies.", { viz: V.stateless });
+  set("context", "Context window", "The maximum number of tokens a single call can hold - prompt plus reply combined. Exceed it and the oldest content must be dropped or summarised.", { viz: V.context, more: "Going over is a hard API error, not a silent drop - so the harness has to trim or compact the transcript before the call, never after." });
   set("system", "System prompt", "A special top instruction that sets the model's rules, role, and boundaries. It frames every reply but can still be worked around, which is why hard rules also live in policy.");
   set("temperature", "Temperature", "A dial from 0 to ~1 controlling randomness. Low = predictable and repeatable; high = more varied and creative.");
-  set("harness", "Harness", "The program that runs the agent loop around a model - holding its tools, memory, budget, and safety, and recovering from failures. The model is the engine; the harness is everything around it.");
-  set("api", "API", "A defined way for one program to call another over the network. You reach a model by sending an HTTP request to the provider's API.");
+  set("harness", "Harness", "The program that runs the agent loop around a model - holding its tools, memory, budget, and safety, and recovering from failures. The model is the engine; the harness is everything around it.", { viz: V.harness });
+  set("api", "API", "A defined way for one program to call another over the network. You reach a model by sending an HTTP request to the provider's API.", { viz: V.api, more: "Concretely one HTTP endpoint: a method (<code>GET</code> to read, <code>POST</code> to do) plus a path (<code>/v1/responses</code>), a JSON body in, a JSON or streamed body back." });
   set("openrouter", "OpenRouter", "A gateway that speaks one common API in front of many model providers, used as a backup route so an agent isn't tied to a single vendor.");
   set("usage", "Usage", "The record a provider returns with each reply: how many tokens went in and came out. It is what the bill - and Delta's budget guards - are computed from.");
   set("stream", "Streaming", "Sending the reply token-by-token as it is generated, so a screen can fill in live instead of waiting for the whole answer.");
   set("sse", "SSE (Server-Sent Events)", "A simple one-way channel that lets a server push a live stream of updates to a client over ordinary HTTP. Delta streams model output and task progress this way.");
-  set("toolcall", "Tool call", "When the model, instead of writing prose, replies with a structured request to run a named function (a 'tool'). The harness runs it for real and feeds the result back.");
+  set("toolcall", "Tool call", "When the model, instead of writing prose, replies with a structured request to run a named function (a 'tool'). The harness runs it for real and feeds the result back.", { viz: V.toolcall, more: "The model emits a structured call (name + JSON arguments); the harness runs it and appends the result as a tool-role message, then calls again. That append-and-recall cycle is the agent loop." });
   set("profile", "Profile", "A named permission set - e.g. 'chat' vs 'work' - that decides which tools an agent may use on a given run. Tighter profiles shrink the blast radius.");
-  set("bundle", "Bundle", "The five plain config files that define one agent: delta.env, vocab.json, POLICY.md, DELTA.md, PROMPT_CONTEXT.md. 'agent = engine + bundle + state.'");
+  set("bundle", "Bundle", "The five plain config files that define one agent: delta.env, vocab.json, POLICY.md, DELTA.md, PROMPT_CONTEXT.md. 'agent = engine + bundle + state.'", { viz: V.bundle, tag: "Delta" });
   set("writerail", "Write rail", "The controlled list of nouns and verbs (in vocab.json) an agent is allowed to write into its structured memory - so its records stay consistent instead of free-form.");
   set("daemon", "Daemon", "A long-running background program that stays up and answers requests, rather than a script you run once and exit.");
   set("bun", "Bun", "A fast JavaScript/TypeScript runtime. Delta compiles into a single self-contained Bun binary with a sub-50ms cold start.");
   set("sqlite", "SQLite", "A small, reliable database that lives in a single file - no separate server needed. Delta uses it for all durable state.");
   set("wal", "WAL mode", "'Write-Ahead Logging' - a SQLite setting where changes are appended to a log first, making writes durable and crash-safe so a turn is never half-written.");
-  set("seam", "The seam", "Delta's public HTTP boundary - the handful of endpoints other software calls to use the agent. The harness is a service, not a chat window.");
+  set("seam", "The seam", "Delta's public HTTP boundary - the handful of endpoints other software calls to use the agent. The harness is a service, not a chat window.", { viz: V.seam, tag: "Delta" });
   set("mcp", "MCP (Model Context Protocol)", "An open standard for exposing tools and data to an AI agent over a common protocol. Delta is an MCP client: it can plug into any MCP tool server.");
   set("vector", "Vector store", "A database that finds text by meaning rather than exact words, often used for retrieval. Delta deliberately doesn't ship one in its core.");
   set("queued", "Queued run", "A unit of work written to disk the moment it arrives, before the caller is even answered - so nothing is lost to a crash between accepting and starting it.");
   set("idempotent", "Idempotent", "Safe to run more than once with the same result. Writing the same bytes to a file is idempotent; sending an email is not. Delta uses this property to decide what it may safely replay after a crash.");
   set("readonly", "Read-only tool", "A tool that only observes and never changes anything. Delta hands subagents an allowlist of strictly read-only tools, so a helper can never write, delete, or send.");
   set("journal", "Journal", "A durable log that records a tool as 'about to run' before it runs and 'done' after. It's what lets Delta resume mid-tool without repeating a side effect.");
-  set("spine", "Spine", "Delta's system prompt: the small (under 2,000-token) cached instruction block assembled from the bundle and placed at the top of every model call.");
+  set("spine", "Spine", "Delta's system prompt: the small (under 2,000-token) cached instruction block assembled from the bundle and placed at the top of every model call.", { viz: V.spine, tag: "Delta", more: "Assembled in <code>src/spine.ts</code> and marked cacheable, so the provider's prompt cache holds it across a run. A heavier harness reportedly bootstraps ~26k tokens of standing instructions; every call pays that gap in money and speed." });
   set("remember", "remember (tool)", "The tool the agent uses to rewrite its own DELTA.md self-file - saving what it learned. The write is atomic, size-capped, and reversible, and takes effect on the next run.");
   set("namespace", "Namespace", "The scope that separates one agent's memories from another's. By default it's derived from the agent's identity noun (so renaming that noun re-scopes its memory), unless an explicit override is set.");
   set("promptcache", "Prompt cache", "A provider feature that avoids re-charging full price to re-read the unchanged front of a prompt. Delta marks its stable spine and older messages cacheable, which keeps long runs cheap.");
   set("research", "research (subagent)", "A read-only helper agent Delta can run in the same process (up to three at once) to investigate part of a task in parallel, built from the same spine so it obeys the same rules.");
   set("lease", "Writer lease", "A single-owner claim on the database, so one daemon does the writing and two processes don't resume the same run at once. It's a coarse claim (a timeout plus the port binding), not a heavyweight distributed lock.");
   set("cockpit", "Cockpit", "Delta's local inspector, opened by 'delta dev'. It shows the loop, tools, memory, and cost updating live as the agent works - for building and debugging a bundle.");
-  set("scaletozero", "Scale to zero", "Letting the agent's machine sleep completely when there is no work, then wake on the next request. Delta reports a durable busy/idle signal so the host can suspend it safely and resume mid-task.");
+  set("scaletozero", "Scale to zero", "Letting the agent's machine sleep completely when there is no work, then wake on the next request. Delta reports a durable busy/idle signal so the host can suspend it safely and resume mid-task.", { viz: V.scaletozero, tag: "Delta", more: "The control plane polls <code>GET /v1/busy</code> (busy = queued OR running) and drives suspend/resume via the platform Machines API - not proxy autostop, which would kill a fire-and-forget task mid-run. Suspend keeps RAM; resume is ~1.1s vs ~4.7s cold." });
   set("subscription", "Subscription billing", "Paying a flat monthly fee for model access (via a Codex/ChatGPT plan) instead of per-token metered API calls. Delta can run on either, which can make long-running agents dramatically cheaper.");
   set("https", "HTTPS request", "The ordinary encrypted web request your browser also uses. A model call is one HTTPS request to the provider's server: you POST some data, it sends data back.");
   set("json", "JSON", "A simple, plain-text way to write structured data as labelled fields and lists. It's the format both the request to a model and its reply are written in.");
   set("role", "Message role", "A label on each message in the conversation you send: 'system' (the standing rules), 'user' (what a person said), or 'assistant' (what the model said before). Roles tell the model who said what.");
-  set("checkpoint", "Checkpoint", "A save of the agent's exact position - the transcript plus what it was about to do - written every turn, so the work can resume precisely if the process dies.");
+  set("checkpoint", "Checkpoint", "A save of the agent's exact position - the transcript plus what it was about to do - written every turn, so the work can resume precisely if the process dies.", { viz: V.checkpoint, tag: "Delta", more: "Written per turn in one SQLite WAL transaction alongside the journal entry, so a crash resumes at the exact step without replaying a side effect that already completed." });
   set("transaction", "Transaction", "A group of database writes that either all succeed together or all fail together, never half. It's what lets Delta save a message and its journal entry as one indivisible step.");
   set("atomic", "Atomic write", "A write that either fully happens or not at all - there is no half-written in-between a crash could expose. Delta writes files by creating a temp file and renaming it into place.");
   set("concurrency", "Concurrency", "How many things run at the same time. Delta runs different sessions in parallel but keeps a single session strictly one-turn-at-a-time, so one user's run can't race itself.");
-  set("failover", "Failover", "Automatically retrying a failed request against a backup provider. Delta fails over on errors - but never after the answer has started streaming, which would splice two replies together.");
+  set("failover", "Failover", "Automatically retrying a failed request against a backup provider. Delta fails over on errors - but never after the answer has started streaming, which would splice two replies together.", { viz: V.failover, more: "An ordered provider cascade, tripped only on failover-worthy errors (transport, 5xx, a truncated stream) - never on an ordinary 4xx, and never once answer tokens have begun." });
   set("finishreason", "finish_reason", "A field the provider returns saying why the reply ended (finished normally, hit a length cap, etc.). If it's missing, the stream was cut off - Delta treats that as truncated and retries.");
   set("allowlist", "Allowlist", "A list of exactly what IS permitted, with everything else denied by default. Safer than a blocklist (naming what's forbidden), because a forgotten case fails closed - denied - instead of open.");
   set("tenant", "Tenant", "One isolated customer or user whose data must never mix with another's. 'Tenancy' is keeping each tenant's memory and runs walled off from the rest.");
-  set("compaction", "Compaction", "Summarising the older part of a long conversation into a short fixed-shape note so the whole thing keeps fitting in the context window, while the recent turns stay word-for-word.");
+  set("compaction", "Compaction", "Summarising the older part of a long conversation into a short fixed-shape note so the whole thing keeps fitting in the context window, while the recent turns stay word-for-word.", { viz: V.compaction });
   set("subagent", "Subagent", "A helper agent the main agent spins up for part of a task. Delta's read-only 'research' helpers run inside the same process; the heavier 'spawn_subagent' runs a fresh copy of the binary.");
   set("reflect", "Reflect loop", "An optional background step after a successful run that reads the human's corrections and distils one durable, scoped lesson into memory - so the next run starts a little smarter.");
   set("spill", "Spill to disk", "When a tool returns a huge result, Delta keeps a short head-and-tail in the conversation and writes the full output to a file, referenced by a ledger, so it stays available without bloating the window.");
