@@ -39,6 +39,11 @@ reproduction nailed the mechanism — after a 13-minute suspend hold, the pooled
   gains `wall_ms` + `retries` so `wall_ms - latency_ms` exposes any invisible pre-call stall in
   telemetry forever. `chatVia` owns the next-provider report (only it knows one exists); terminal
   failures are NOT reported as retries; observer callbacks are try/caught by contract.
+- **`DELTA_CACHE_TTL=1h`, long-retention prompt cache on the stable prefix** (opt-in, off by
+  default, wire-identical when unset). Keeps the system spine + tools (~13k tokens) a cache READ
+  across the 5-minute gaps between runs for a lane serving several runs an hour, a turn-1 latency
+  and cost win. The mark lands on the stable prefix breakpoint only; the per-run rolling tail keeps
+  the provider default TTL. 1h writes bill 2x base input (vs 1.25x), hence opt-in.
 
 ### Fixed
 
