@@ -1449,15 +1449,17 @@ TELEMETRY_TOKEN=a-dedicated-collector-token
 
 `TELEMETRY_URL` is the only thing that turns the exporter on. If `TELEMETRY_TOKEN` is absent, Delta falls back to `DELTA_CONTROL_TOKEN` as the bearer — convenient, but it sends a control credential off the box, so prefer a dedicated token. The exporter does not enforce HTTPS or an allowlist, so validate `TELEMETRY_URL` yourself and never post a control token to a plaintext or untrusted endpoint.
 
-### Capture the useful attributes
+### What exports by default, and what needs consent
 
-This is the setting most people miss. By default the three highest-value event types — `model.call`, `tool.call`, `tool.result` — are exported with their `attributes` object **stripped entirely**. You get event counts but no per-call model, provider, latency, token/cost, or tool names. Turn them on:
+For the three payload-bearing event types — `model.call`, `tool.call`, `tool.result` — the exporter applies a **safe-attribute allowlist**. By default (no `DELTA_CAPTURE_PAYLOADS`) a closed set of operational attributes survives: model and provider, token usage and cost, latency, cache-hit percent, reasoning effort, served speed, the fallback flag, `is_error`, `error.class`, and executed tool names and ids. That is enough to run cost, latency, fallback, and error dashboards on a default deployment. What is stripped without consent: prompt text, tool arguments, tool results, the 200-char `error.message` snippet, and the model's raw requested-name list (`tool_calls`) — anything an attacker-influenced string could ride out on.
+
+To also export that sensitive payload — full prompts, tool arguments, tool results, `error.message`, and `tool_calls` — turn on capture:
 
 ```dotenv
 DELTA_CAPTURE_PAYLOADS=1
 ```
 
-Despite the name, this does **not** export prompts, tool arguments, or tool results — those are never placed in these events. It only lets the *operational* attributes survive the export filter: model, provider, token usage, cost, latency, and tool names. The privacy cost is low and the observability gain is large; enable it wherever you already trust the collector.
+Enable it wherever you already trust the collector; the default subset already gives you the operational picture without shipping any prompt, argument, or result off the box.
 
 A separate flag, `DELTA_CAPTURE_CALLS`, captures true-to-life full request/response bodies into a local `calls` table for the Cockpit. It is local-only, storage-heavy, and never exported — right for deep local debugging, wrong for the telemetry stream. Don't confuse the two.
 
@@ -1514,10 +1516,13 @@ With `DELTA_CAPTURE_PAYLOADS=1`, an exported `model.call` record has this shape:
     "gen_ai.usage.cached_tokens": 900,
     "gen_ai.usage.cost_usd": 0.004,
     "latency_ms": 1800,
+    "gen_ai.request.effort": "medium",
     "tool_calls": ["read_file", "run_code"]
   }
 }
 ```
+
+Every attribute above except `tool_calls` is in the default safe subset, so it exports without `DELTA_CAPTURE_PAYLOADS`. A `fallback: true` and a `speed` field appear when those conditions hold.
 
 ### Events and their attributes
 
@@ -1526,8 +1531,10 @@ The stream carries run lifecycle, turn boundaries, model and tool calls, context
 | Event | Key attributes | Notes |
 | --- | --- | --- |
 | `run.finished` | `status`; `gen_ai.usage.{input,output,cached,total}_tokens`; `gen_ai.usage.cost_usd` | Aggregate per run. Always present. No model id here. |
-| `model.call` | `gen_ai.request.model`, `gen_ai.provider`, `gen_ai.response.finish_reasons`, per-call usage + `gen_ai.usage.cost_usd`, `latency_ms`, `tool_calls` (names requested) | One per turn. **Attributes only with `DELTA_CAPTURE_PAYLOADS=1`.** |
-| `tool.call` / `tool.result` | `gen_ai.tool.name`, call id, error/interrupted state | **Attributes only with capture on.** |
+| `model.call` | `gen_ai.request.model`, `gen_ai.provider`, `gen_ai.response.finish_reasons`, per-call usage + `gen_ai.usage.cost_usd`, `latency_ms`, `wall_ms`, `cache_hit_pct`, `gen_ai.request.effort`, `speed`, `fallback` | One per turn. The listed attributes are in the default safe subset. `tool_calls` (names requested) is capture-gated. |
+| `model.fallback` | `gen_ai.request.model` (configured primary), `gen_ai.response.model` (served), `gen_ai.provider`, `retries` | Fires only when a call is served by a model other than the configured primary — the failover cascade won. Also sets `fallback: true` on that `model.call` and prints a `FALLBACK` stderr marker. |
+| `tool.call` / `tool.result` | `gen_ai.tool.name`, call id, `is_error`, `error.class`, interrupted state | `error.class` is a low-cardinality class (`self_cap`, `self_conflict`, `self_spine_echo`, `self_empty`, `self_unavailable`, `self_protected`, `timeout`, `transient`, `categorical`; absent when nothing fits). The 200-char `error.message` snippet rides only with capture on. |
+| `self.pressure` | `bytes`, `cap`, `elided` | Fires once per run when `DELTA.md` no longer fits its budget — elided in the prompt (over cap, identity partly dropped) or over 90% of the cap (every `remember` is about to bounce). Pairs with a loud stderr line. |
 | `compaction` | `summary_tokens`, `summary_cost_usd`, `compacted_turns`, `kept`, `merged` | The cost of context management. |
 | `error` | `error.type` (e.g. `budget`, `context_irreducible`), `message` | Error-as-value; the daemon does not crash. |
 | `recall`, `hydrate`, `reflection`, `run.{enqueued,started,resumed,cancelled}` | lifecycle + learning-loop counters | — |
@@ -1963,7 +1970,7 @@ The values below are the current public operating surface. Unless noted otherwis
 |---|---|---|
 | `DELTA_MODEL_PRIMARY` | `anthropic/claude-sonnet-5` | Primary model. Deprecated alias: `DELTA_MODEL`. |
 | `DELTA_MODEL_FALLBACKS` | empty | Comma-separated model fallback list on the primary endpoint. |
-| `MODEL_BASE_URL` | `https://openrouter.ai/api/v1` | Provider base URL, without the final API path. |
+| `MODEL_BASE_URL` | `https://openrouter.ai/api/v1` | Provider base URL **including the version segment** (e.g. `https://api.anthropic.com/v1`), but without the final endpoint path — Delta appends `/messages`, `/responses`, or `/chat/completions`. Dropping `/v1` for native Anthropic fails the first call. |
 | `MODEL_API_KEY` | unset | Primary provider key. Falls back to `OPENROUTER_API_KEY`. |
 | `OPENROUTER_API_KEY` | unset | OpenRouter key and primary-key fallback. |
 | `MODEL_API` | compatible chat | `anthropic` or `responses`; any other value uses `/chat/completions`. |
@@ -1976,6 +1983,7 @@ The values below are the current public operating surface. Unless noted otherwis
 | `DELTA_STREAM_IDLE_MS` | `60000` | Abort a model stream after this long without a network chunk. `0` disables. |
 | `DELTA_FIRST_BYTE_MS` | `30000` | Deadline for connect + first response header on a model call - the phase a dead socket after a VM resume otherwise hangs in. `0` disables. |
 | `DELTA_CACHE_TTL` | unset | `1h` keeps the stable prefix (system spine + tools) in the Anthropic prompt cache for an hour instead of five minutes. Faster, cheaper turn 1 for an agent serving several runs an hour; 1h cache writes bill double, so it stays opt-in. |
+| `DELTA_SPEED` | unset | `fast` requests Anthropic fast mode (research preview) on the native wire, for Opus 5 / Opus 4.8 only — the request carries `speed: "fast"` and its beta header, and the server-reported served speed lands on `model.call` telemetry. Byte-identical to unset when off; any other model runs standard. **2× token pricing** — set a matching `DELTA_MODEL_PRICES` before enabling, or cost and the `maxCostUsd` budget guard undercount by half. |
 | `DELTA_VISION` | auto | `1` forces vision support; `0` disables it. |
 | `DELTA_VISION_MODELS` | built-in regex | Custom regular expression for automatic vision detection. |
 
@@ -2013,7 +2021,7 @@ The values below are the current public operating surface. Unless noted otherwis
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DELTA_SELF_MAX_TOKENS` | `800` | `DELTA.md` budget. Prompt loading estimates JavaScript characters times four; writes estimate UTF-8 bytes times four, so non-ASCII limits can differ. |
+| `DELTA_SELF_MAX_TOKENS` | `800` | `DELTA.md` budget (default cap ≈ 3200 bytes). Prompt loading estimates JavaScript characters times four; writes estimate UTF-8 bytes times four, so non-ASCII limits can differ. **Seed the file at no more than half the cap** — an over-cap `DELTA.md` is elided from the prompt (the agent runs with a hole in its identity) and a nearly-full one refuses every `remember` write. Both now fire a `self.pressure` event and a loud stderr line so the mistake is visible, not discovered by forensics. |
 | `DELTA_POLICY_MAX_TOKENS` | `800` | Maximum custom `POLICY.md`; overflow fails boot. |
 | `DELTA_VOCAB` | file or neutral | JSON vocabulary override with precedence over `vocab.json`. |
 | `DELTA_REFLECT` | off | `1` enables post-success reflection by default. |

@@ -94,7 +94,7 @@ export default function HowItWorks() {
           <div className="page hiw-hero-grid">
             <div className="hiw-hero-lede">
               <span className="hiw-eyebrow">
-                <span className="hiw-dot" /> Open source runtime · v0.2.1
+                <span className="hiw-dot" /> Open source runtime · v0.2.6
               </span>
               <h1 className="hiw-title">You keep the taste. Agents do the rest.</h1>
               <p className="hiw-subline">

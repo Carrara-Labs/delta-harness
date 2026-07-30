@@ -96,11 +96,37 @@ const kindLabel: Record<Kind, string> = {
 // exactly. Update this alongside the root CHANGELOG.md when a release ships.
 const releases: Release[] = [
   {
+    version: "0.2.6",
+    date: "July 30, 2026",
+    iso: "2026-07-30",
+    tagline: "A default deployment that describes itself.",
+    latest: true,
+    note: "Everything here was earned by a one-day registered experiment on a production-identical retrieval lane. Two telemetry blind spots that cost that lab real money and a wrong first diagnosis are now closed, so a default deployment is fully self-describing — cost, fallbacks, and error classes are all queryable without turning on payload capture. The Anthropic fast-mode wire ships inert by default, so enabling it is a single env flip the day an org's allocation lands. No behavior changes when nothing is set; upgrading is a version bump.",
+    groups: [
+      {
+        kind: "added",
+        items: [
+          "**Safe telemetry by default.** `capture_payloads=false` used to strip the *whole* attribute object from `model.call` / `tool.call` / `tool.result`, so a default deployment exported those events with no tokens, no cost, no error class, no fallback flag. Now a closed allowlist of enums, counters, ids, and model/tool names survives; prompt text, tool arguments, tool results, `error.message`, and the model's raw requested-name list still never leave without consent.",
+          "**`model.fallback` event.** Fires whenever a call is served by a model other than the configured primary, plus `fallback: true` on that `model.call` and a `FALLBACK` stderr marker. In the lab, 27% of one arm's turns were silently served by the fallback model after rate-limit retries — discoverable only by diffing model names per call. Nothing to enable.",
+          "**`error.class` on failed `tool.result`.** A low-cardinality class (`self_cap`, `self_conflict`, `timeout`, `transient`, `categorical`, and more) so a refusal storm is classifiable from telemetry alone. `is_error` on its own once cost a day on a wrong root cause. A 200-char `error.message` snippet rides alongside it, local-only unless you opt into payload capture.",
+          "**`self.pressure` event + loud stderr line** when `DELTA.md` no longer fits its budget — elided from the prompt (over cap, identity partly dropped) or over 90% full (every `remember` about to bounce). Both states were found live in production bundles. Rule of thumb: seed `DELTA.md` at no more than half its cap.",
+          "**Anthropic fast mode wire** (`DELTA_SPEED=fast`, off by default and byte-identical when unset). On the Opus 5 / Opus 4.8 allowlist a call carries `speed: \"fast\"` and its beta header, and the server-reported served speed lands on telemetry. 2× token pricing — pair it with a `DELTA_MODEL_PRICES` override so cost and the budget guard stay honest.",
+          "**`gen_ai.request.effort` on `model.call`.** The reasoning effort every call ran at, so an experiment arm or fleet audit is self-labeling instead of needing a config cross-reference. Bounded to the known tiers on export; the wire keeps its pass-through semantics.",
+        ],
+      },
+      {
+        kind: "changed",
+        items: [
+          "**The categorical-failure breaker now latches storm classes.** Self-write refusals embed varying content (byte counts, the current file), so no two ever compared equal and the 3-strike quarantine never fired — the lab watched 100+ same-cause `remember` refusals grind about $10 in one arm. Failures now aggregate on `error.class` for the `remember`-targeted storm classes, so the quarantine catches them at 3. Conflict, transient, and timeout never latch.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.2.5",
     date: "July 30, 2026",
     iso: "2026-07-30",
     tagline: "Fast, reliable first turns after idle.",
-    latest: true,
     note: "The first turn after an idle or suspended machine wakes is now fast and reliable, and a misbehaving provider is visible instead of silent. A rare turn-1 stall traced to the first model call reusing a pooled connection stranded by a suspend/resume, where it hung with no logs and no events; this release heals that automatically, bounds any future stall to seconds, and surfaces every retry. No wire changes, so upgrading is a one-line version bump and every new setting is safe by default.",
     groups: [
       {

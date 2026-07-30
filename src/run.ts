@@ -28,7 +28,7 @@ import type {
   ToolSpec,
   Usage,
 } from "./provider";
-import { normalizeEffort, OVERFLOW } from "./provider";
+import { KNOWN_EFFORTS, normalizeEffort, OVERFLOW } from "./provider";
 import { childTools, runResearch } from "./research";
 import { retrieveSkills } from "./retrieval";
 import { scrubText } from "./scrub";
@@ -275,6 +275,24 @@ export async function executeRun(
   // shared deps field, so concurrent runs can't race on it.
   const selfMaxBytes = deps.selfMaxBytes ?? 3200;
   const self = await loadSelf(resolve(deps.workspace), Math.max(1, Math.floor(selfMaxBytes / 4)));
+  // Self-file pressure guard: an over-cap DELTA.md is silently ELIDED in every prompt (the
+  // agent runs with a hole in its own identity) and a nearly-full one refuses every `remember`
+  // (no room left to learn). Both were found live in production bundles by the 2026-07-30
+  // effort lab — a config that cannot work must be loud, not discovered by forensics. Fires
+  // once per run (runs are minutes, not milliseconds).
+  if (self.bytes > 0 && (self.elided || self.bytes > selfMaxBytes * 0.9)) {
+    console.error(
+      `[self] DELTA.md is ${self.bytes}B against the ${selfMaxBytes}B cap` +
+        `${self.elided ? " and was ELIDED in the prompt" : ""} — ` +
+        `${Math.max(0, selfMaxBytes - self.bytes)}B of learning headroom; ` +
+        `raise DELTA_SELF_MAX_TOKENS or slim the seed (keep it ≤ half the cap)`,
+    );
+    events.emit("self.pressure", spine, {
+      bytes: self.bytes,
+      cap: selfMaxBytes,
+      elided: self.elided,
+    });
+  }
   let resuming = opts.resuming ?? false;
 
   // Tool directory (spec §D): the profile allows a subset of the registry and
@@ -878,6 +896,10 @@ export async function executeRun(
     const cacheHit = result.usage.input
       ? Math.round((result.usage.cacheRead / result.usage.input) * 100)
       : 0;
+    // Served ≠ configured primary means the failover cascade won — a purity break the
+    // operator must see without diffing model names per call (the 2026-07-30 effort lab
+    // found 27% of an arm's turns silently served by the fallback model).
+    const fellBack = Boolean(deps.primaryModel && result.model !== deps.primaryModel);
     events.emit(
       "model.call",
       { ...spine, turn },
@@ -895,11 +917,38 @@ export async function executeRun(
         wall_ms: Date.now() - callT0,
         ...(retries ? { retries } : {}),
         ...(result.provider ? { "gen_ai.provider": result.provider } : {}),
+        // What was ASKED (effort) and what the server says it SERVED (speed) — so an
+        // experiment arm's calls are self-labeling in telemetry, no config cross-reference.
+        // Effort passes through to the wire unvalidated (the model 4xxs an unknown tier), but
+        // the exported ATTRIBUTE stays a closed set: request metadata is untrusted, and an
+        // arbitrary string here would be a high-cardinality leak to a second off-box sink.
+        ...(reasoningEffort
+          ? {
+              "gen_ai.request.effort": (KNOWN_EFFORTS as readonly string[]).includes(
+                reasoningEffort,
+              )
+                ? reasoningEffort
+                : "other",
+            }
+          : {}),
+        ...(result.usage.speed ? { speed: result.usage.speed } : {}),
+        ...(fellBack ? { fallback: true } : {}),
         tool_calls: result.message.tool_calls?.map((c) => c.function.name) ?? [],
       },
     );
+    if (fellBack)
+      events.emit(
+        "model.fallback",
+        { ...spine, turn },
+        {
+          "gen_ai.request.model": deps.primaryModel as string,
+          "gen_ai.response.model": result.model,
+          ...(result.provider ? { "gen_ai.provider": result.provider } : {}),
+          ...(retries ? { retries } : {}),
+        },
+      );
     console.error(
-      `[turn ${turn}] ${result.model} in=${result.usage.input} out=${result.usage.output} cache=${cacheHit}% $${result.usage.costUsd.toFixed(4)} ${result.latencyMs}ms · run $${usage.costUsd.toFixed(4)}`,
+      `[turn ${turn}] ${result.model} in=${result.usage.input} out=${result.usage.output} cache=${cacheHit}% $${result.usage.costUsd.toFixed(4)} ${result.latencyMs}ms · run $${usage.costUsd.toFixed(4)}${fellBack ? ` · FALLBACK (primary ${deps.primaryModel})` : ""}`,
     );
 
     // Cockpit capture (dev-only): snapshot the EXACT request/response for this call.
@@ -1009,6 +1058,52 @@ const categoricalErr = (result: string): string | null =>
     ? result
     : null;
 
+/** Low-cardinality class for a failed tool result, exported on tool.result telemetry.
+ * The 2026-07-30 effort lab burned a day on a wrong root cause because telemetry said
+ * only is_error=true — the self-write refusals were unclassifiable (size cap vs conflict
+ * vs policy). Matches OUR OWN fixed error strings (pinned by test), self-write first
+ * because those messages embed variable content (byte counts, the current file) that
+ * defeats equality-based aggregation. Returns undefined when no class fits — emit
+ * nothing rather than a junk bucket. */
+export function toolErrorClass(result: string): string | undefined {
+  if (!result.startsWith("[tool error]")) return undefined;
+  if (/DELTA\.md would be \d+ bytes \(cap /.test(result)) return "self_cap";
+  if (result.includes("DELTA.md was updated by another run")) return "self_conflict";
+  if (result.includes("looks like your whole system prompt")) return "self_spine_echo";
+  if (result.includes("refusing to write an empty DELTA.md")) return "self_empty";
+  if (result.includes("self-write is not available")) return "self_unavailable";
+  if (result.includes("DELTA.md is your own living file")) return "self_protected";
+  if (/exceeded \d+ms timeout/.test(result)) return "timeout";
+  if (TRANSIENT_TOOL_ERROR.test(result)) return "transient";
+  if (CATEGORICAL_TOOL_ERROR.test(result)) return "categorical";
+  return undefined;
+}
+
+/** `remember`-targeted self-write refusals whose messages vary per call (byte counts, the
+ * current file text) and so never compare equal — the class key is what lets them latch.
+ * `self_conflict` is EXCLUDED (the conflict guard hands back the current file for a
+ * merge-and-retry designed to succeed); transient/timeout never latch. `self_protected` is
+ * also NOT here: its message is fixed (no varying content, so it never had the equality
+ * problem this set solves), it is produced by the GENERIC write_file/move/delete guard, and
+ * latching it would quarantine a general-purpose tool run-wide as collateral — a cost the
+ * lab never showed a benefit for (the observed storm was `remember`/self_cap, not write_file). */
+const STORM_CLASSES = new Set(["self_cap", "self_spine_echo", "self_empty", "self_unavailable"]);
+
+/** The breaker's aggregation key for a failed result: a stable per-class key for storm
+ * classes, else the exact categorical error (pre-existing behavior). Without the class key,
+ * the effort lab's `remember` grinding (100+ same-cause refusals in one arm, ~$10 of waste)
+ * never tripped the 3-strike quarantine because each size-cap message embeds a different byte
+ * count. Classifying BEFORE the exact-categorical check is load-bearing: a conflict/transient/
+ * timeout must NEVER latch even when its body echoes text the categorical regex matches (a
+ * real conflict appends the current DELTA.md, which can contain words like "schema"/"not
+ * found"). Exported for tests. */
+export function breakerKey(result: string): string | null {
+  const cls = toolErrorClass(result);
+  if (cls === "self_conflict" || cls === "transient" || cls === "timeout") return null;
+  if (cls && STORM_CLASSES.has(cls)) return `[class] ${cls}`;
+  return categoricalErr(result);
+}
+
 /** Aggregate one settled tool-call batch (A4). A tool is a fresh categorical failure this turn ONLY
  * if EVERY call to it returned the SAME categorical error (no success, no different/transient
  * result). That increments its consecutive-turn streak; anything else resets it. At the limit the
@@ -1035,7 +1130,7 @@ function aggregateBreaker(db: Database, run: RunRow, breaker: Breaker): void {
     const lastCall = calls[calls.length - 1]?.callId;
     if (n >= CATEGORICAL_TOOL_FAIL_LIMIT && !breaker.disabled.has(name) && lastCall) {
       breaker.disabled.add(name);
-      const norm = `\n[norm] '${name}' has failed identically ${n}× this run and is now disabled for the rest of it — use another approach; retrying it cannot succeed.`;
+      const norm = `\n[norm] '${name}' has failed the same way ${n}× this run and is now disabled for the rest of it — use another approach; retrying it cannot succeed.`;
       db.query(
         "UPDATE messages SET msg = json_set(msg, '$.content', json_extract(msg, '$.content') || ?) WHERE run_id = ? AND json_extract(msg, '$.tool_call_id') = ?",
       ).run(norm, run.id, lastCall);
@@ -1132,14 +1227,22 @@ async function execCall(
     // A4: record this call's outcome for the batch aggregation (below, after Promise.all). Classify
     // on the RAW pre-cap result — capAndSpill embeds this call's id in its spill-path notice, so an
     // oversized error would look different every call and never compare equal.
-    breaker.turn.push({ name, callId: call.id, categorical: categoricalErr(result) });
+    breaker.turn.push({ name, callId: call.id, categorical: breakerKey(result) });
     // Cap oversized output at the source — it's persisted AND re-sent every turn, and a single
     // giant payload is the top cause of a mid-run context-window overflow. Spill keeps it re-readable.
     result = await capAndSpill(result, ctx.workspace, run.id, call.id, deps.toolResultCap);
+    const errClass = toolErrorClass(result);
+    const isErr = result.startsWith("[tool error]");
     events.emit("tool.result", spine, {
       "gen_ai.tool.name": name,
       duration_ms: Math.round(performance.now() - start),
-      is_error: result.startsWith("[tool error]"),
+      is_error: isErr,
+      ...(errClass ? { "error.class": errClass } : {}),
+      // Bounded snippet so a refusal storm is diagnosable WITHOUT shelling into the box —
+      // the effort lab's misdiagnosis happened because telemetry had no error text at all.
+      // Deliberately NOT in the exporter's SAFE_ATTRS: it leaves the box only with payload
+      // consent (capture_payloads), locally it is always queryable.
+      ...(isErr ? { "error.message": result.replace(/\s+/g, " ").slice(0, 200) } : {}),
     });
   }
 

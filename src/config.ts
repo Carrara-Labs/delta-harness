@@ -165,6 +165,14 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const streamIdleMs = Number(env.DELTA_STREAM_IDLE_MS ?? 60_000); // per-chunk stall; 0 disables
   const firstByteMs = Number(env.DELTA_FIRST_BYTE_MS ?? 30_000); // connect+first-header deadline
   const cacheTtl = env.DELTA_CACHE_TTL === "1h" ? ("1h" as const) : undefined; // stable-prefix cache retention
+  // Anthropic fast mode opt-in (research preview, 2× pricing — pair with DELTA_MODEL_PRICES).
+  // Only "fast" is meaningful; anything else is a visible no-op, mirroring the effort warning.
+  const speed = env.DELTA_SPEED === "fast" ? ("fast" as const) : undefined;
+  if (env.DELTA_SPEED && !speed) {
+    console.error(
+      `delta: DELTA_SPEED='${env.DELTA_SPEED}' is not recognized ("fast" or unset) — ignoring.`,
+    );
+  }
   const toolTimeoutMs = Number(env.DELTA_TOOL_TIMEOUT_MS ?? 120_000); // per-tool default; 0 unbounded
   // Inline cap before spill — 20k matches the old per-builtin elide, so the token budget is
   // unchanged; what's new is the full output now survives in a re-readable spill file.
@@ -180,6 +188,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     ...(env.MODEL_API === "anthropic" || env.MODEL_API === "responses"
       ? { api: env.MODEL_API as "anthropic" | "responses" }
       : {}),
+    ...(speed ? { speed } : {}),
     ...(modelHeaders ? { headers: modelHeaders } : {}),
     // Subscription path: mint the bearer from the control plane's broker endpoint
     // instead of a static key (§C). DELTA_BROKER_MINT_URL points at GET

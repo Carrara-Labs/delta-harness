@@ -321,7 +321,7 @@ describe("A4: categorical-failure breaker (integration)", () => {
     )
       .map((r) => JSON.parse(r.msg))
       .filter((m) => m.role === "tool");
-    expect(toolMsgs.some((m) => /\[norm\] 'dead' has failed identically 3×/.test(m.content))).toBe(
+    expect(toolMsgs.some((m) => /\[norm\] 'dead' has failed the same way 3×/.test(m.content))).toBe(
       true,
     );
   });
@@ -471,7 +471,7 @@ describe("A4: categorical-failure breaker (integration)", () => {
     // Each injected blob is capped to the cap (+ a short spill notice) — never re-injected whole.
     for (const m of codeErrs) expect(m.content.length).toBeLessThan(cap + 2_000);
     // 3 × ~20KB of dead-end context, not 17 × 100KB — the < $0.50 acceptance.
-    expect(codeErrs.some((m) => /\[norm\] 'code' has failed identically 3×/.test(m.content))).toBe(
+    expect(codeErrs.some((m) => /\[norm\] 'code' has failed the same way 3×/.test(m.content))).toBe(
       true,
     );
     // ...and the truncation is non-lossy: the FULL blob is recoverable from a spill file, so the

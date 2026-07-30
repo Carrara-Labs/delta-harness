@@ -43,6 +43,9 @@ export type Usage = {
   cacheWrite: number;
   total: number;
   costUsd: number;
+  /** Speed the server ACTUALLY served (Anthropic fast mode echoes it in usage). Recorded on
+   * telemetry so a fast-arm call that quietly ran standard (failover, preview churn) is visible. */
+  speed?: "fast" | "standard";
 };
 
 export type AssistantMsg = Extract<ChatMsg, { role: "assistant" }>;
@@ -90,6 +93,11 @@ export type ProviderConfig = {
    * supplies the values (e.g. a Codex bundle sets `originator: codex_cli_rs`). Keys
    * are pre-normalized to lowercase and reserved names rejected at config load. */
   headers?: Record<string, string>;
+  /** Anthropic fast mode (research preview, 2× pricing): "fast" sends `speed: "fast"` plus its
+   * beta header on the native wire — ONLY to a model that accepts it. Unlike effort, this IS
+   * hard-gated per model: Opus 4.7 rejects the field outright (no standard fallback), and the
+   * utility lane rides this same config. Unset → wire unchanged. Set via DELTA_SPEED=fast. */
+  speed?: "fast";
   /** Label recorded on the served turn's event when this provider is used (G1c). */
   label?: string;
   /** Absolute wall-clock cap on a single model call (ms). A generous backstop for a
@@ -301,6 +309,16 @@ export function anthropicUsesAdaptive(model: string): boolean {
  * Fable/Mythos 5, and Opus 5 at xhigh/max, REJECT `thinking:{type:"disabled"}`), and adaptive at
  * low effort already skips thinking on easy inputs — the closest safe expression of "minimal". */
 const ADAPTIVE_EFFORT_ALIAS: Record<string, string> = { none: "low", minimal: "low" };
+
+/** Anthropic fast mode (research preview 2026-02): the models that ACCEPT `speed: "fast"` —
+ * Opus 5 and Opus 4.8 only. This is a hard allowlist, NOT the pass-through doctrine effort
+ * uses: 4.7 hard-errors on the field (no standard fallback) and the utility model rides the
+ * same provider config, so an unsupported model must never see it. A future dated/minor Opus
+ * 5 slug still matches; anything else runs standard. */
+export const FAST_MODE_BETA = "fast-mode-2026-02-01";
+export function anthropicSupportsFast(model: string): boolean {
+  return /^claude-opus-(5|4-8)(?=$|[.-])/.test(model);
+}
 
 /** Per-call output ceiling on the native Anthropic wire (the OpenAI wire has a generous
  * server-side default and sends max_tokens only when asked). 4096 was a safe cross-provider
@@ -1064,6 +1082,11 @@ async function streamAnthropic(
     max_tokens: req.maxTokens ?? STEP_MAX_TOKENS,
     stream: true,
   };
+  // Fast mode: field and beta header travel together, gated on the WIRE model (the utility
+  // model shares this config and must never see either). The response usage echoes the speed
+  // actually served — recorded on model.call telemetry, so a silent standard downgrade shows.
+  const fast = cfg.speed === "fast" && anthropicSupportsFast(wireModel);
+  if (fast) body.speed = "fast";
   // Reasoning control per wire mode (A8). Temperature is left at the default (thinking forbids a
   // custom one), so nothing else changes.
   if (req.reasoningEffort) {
@@ -1130,6 +1153,7 @@ async function streamAnthropic(
         "content-type": "application/json",
         "x-api-key": auth.token,
         "anthropic-version": "2023-06-01",
+        ...(fast ? { "anthropic-beta": FAST_MODE_BETA } : {}),
         ...auth.headers,
       },
       body: JSON.stringify(body),
@@ -1186,6 +1210,9 @@ async function streamAnthropic(
         usage.cacheRead = u.cache_read_input_tokens ?? 0;
         usage.cacheWrite = u.cache_creation_input_tokens ?? 0;
         usage.input = (u.input_tokens ?? 0) + usage.cacheRead + usage.cacheWrite;
+        // Closed set only — this string is exported off-box as a telemetry attribute,
+        // so an unexpected server value must not become a high-cardinality leak.
+        if (u.speed === "fast" || u.speed === "standard") usage.speed = u.speed;
       } else if (ev.type === "content_block_start" && ev.content_block?.type === "tool_use") {
         calls.push({
           id: ev.content_block.id ?? "",
@@ -1263,6 +1290,7 @@ type AnthropicEvent = {
       input_tokens?: number;
       cache_read_input_tokens?: number;
       cache_creation_input_tokens?: number;
+      speed?: "fast" | "standard";
     };
   };
   content_block?: { type?: string; id?: string; name?: string };

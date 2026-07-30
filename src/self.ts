@@ -34,20 +34,39 @@ export function selfPath(workspace: string): string {
 export async function loadSelf(
   workspace: string,
   maxTokens: number,
-): Promise<{ text?: string; charter: Charter }> {
+): Promise<{ text?: string; charter: Charter; bytes: number; elided: boolean }> {
   let raw = "";
+  let onDiskBytes = 0;
   try {
     const f = Bun.file(selfPath(workspace));
-    if ((await f.exists()) && f.size <= 1_000_000) raw = (await f.text()).trim();
+    if (await f.exists()) {
+      onDiskBytes = f.size;
+      if (f.size <= 1_000_000) raw = (await f.text()).trim();
+    }
   } catch {
     // unreadable = absent
   }
-  if (!raw) return { charter: {} };
+  if (!raw) {
+    // A present-but-over-1MB file is dropped whole — the agent runs with NO self-file at
+    // all, the loudest possible integrity failure, so report it as elided pressure rather
+    // than the silent bytes:0 that a genuinely absent/empty file gets.
+    const tooBig = onDiskBytes > 1_000_000;
+    return { charter: {}, bytes: tooBig ? onDiskBytes : 0, elided: tooBig };
+  }
   const maxChars = Math.max(1, maxTokens) * CHARS_PER_TOKEN;
-  const text = raw.length > maxChars ? elide(raw, maxChars) : raw;
+  const elided = raw.length > maxChars;
+  const text = elided ? elide(raw, maxChars) : raw;
   // Parse the CAPPED text (codex #6): an oversized Success section must not slip into the
   // reflection rubric uncapped — the spine cap has to bound the identity fields too.
-  return { text, charter: parseCharterMarkdown(text) };
+  // bytes/elided surface self-file pressure to the caller: an over-cap file is a silent
+  // integrity failure (the agent runs with a hole cut out of its own identity) that the
+  // 2026-07-30 effort lab found live in a production bundle.
+  return {
+    text,
+    charter: parseCharterMarkdown(text),
+    bytes: Buffer.byteLength(raw, "utf8"),
+    elided,
+  };
 }
 
 /** The engine-owned spine section headers (see buildSpine). A hand-authored DELTA.md
