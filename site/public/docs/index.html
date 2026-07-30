@@ -2594,11 +2594,12 @@ DELTA_MAX_COST_USD=1
 TELEMETRY_TOKEN=a-dedicated-collector-token
 </code></pre></div>
 <p><code>TELEMETRY_URL</code> is the only thing that turns the exporter on. If <code>TELEMETRY_TOKEN</code> is absent, Delta falls back to <code>DELTA_CONTROL_TOKEN</code> as the bearer - convenient, but it sends a control credential off the box, so prefer a dedicated token. The exporter does not enforce HTTPS or an allowlist, so validate <code>TELEMETRY_URL</code> yourself and never post a control token to a plaintext or untrusted endpoint.</p>
-<h4 id="guide-capture-the-useful-attributes">Capture the useful attributes<a class="heading-link" href="#guide-capture-the-useful-attributes" aria-label="Link to this section">#</a></h4>
-<p>This is the setting most people miss. By default the three highest-value event types - <code>model.call</code>, <code>tool.call</code>, <code>tool.result</code> - are exported with their <code>attributes</code> object <strong>stripped entirely</strong>. You get event counts but no per-call model, provider, latency, token/cost, or tool names. Turn them on:</p>
+<h4 id="guide-what-exports-by-default-and-what-needs-consent">What exports by default, and what needs consent<a class="heading-link" href="#guide-what-exports-by-default-and-what-needs-consent" aria-label="Link to this section">#</a></h4>
+<p>For the three payload-bearing event types - <code>model.call</code>, <code>tool.call</code>, <code>tool.result</code> - the exporter applies a <strong>safe-attribute allowlist</strong>. By default (no <code>DELTA_CAPTURE_PAYLOADS</code>) a closed set of operational attributes survives: model and provider, token usage and cost, latency, cache-hit percent, reasoning effort, served speed, the fallback flag, <code>is_error</code>, <code>error.class</code>, and executed tool names and ids. That is enough to run cost, latency, fallback, and error dashboards on a default deployment. What is stripped without consent: prompt text, tool arguments, tool results, the 200-char <code>error.message</code> snippet, and the model's raw requested-name list (<code>tool_calls</code>) - anything an attacker-influenced string could ride out on.</p>
+<p>To also export that sensitive payload - full prompts, tool arguments, tool results, <code>error.message</code>, and <code>tool_calls</code> - turn on capture:</p>
 <div class="code-block"><div class="code-toolbar"><span>dotenv</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-dotenv">DELTA_CAPTURE_PAYLOADS=1
 </code></pre></div>
-<p>Despite the name, this does <strong>not</strong> export prompts, tool arguments, or tool results - those are never placed in these events. It only lets the <em>operational</em> attributes survive the export filter: model, provider, token usage, cost, latency, and tool names. The privacy cost is low and the observability gain is large; enable it wherever you already trust the collector.</p>
+<p>Enable it wherever you already trust the collector; the default subset already gives you the operational picture without shipping any prompt, argument, or result off the box.</p>
 <p>A separate flag, <code>DELTA_CAPTURE_CALLS</code>, captures true-to-life full request/response bodies into a local <code>calls</code> table for the Cockpit. It is local-only, storage-heavy, and never exported - right for deep local debugging, wrong for the telemetry stream. Don't confuse the two.</p>
 <h4 id="guide-a-reference-collector-you-can-copy">A reference collector you can copy<a class="heading-link" href="#guide-a-reference-collector-you-can-copy" aria-label="Link to this section">#</a></h4>
 <p>A complete, single-agent collector lives in the repo - a Postgres table and a ~60-line Bun handler, distilled from the multi-tenant one Carrara Labs runs in production:</p>
@@ -2646,10 +2647,12 @@ TELEMETRY_TOKEN=a-dedicated-collector-token
     &quot;gen_ai.usage.cached_tokens&quot;: 900,
     &quot;gen_ai.usage.cost_usd&quot;: 0.004,
     &quot;latency_ms&quot;: 1800,
+    &quot;gen_ai.request.effort&quot;: &quot;medium&quot;,
     &quot;tool_calls&quot;: [&quot;read_file&quot;, &quot;run_code&quot;]
   }
 }
 </code></pre></div>
+<p>Every attribute above except <code>tool_calls</code> is in the default safe subset, so it exports without <code>DELTA_CAPTURE_PAYLOADS</code>. A <code>fallback: true</code> and a <code>speed</code> field appear when those conditions hold.</p>
 <h4 id="guide-events-and-their-attributes">Events and their attributes<a class="heading-link" href="#guide-events-and-their-attributes" aria-label="Link to this section">#</a></h4>
 <p>The stream carries run lifecycle, turn boundaries, model and tool calls, context management, the learning loop, and errors. The attributes worth querying:</p>
 <div class="table-scroll"><table>
@@ -2658,8 +2661,10 @@ TELEMETRY_TOKEN=a-dedicated-collector-token
 </thead>
 <tbody>
 <tr><td><code>run.finished</code></td><td><code>status</code>; <code>gen_ai.usage.{input,output,cached,total}_tokens</code>; <code>gen_ai.usage.cost_usd</code></td><td>Aggregate per run. Always present. No model id here.</td></tr>
-<tr><td><code>model.call</code></td><td><code>gen_ai.request.model</code>, <code>gen_ai.provider</code>, <code>gen_ai.response.finish_reasons</code>, per-call usage + <code>gen_ai.usage.cost_usd</code>, <code>latency_ms</code>, <code>tool_calls</code> (names requested)</td><td>One per turn. <strong>Attributes only with <code>DELTA_CAPTURE_PAYLOADS=1</code>.</strong></td></tr>
-<tr><td><code>tool.call</code> / <code>tool.result</code></td><td><code>gen_ai.tool.name</code>, call id, error/interrupted state</td><td><strong>Attributes only with capture on.</strong></td></tr>
+<tr><td><code>model.call</code></td><td><code>gen_ai.request.model</code>, <code>gen_ai.provider</code>, <code>gen_ai.response.finish_reasons</code>, per-call usage + <code>gen_ai.usage.cost_usd</code>, <code>latency_ms</code>, <code>wall_ms</code>, <code>cache_hit_pct</code>, <code>gen_ai.request.effort</code>, <code>speed</code>, <code>fallback</code></td><td>One per turn. The listed attributes are in the default safe subset. <code>tool_calls</code> (names requested) is capture-gated.</td></tr>
+<tr><td><code>model.fallback</code></td><td><code>gen_ai.request.model</code> (configured primary), <code>gen_ai.response.model</code> (served), <code>gen_ai.provider</code>, <code>retries</code></td><td>Fires only when a call is served by a model other than the configured primary - the failover cascade won. Also sets <code>fallback: true</code> on that <code>model.call</code> and prints a <code>FALLBACK</code> stderr marker.</td></tr>
+<tr><td><code>tool.call</code> / <code>tool.result</code></td><td><code>gen_ai.tool.name</code>, call id, <code>is_error</code>, <code>error.class</code>, interrupted state</td><td><code>error.class</code> is a low-cardinality class (<code>self_cap</code>, <code>self_conflict</code>, <code>self_spine_echo</code>, <code>self_empty</code>, <code>self_unavailable</code>, <code>self_protected</code>, <code>timeout</code>, <code>transient</code>, <code>categorical</code>; absent when nothing fits). The 200-char <code>error.message</code> snippet rides only with capture on.</td></tr>
+<tr><td><code>self.pressure</code></td><td><code>bytes</code>, <code>cap</code>, <code>elided</code></td><td>Fires once per run when <code>DELTA.md</code> no longer fits its budget - elided in the prompt (over cap, identity partly dropped) or over 90% of the cap (every <code>remember</code> is about to bounce). Pairs with a loud stderr line.</td></tr>
 <tr><td><code>compaction</code></td><td><code>summary_tokens</code>, <code>summary_cost_usd</code>, <code>compacted_turns</code>, <code>kept</code>, <code>merged</code></td><td>The cost of context management.</td></tr>
 <tr><td><code>error</code></td><td><code>error.type</code> (e.g. <code>budget</code>, <code>context_irreducible</code>), <code>message</code></td><td>Error-as-value; the daemon does not crash.</td></tr>
 <tr><td><code>recall</code>, <code>hydrate</code>, <code>reflection</code>, <code>run.{enqueued,started,resumed,cancelled}</code></td><td>lifecycle + learning-loop counters</td><td>-</td></tr>
@@ -3005,6 +3010,7 @@ DELTA_INSPECT_TOKEN=separate-root-inspection-token
 <tr><td><code>DELTA_STREAM_IDLE_MS</code></td><td><code>60000</code></td><td>Abort a model stream after this long without a network chunk. <code>0</code> disables.</td></tr>
 <tr><td><code>DELTA_FIRST_BYTE_MS</code></td><td><code>30000</code></td><td>Deadline for connect + first response header on a model call - the phase a dead socket after a VM resume otherwise hangs in. <code>0</code> disables.</td></tr>
 <tr><td><code>DELTA_CACHE_TTL</code></td><td>unset</td><td><code>1h</code> keeps the stable prefix (system spine + tools) in the Anthropic prompt cache for an hour instead of five minutes. Faster, cheaper turn 1 for an agent serving several runs an hour; 1h cache writes bill double, so it stays opt-in.</td></tr>
+<tr><td><code>DELTA_SPEED</code></td><td>unset</td><td><code>fast</code> requests Anthropic fast mode (research preview) on the native wire, for Opus 5 / Opus 4.8 only - the request carries <code>speed: &quot;fast&quot;</code> and its beta header, and the server-reported served speed lands on <code>model.call</code> telemetry. Byte-identical to unset when off; any other model runs standard. <strong>2× token pricing</strong> - set a matching <code>DELTA_MODEL_PRICES</code> before enabling, or cost and the <code>maxCostUsd</code> budget guard undercount by half.</td></tr>
 <tr><td><code>DELTA_VISION</code></td><td>auto</td><td><code>1</code> forces vision support; <code>0</code> disables it.</td></tr>
 <tr><td><code>DELTA_VISION_MODELS</code></td><td>built-in regex</td><td>Custom regular expression for automatic vision detection.</td></tr>
 </tbody>
@@ -3050,7 +3056,7 @@ DELTA_INSPECT_TOKEN=separate-root-inspection-token
 <tr><th>Variable</th><th>Default</th><th>Purpose</th></tr>
 </thead>
 <tbody>
-<tr><td><code>DELTA_SELF_MAX_TOKENS</code></td><td><code>800</code></td><td><code>DELTA.md</code> budget. Prompt loading estimates JavaScript characters times four; writes estimate UTF-8 bytes times four, so non-ASCII limits can differ.</td></tr>
+<tr><td><code>DELTA_SELF_MAX_TOKENS</code></td><td><code>800</code></td><td><code>DELTA.md</code> budget (default cap ≈ 3200 bytes). Prompt loading estimates JavaScript characters times four; writes estimate UTF-8 bytes times four, so non-ASCII limits can differ. <strong>Seed the file at no more than half the cap</strong> - an over-cap <code>DELTA.md</code> is elided from the prompt (the agent runs with a hole in its identity) and a nearly-full one refuses every <code>remember</code> write. Both now fire a <code>self.pressure</code> event and a loud stderr line so the mistake is visible, not discovered by forensics.</td></tr>
 <tr><td><code>DELTA_POLICY_MAX_TOKENS</code></td><td><code>800</code></td><td>Maximum custom <code>POLICY.md</code>; overflow fails boot.</td></tr>
 <tr><td><code>DELTA_VOCAB</code></td><td>file or neutral</td><td>JSON vocabulary override with precedence over <code>vocab.json</code>.</td></tr>
 <tr><td><code>DELTA_REFLECT</code></td><td>off</td><td><code>1</code> enables post-success reflection by default.</td></tr>
