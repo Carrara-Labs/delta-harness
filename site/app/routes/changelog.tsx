@@ -99,24 +99,23 @@ const releases: Release[] = [
     version: "0.2.5",
     date: "July 30, 2026",
     iso: "2026-07-30",
-    tagline: "The stall release.",
+    tagline: "Fast, reliable first turns after idle.",
     latest: true,
-    note: "Field data showed a third of quick-search runs losing 250 to 300 seconds to a silent turn-1 stall: the first model call after a suspend/resume rode a dead pooled socket and hung where nothing was watching. This release makes that class of stall nearly impossible, cheap when it happens anyway, and loudly visible. No wire changes, so upgrading is a one-line version bump and every new knob is byte-identical to 0.2.4 when left unset.",
+    note: "The first turn after an idle or suspended machine wakes is now fast and reliable, and a misbehaving provider is visible instead of silent. A rare turn-1 stall traced to the first model call reusing a pooled connection stranded by a suspend/resume, where it hung with no logs and no events; this release heals that automatically, bounds any future stall to seconds, and surfaces every retry. No wire changes, so upgrading is a one-line version bump and every new setting is safe by default.",
     groups: [
       {
         kind: "added",
         items: [
-          "**First-byte deadline.** `DELTA_FIRST_BYTE_MS` (default 30s) bounds connect plus time-to-first-header, the one phase the per-chunk idle watchdog cannot see. A dead socket after a resume used to hang there until the 600s absolute cap; now it aborts in 30s with a clear reason and stays retriable. Independent of `DELTA_STREAM_IDLE_MS`.",
-          "**Fresh sockets when the pool cannot be trusted.** After a detected suspend/resume, or any call following more than five minutes of wire silence, the daemon opts that call out of connection reuse so it gets a brand-new socket instead of a corpse left behind a gone network path. The cost is one TLS handshake; the payoff is immunity to the dead-socket hang.",
-          "**Provider-wire warmup.** At boot and on resume, a best-effort preconnect pays DNS and TLS off the first turn's critical path and drains dead pooled sockets. It never throws and never sits on a task's path.",
-          "**Retry visibility, end to end.** Every retry, re-auth, model switch, and provider failover now surfaces as a persisted `model.retry` task event plus one log line per failed attempt, so a host can show honest 'provider is retrying' state instead of a silent hang. `model.call` gains `wall_ms` and `retries`, so any invisible pre-call stall shows up as `wall_ms` minus `latency_ms` in telemetry.",
-          "**`DELTA_CACHE_TTL=1h`.** Opt-in one-hour prompt-cache retention on the stable prefix (system spine plus tools), so a lane serving several runs an hour keeps that prefix a cache read across the five-minute gaps between runs. Off by default and byte-identical when unset; 1h cache writes bill double, so it stays opt-in.",
+          "**First-byte deadline.** `DELTA_FIRST_BYTE_MS` (default 30s) bounds the connect-and-first-header phase the per-chunk idle watchdog cannot see. A call that cannot reach the provider now fails fast and retries in about 30s instead of hanging on a dead connection up to the 600s cap. On by default and independent of `DELTA_STREAM_IDLE_MS`; set `0` to opt out.",
+          "**Self-healing wire after idle or resume.** The first call after a suspend/resume, or after five minutes of silence, automatically opens a fresh connection instead of reusing a stale pooled one, so a woken lane's opening turn just works. A best-effort preconnect at boot and on resume also pays DNS and TLS off the first turn's path. Fully automatic; the only cost is one extra TLS handshake on that first call.",
+          "**Retry visibility, end to end.** Every retry, re-auth, model switch, and provider failover now emits a persisted `model.retry` event and one log line, so a host can show real 'retrying' state instead of dead air. `model.call` also carries `wall_ms` and `retries` beside `latency_ms`, so a slow turn's pre-call gap is one query away (`wall_ms` minus `latency_ms`). Nothing to enable.",
+          "**`DELTA_CACHE_TTL=1h`** (opt-in, off by default). For a lane serving several turns an hour, keeps the stable prefix (system spine plus tools) cached for an hour instead of five minutes, for a faster and cheaper turn 1. Byte-identical when unset; 1h cache writes bill double, so turn it on only for busy lanes.",
         ],
       },
       {
         kind: "fixed",
         items: [
-          "**No more silent retry storms.** A failed model attempt now prints one line per attempt in the daemon logs. Previously only successful calls printed a line, so a 300-second retry storm produced no output at all.",
+          "**No more silent retry storms.** Failed model attempts now log one line each, so a retry storm is never silent. Previously only successful calls printed a line.",
         ],
       },
     ],

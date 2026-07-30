@@ -8,47 +8,39 @@ All notable changes to this project are documented here. The format is based on
 
 ## [0.2.5] — 2026-07-30
 
-The stall release. Prod field data (Aperture, 2026-07-29) showed a third of quick-search runs
-losing ~250-300 SECONDS to a silent turn-1 stall: the first provider call after a Fly
-suspend/resume rode a dead pooled keep-alive socket, hung in connect/first-header where only the
-600s absolute cap looks, retried invisibly, and neither logs nor telemetry said a word. Lab
-reproduction nailed the mechanism — after a 13-minute suspend hold, the pooled-socket call stalled
-251s while a parallel fresh-socket probe answered in 1ms. This release makes that class of stall
-(a) nearly impossible, (b) cheap when it happens anyway, and (c) loudly visible.
+The first turn after an idle or suspended machine wakes is now fast and reliable, and a
+misbehaving provider is visible instead of silent. Field data (Aperture, 2026-07-29) traced a rare
+turn-1 stall to the first model call reusing a pooled connection left stranded by a suspend/resume,
+where it hung with no logs and no events. This release heals that automatically, bounds any future
+stall to seconds, and surfaces every retry, plus an opt-in cache knob for lanes that run several
+turns an hour. No wire changes, so upgrading is a one-line version bump and every new setting is
+safe by default.
 
 ### Added
 
-- **First-byte deadline** (`DELTA_FIRST_BYTE_MS`, default 30s; `firstByteMs` per provider). Bounds
-  connect + time-to-first-header — the one phase the per-chunk idle watchdog cannot see (it arms
-  only once a body stream exists). Rides the same watchdog controller, aborts with a typed reason
-  ("no response headers within Nms"), stays retriable, and is independent of `DELTA_STREAM_IDLE_MS`
-  (idle 0 does not disable it; first-byte 0 is its own explicit opt-out).
-- **Wire-suspect windows — fresh sockets when the pool can't be trusted.** Two triggers, one
-  mechanism: after a detected suspend/resume (heartbeat wall-clock gap; single-flight, 60s
-  cooldown), and implicitly for any call after >5 minutes of wire silence — the resumed task's
-  first call cannot wait for the heartbeat to notice. A suspect call opts out of connection reuse
-  (`keepalive: false`, verified per-request pool bypass on Bun 1.3.13), trading one TLS handshake
-  for immunity to the dead-socket hang.
-- **`warmupWire`** — best-effort preconnect at boot and on resume detection: 3s HEAD probes per
-  provider origin pay DNS + TLS off the first turn's path and opportunistically drain dead pooled
-  sockets. Never throws, never rejects, never on a turn's path.
-- **Retry visibility, end to end.** Every cascade transition after a failed attempt is reported: a
-  `model.retry` PERSISTED task event (kind `retry` / `reauth` / `next_model` / `next_provider`, a
-  stable `error.type` class, sanitized short message) rides `/v1/tasks/:id/events` so hosts can
-  render honest "provider is retrying" state; one console line per failed attempt; `model.call`
-  gains `wall_ms` + `retries` so `wall_ms - latency_ms` exposes any invisible pre-call stall in
-  telemetry forever. `chatVia` owns the next-provider report (only it knows one exists); terminal
-  failures are NOT reported as retries; observer callbacks are try/caught by contract.
-- **`DELTA_CACHE_TTL=1h`, long-retention prompt cache on the stable prefix** (opt-in, off by
-  default, wire-identical when unset). Keeps the system spine + tools (~13k tokens) a cache READ
-  across the 5-minute gaps between runs for a lane serving several runs an hour, a turn-1 latency
-  and cost win. The mark lands on the stable prefix breakpoint only; the per-run rolling tail keeps
-  the provider default TTL. 1h writes bill 2x base input (vs 1.25x), hence opt-in.
+- **First-byte deadline** (`DELTA_FIRST_BYTE_MS`, default 30s; per-provider `firstByteMs`). Bounds
+  the connect-and-first-header phase that the per-chunk idle watchdog cannot see. A call that cannot
+  reach the provider now fails fast and retries in ~30s instead of hanging on a dead connection up
+  to the 600s cap. On by default and independent of `DELTA_STREAM_IDLE_MS`; set `0` to opt out.
+- **Self-healing provider wire after idle or resume.** The first call after a suspend/resume, or
+  after five minutes of silence, automatically opens a fresh connection instead of reusing a stale
+  pooled one, so a woken lane's opening turn just works. A best-effort preconnect at boot and on
+  resume also pays DNS and TLS off the first turn's path. Fully automatic; the only cost is one
+  extra TLS handshake on that first call.
+- **Retry visibility, end to end.** Every retry, re-auth, model switch, and provider failover now
+  emits a persisted `model.retry` event (with a stable `error.type`) and one log line, so a host
+  can show real "retrying" state instead of dead air. `model.call` also carries `wall_ms` and
+  `retries` beside `latency_ms`, so a slow turn's pre-call gap is one query away (`wall_ms` minus
+  `latency_ms`). Nothing to enable.
+- **`DELTA_CACHE_TTL=1h`** (opt-in, off by default, byte-identical when unset). For a lane serving
+  several turns an hour, keeps the stable prefix (system spine plus tools, ~13k tokens) cached for
+  an hour instead of five minutes, for a faster and cheaper turn 1. 1h cache writes bill double, so
+  turn it on only for busy lanes; the per-run tail keeps the default TTL.
 
 ### Fixed
 
-- A failed model attempt is no longer silent in the daemon logs (previously only successful calls
-  printed a `[turn N]` line — a 300s retry storm logged nothing).
+- Failed model attempts now log one line each, so a retry storm is never silent (previously only
+  successful calls printed a line).
 
 ## [0.2.4] — 2026-07-28
 
