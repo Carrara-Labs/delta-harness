@@ -101,23 +101,23 @@ const releases: Release[] = [
     iso: "2026-07-30",
     tagline: "A default deployment that describes itself.",
     latest: true,
-    note: "Everything here was earned by a one-day registered experiment on a production-identical retrieval lane. Two telemetry blind spots that cost that lab real money and a wrong first diagnosis are now closed, so a default deployment is fully self-describing — cost, fallbacks, and error classes are all queryable without turning on payload capture. The Anthropic fast-mode wire ships inert by default, so enabling it is a single env flip the day an org's allocation lands. No behavior changes when nothing is set; upgrading is a version bump.",
+    note: "A default deployment that describes itself. Two telemetry blind spots are closed, so a default deployment is fully self-describing: cost, fallbacks, and error classes are queryable without turning on payload capture. The Anthropic fast-mode wire ships inert by default, so enabling it is a single env flip the day an org's allocation lands. No behavior changes when nothing is set; upgrading is a version bump.",
     groups: [
       {
         kind: "added",
         items: [
-          "**Safe telemetry by default.** `capture_payloads=false` used to strip the *whole* attribute object from `model.call` / `tool.call` / `tool.result`, so a default deployment exported those events with no tokens, no cost, no error class, no fallback flag. Now a closed allowlist of enums, counters, ids, and model/tool names survives; prompt text, tool arguments, tool results, `error.message`, and the model's raw requested-name list still never leave without consent.",
-          "**`model.fallback` event.** Fires whenever a call is served by a model other than the configured primary, plus `fallback: true` on that `model.call` and a `FALLBACK` stderr marker. In the lab, 27% of one arm's turns were silently served by the fallback model after rate-limit retries — discoverable only by diffing model names per call. Nothing to enable.",
-          "**`error.class` on failed `tool.result`.** A low-cardinality class (`self_cap`, `self_conflict`, `timeout`, `transient`, `categorical`, and more) so a refusal storm is classifiable from telemetry alone. `is_error` on its own once cost a day on a wrong root cause. A 200-char `error.message` snippet rides alongside it, local-only unless you opt into payload capture.",
-          "**`self.pressure` event + loud stderr line** when `DELTA.md` no longer fits its budget — elided from the prompt (over cap, identity partly dropped) or over 90% full (every `remember` about to bounce). Both states were found live in production bundles. Rule of thumb: seed `DELTA.md` at no more than half its cap.",
-          "**Anthropic fast mode wire** (`DELTA_SPEED=fast`, off by default and byte-identical when unset). On the Opus 5 / Opus 4.8 allowlist a call carries `speed: \"fast\"` and its beta header, and the server-reported served speed lands on telemetry. 2× token pricing — pair it with a `DELTA_MODEL_PRICES` override so cost and the budget guard stay honest.",
-          "**`gen_ai.request.effort` on `model.call`.** The reasoning effort every call ran at, so an experiment arm or fleet audit is self-labeling instead of needing a config cross-reference. Bounded to the known tiers on export; the wire keeps its pass-through semantics.",
+          "**Safe telemetry without payload consent.** `model.call`, `tool.call`, and `tool.result` now export a closed allowlist of operational attributes (model, provider, tokens, cost, latency, effort, fallback, `error.class`, tool names). Prompts, tool arguments, results, `error.message`, and `tool_calls` still require `DELTA_CAPTURE_PAYLOADS=1`.",
+          "**`model.fallback` event** when a call is served by a model other than the configured primary, plus `fallback: true` on that `model.call` and a stderr marker.",
+          "**`error.class` on failed `tool.result`** - a low-cardinality class (`self_cap`, `self_conflict`, `timeout`, `transient`, `categorical`, and more). A 200-char `error.message` snippet rides alongside it, local-only unless payload capture is on.",
+          "**`gen_ai.request.effort` on `model.call`** - the reasoning effort each call ran at, bounded to the known tiers on export.",
+          "**`self.pressure` event + stderr warning** when `DELTA.md` is elided from the prompt (over cap) or over 90% full. Seed `DELTA.md` at no more than half its cap.",
+          "**Anthropic fast mode** (`DELTA_SPEED=fast`, off by default, byte-identical when unset). Opus 5 and Opus 4.8 only; the served speed lands on `model.call` telemetry. 2x token pricing, so pair it with a `DELTA_MODEL_PRICES` override.",
         ],
       },
       {
         kind: "changed",
         items: [
-          "**The categorical-failure breaker now latches storm classes.** Self-write refusals embed varying content (byte counts, the current file), so no two ever compared equal and the 3-strike quarantine never fired — the lab watched 100+ same-cause `remember` refusals grind about $10 in one arm. Failures now aggregate on `error.class` for the `remember`-targeted storm classes, so the quarantine catches them at 3. Conflict, transient, and timeout never latch.",
+          "**The categorical-failure breaker now latches self-write storm classes.** Repeated `remember` refusals whose messages vary per call (byte counts, file text) are now quarantined at 3 instead of grinding. Conflict, transient, and timeout never latch.",
         ],
       },
     ],
