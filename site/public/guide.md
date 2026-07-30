@@ -1970,7 +1970,7 @@ The values below are the current public operating surface. Unless noted otherwis
 |---|---|---|
 | `DELTA_MODEL_PRIMARY` | `anthropic/claude-sonnet-5` | Primary model. Deprecated alias: `DELTA_MODEL`. |
 | `DELTA_MODEL_FALLBACKS` | empty | Comma-separated model fallback list on the primary endpoint. |
-| `MODEL_BASE_URL` | `https://openrouter.ai/api/v1` | Provider base URL, without the final API path. |
+| `MODEL_BASE_URL` | `https://openrouter.ai/api/v1` | Provider base URL **including the version segment** (e.g. `https://api.anthropic.com/v1`), but without the final endpoint path — Delta appends `/messages`, `/responses`, or `/chat/completions`. Dropping `/v1` for native Anthropic fails the first call. |
 | `MODEL_API_KEY` | unset | Primary provider key. Falls back to `OPENROUTER_API_KEY`. |
 | `OPENROUTER_API_KEY` | unset | OpenRouter key and primary-key fallback. |
 | `MODEL_API` | compatible chat | `anthropic` or `responses`; any other value uses `/chat/completions`. |

@@ -2997,7 +2997,7 @@ DELTA_INSPECT_TOKEN=separate-root-inspection-token
 <tbody>
 <tr><td><code>DELTA_MODEL_PRIMARY</code></td><td><code>anthropic/claude-sonnet-5</code></td><td>Primary model. Deprecated alias: <code>DELTA_MODEL</code>.</td></tr>
 <tr><td><code>DELTA_MODEL_FALLBACKS</code></td><td>empty</td><td>Comma-separated model fallback list on the primary endpoint.</td></tr>
-<tr><td><code>MODEL_BASE_URL</code></td><td><code>https://openrouter.ai/api/v1</code></td><td>Provider base URL, without the final API path.</td></tr>
+<tr><td><code>MODEL_BASE_URL</code></td><td><code>https://openrouter.ai/api/v1</code></td><td>Provider base URL <strong>including the version segment</strong> (e.g. <code>https://api.anthropic.com/v1</code>), but without the final endpoint path - Delta appends <code>/messages</code>, <code>/responses</code>, or <code>/chat/completions</code>. Dropping <code>/v1</code> for native Anthropic fails the first call.</td></tr>
 <tr><td><code>MODEL_API_KEY</code></td><td>unset</td><td>Primary provider key. Falls back to <code>OPENROUTER_API_KEY</code>.</td></tr>
 <tr><td><code>OPENROUTER_API_KEY</code></td><td>unset</td><td>OpenRouter key and primary-key fallback.</td></tr>
 <tr><td><code>MODEL_API</code></td><td>compatible chat</td><td><code>anthropic</code> or <code>responses</code>; any other value uses <code>/chat/completions</code>.</td></tr>
