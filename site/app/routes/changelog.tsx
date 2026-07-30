@@ -1,3 +1,4 @@
+// biome-ignore-all lint/security/noDangerouslySetInnerHtml: The only raw HTML is JSON-LD serialized from a static local object.
 import { Fragment, type ReactNode, useEffect } from "react";
 
 import { SiteFooter, SiteHeader } from "~/components/landing";
@@ -15,6 +16,39 @@ const repoUrl = "https://github.com/Carrara-Labs/delta-harness";
 const releasesUrl = "https://github.com/Carrara-Labs/delta-harness/releases";
 const changelogSourceUrl = "https://github.com/Carrara-Labs/delta-harness/blob/main/CHANGELOG.md";
 const npmUrl = "https://www.npmjs.com/package/@carrara-labs/delta-harness";
+
+// A CollectionPage (the release history) about the software entity, plus a BreadcrumbList
+// so answer engines place it in the site hierarchy.
+const structuredData = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "CollectionPage",
+      "@id": `${canonicalUrl}#page`,
+      name: pageTitle,
+      description,
+      url: canonicalUrl,
+      inLanguage: "en",
+      isPartOf: { "@id": "https://deltaharness.dev/#website" },
+      about: { "@id": "https://deltaharness.dev/#software" },
+      publisher: {
+        "@type": "Organization",
+        name: "Carrara Labs",
+        logo: {
+          "@type": "ImageObject",
+          url: "https://deltaharness.dev/delta-logo-light-background.svg",
+        },
+      },
+    },
+    {
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        { "@type": "ListItem", position: 1, name: "Delta", item: "https://deltaharness.dev/" },
+        { "@type": "ListItem", position: 2, name: "Changelog", item: canonicalUrl },
+      ],
+    },
+  ],
+};
 
 export function meta() {
   return [
@@ -62,11 +96,36 @@ const kindLabel: Record<Kind, string> = {
 // exactly. Update this alongside the root CHANGELOG.md when a release ships.
 const releases: Release[] = [
   {
+    version: "0.2.5",
+    date: "July 30, 2026",
+    iso: "2026-07-30",
+    tagline: "The stall release.",
+    latest: true,
+    note: "Field data showed a third of quick-search runs losing 250 to 300 seconds to a silent turn-1 stall: the first model call after a suspend/resume rode a dead pooled socket and hung where nothing was watching. This release makes that class of stall nearly impossible, cheap when it happens anyway, and loudly visible. No wire changes, so upgrading is a one-line version bump and every new knob is byte-identical to 0.2.4 when left unset.",
+    groups: [
+      {
+        kind: "added",
+        items: [
+          "**First-byte deadline.** `DELTA_FIRST_BYTE_MS` (default 30s) bounds connect plus time-to-first-header, the one phase the per-chunk idle watchdog cannot see. A dead socket after a resume used to hang there until the 600s absolute cap; now it aborts in 30s with a clear reason and stays retriable. Independent of `DELTA_STREAM_IDLE_MS`.",
+          "**Fresh sockets when the pool cannot be trusted.** After a detected suspend/resume, or any call following more than five minutes of wire silence, the daemon opts that call out of connection reuse so it gets a brand-new socket instead of a corpse left behind a gone network path. The cost is one TLS handshake; the payoff is immunity to the dead-socket hang.",
+          "**Provider-wire warmup.** At boot and on resume, a best-effort preconnect pays DNS and TLS off the first turn's critical path and drains dead pooled sockets. It never throws and never sits on a task's path.",
+          "**Retry visibility, end to end.** Every retry, re-auth, model switch, and provider failover now surfaces as a persisted `model.retry` task event plus one log line per failed attempt, so a host can show honest 'provider is retrying' state instead of a silent hang. `model.call` gains `wall_ms` and `retries`, so any invisible pre-call stall shows up as `wall_ms` minus `latency_ms` in telemetry.",
+          "**`DELTA_CACHE_TTL=1h`.** Opt-in one-hour prompt-cache retention on the stable prefix (system spine plus tools), so a lane serving several runs an hour keeps that prefix a cache read across the five-minute gaps between runs. Off by default and byte-identical when unset; 1h cache writes bill double, so it stays opt-in.",
+        ],
+      },
+      {
+        kind: "fixed",
+        items: [
+          "**No more silent retry storms.** A failed model attempt now prints one line per attempt in the daemon logs. Previously only successful calls printed a line, so a 300-second retry storm produced no output at all.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.2.4",
     date: "July 28, 2026",
     iso: "2026-07-28",
     tagline: "Harden what shipped; close the gaps.",
-    latest: true,
     note: "Security, observability, and performance hardening. No wire changes, so upgrading is a one-line version bump — every change is provider-agnostic and lands with tests.",
     groups: [
       {
@@ -317,6 +376,10 @@ export default function Changelog() {
 
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
+      />
       <a className="skip-link" href="#main">
         Skip to content
       </a>

@@ -9,6 +9,7 @@ Use the smallest relevant source. Start with the concise integration brief for a
 - [Integration brief for coding agents](https://deltaharness.dev/agent.md): Concise, copyable instructions for adding Delta to an existing product or repository.
 - [Human-readable documentation](https://deltaharness.dev/docs/): Searchable technical documentation with navigation and examples.
 - [Canonical technical guide](https://deltaharness.dev/guide.md): The complete Markdown source of truth.
+- [Conceptual explainer, zero to metal](https://deltaharness.dev/learn/): A visual walkthrough of what an LLM call is, what an agent harness is, and how the Delta runtime works end to end. Best for grounding conceptual questions before reading the guide.
 
 ## Complete context
 

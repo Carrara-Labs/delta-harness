@@ -1,3 +1,4 @@
+// biome-ignore-all lint/security/noDangerouslySetInnerHtml: The only raw HTML is JSON-LD serialized from a static local object.
 import { useEffect } from "react";
 
 import { SiteFooter, SiteHeader } from "~/components/landing";
@@ -14,6 +15,41 @@ const socialImageUrl = "https://deltaharness.dev/delta-og-image.png";
 const socialImageAlt = "Delta triangular logo and wordmark on a warm off-white background";
 const repoUrl = "https://github.com/Carrara-Labs/delta-harness/tree/main/connect";
 const npmUrl = "https://www.npmjs.com/package/@carrara-labs/delta-connect";
+
+// TechArticle + BreadcrumbList so answer engines resolve Connect as a documented Delta
+// capability and understand where it sits in the site hierarchy.
+const structuredData = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "@id": `${canonicalUrl}#article`,
+      headline: pageTitle,
+      description,
+      url: canonicalUrl,
+      image: socialImageUrl,
+      inLanguage: "en",
+      isPartOf: { "@id": "https://deltaharness.dev/#website" },
+      about: { "@id": "https://deltaharness.dev/#software" },
+      author: { "@type": "Organization", name: "Carrara Labs", url: "https://deltaharness.dev/" },
+      publisher: {
+        "@type": "Organization",
+        name: "Carrara Labs",
+        logo: {
+          "@type": "ImageObject",
+          url: "https://deltaharness.dev/delta-logo-light-background.svg",
+        },
+      },
+    },
+    {
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        { "@type": "ListItem", position: 1, name: "Delta", item: "https://deltaharness.dev/" },
+        { "@type": "ListItem", position: 2, name: "Connect", item: canonicalUrl },
+      ],
+    },
+  ],
+};
 
 export function meta() {
   return [
@@ -42,6 +78,10 @@ export default function Connect() {
 
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
+      />
       <a className="skip-link" href="#main">
         Skip to content
       </a>
@@ -346,9 +386,9 @@ bun start`}</pre>
               <li>
                 <h3>Message your bot</h3>
                 <p>
-                  Send it anything: a question, a photo, or a document, or <code>/new</code> to start
-                  a fresh thread. The round trip is Telegram to the edge, to the agent, and back, all
-                  durable.
+                  Send it anything: a question, a photo, or a document, or <code>/new</code> to
+                  start a fresh thread. The round trip is Telegram to the edge, to the agent, and
+                  back, all durable.
                 </p>
               </li>
             </ol>

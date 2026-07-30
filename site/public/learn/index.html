@@ -5,6 +5,55 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Delta Harness - from zero to metal</title>
 <meta name="description" content="An exhaustive, visual walk from what an LLM call is, to what a harness is, to the precise machinery of the Delta Harness - built for anyone, from total beginner to engineer." />
+<meta name="color-scheme" content="light dark" />
+<meta name="theme-color" content="#f7f7f4" />
+<meta name="robots" content="index, follow, max-image-preview:large" />
+<link rel="canonical" href="https://deltaharness.dev/learn/" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Delta" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:title" content="Delta Harness - from zero to metal" />
+<meta property="og:description" content="An exhaustive, visual walk from what an LLM call is, to what a harness is, to the precise machinery of the Delta Harness - built for anyone, from total beginner to engineer." />
+<meta property="og:url" content="https://deltaharness.dev/learn/" />
+<meta property="og:image" content="https://deltaharness.dev/delta-og-image.png" />
+<meta property="og:image:alt" content="Delta triangular logo and wordmark on a warm off-white background" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Delta Harness - from zero to metal" />
+<meta name="twitter:description" content="An exhaustive, visual walk from an LLM call, to a harness, to the precise machinery of the Delta Harness." />
+<meta name="twitter:image" content="https://deltaharness.dev/delta-og-image.png" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "LearningResource",
+      "@id": "https://deltaharness.dev/learn/#resource",
+      "name": "Delta Harness - from zero to metal",
+      "description": "An exhaustive, visual walk from what an LLM call is, to what a harness is, to the precise machinery of the Delta Harness - built for anyone, from total beginner to engineer.",
+      "url": "https://deltaharness.dev/learn/",
+      "inLanguage": "en",
+      "learningResourceType": "tutorial",
+      "educationalLevel": "Beginner to advanced",
+      "teaches": "How an LLM call, an agent loop, and the Delta Harness runtime work end to end",
+      "isPartOf": { "@id": "https://deltaharness.dev/#website" },
+      "about": { "@id": "https://deltaharness.dev/#software" },
+      "author": { "@type": "Organization", "name": "Carrara Labs", "url": "https://deltaharness.dev/" },
+      "publisher": {
+        "@type": "Organization",
+        "name": "Carrara Labs",
+        "logo": { "@type": "ImageObject", "url": "https://deltaharness.dev/delta-logo-light-background.svg" }
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "Delta", "item": "https://deltaharness.dev/" },
+        { "@type": "ListItem", "position": 2, "name": "Learn", "item": "https://deltaharness.dev/learn/" }
+      ]
+    }
+  ]
+}
+</script>
 <link rel="icon" href="../favicon.svg" />
 <script>
   /* Apply the saved theme before first paint so there is no flash, and use the
@@ -202,27 +251,6 @@ main { min-width: 0; max-width: 820px; padding-bottom: 120px; }
 .rail::-webkit-scrollbar { width: 6px; }
 .rail::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 6px; }
 .rail-label { font-size: 11px; font-weight: 650; letter-spacing: .11em; text-transform: uppercase; color: var(--mutedink); margin: 0 0 10px; }
-
-/* search (mirrors the /docs search field, including the "/" shortcut hint) */
-.search-wrap { position: relative; margin-bottom: 26px; }
-.search-icon { position: absolute; z-index: 1; top: 12px; left: 12px; width: 16px; height: 16px; color: var(--mutedink); pointer-events: none; }
-.rail-search { width: 100%; height: 40px; padding: 0 44px 0 37px; border: 1px solid var(--line); border-radius: 11px; outline: 0; background: var(--surface); color: var(--ink); font-size: 13px; font-family: var(--sans); transition: border-color .15s ease, box-shadow .15s ease; }
-.rail-search::placeholder { color: var(--mutedink); }
-.rail-search:focus { border-color: var(--success); box-shadow: 0 0 0 3px var(--wash-green); }
-.search-shortcut { position: absolute; top: 9px; right: 9px; min-width: 24px; padding: 2px 5px; border: 1px solid var(--line); border-radius: 6px; color: var(--mutedink); font-family: var(--mono); font-size: 10px; text-align: center; pointer-events: none; }
-.search-results { position: absolute; z-index: 5; top: 46px; right: 0; left: 0; max-height: min(440px, 62vh); padding: 6px; overflow-y: auto; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); box-shadow: var(--pop-shadow); }
-.search-results[hidden] { display: none; }
-.search-result { display: flex; gap: 10px; align-items: baseline; padding: 10px 11px; border-radius: 8px; text-decoration: none; color: var(--ink); }
-.search-result:hover, .search-result:focus-visible { background: var(--surface-soft); outline: none; }
-.search-result .sr-n { font-family: var(--mono); font-size: 11px; color: var(--sage); min-width: 18px; }
-.search-result .sr-tag { flex: 0 0 auto; align-self: flex-start; margin-top: 1px; padding: 1px 7px; border-radius: 999px; background: var(--wash-green); color: var(--sage); font-family: var(--mono); font-size: 9px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; }
-.search-result strong { display: block; font-size: 13px; font-weight: 620; }
-.search-result .sr-ex { display: -webkit-box; margin-top: 2px; overflow: hidden; color: var(--mutedink); font-size: 11px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.search-empty { margin: 0; padding: 14px 11px; color: var(--mutedink); font-size: 12px; }
-/* brief highlight when search jumps to where a concept is used */
-@keyframes term-flash { 0% { background: var(--sage); color: var(--paper); } 100% { background: transparent; } }
-.term-flash { border-radius: 4px; animation: term-flash 1.4s ease-out; }
-@media (prefers-reduced-motion: reduce) { .term-flash { animation: none; } }
 
 /* chapter list - numbered (it is a real sequence), Docs-style soft active pill */
 .rail ol { list-style: none; margin: 0 0 8px; padding: 0; }
@@ -497,10 +525,8 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 @media (max-width: 940px) {
   .layout { grid-template-columns: 1fr; }
   .rail { position: static; height: auto; overflow: visible; padding: 20px 0 8px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
-  .search-wrap { max-width: 420px; }
   .rail ol { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
   .rail li a { padding: 5px 10px; }
-  .search-results { max-width: 420px; }
   .railnote { margin: 16px 0 0; max-width: 520px; }
 }
 </style>
@@ -577,13 +603,33 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 
 /* ---- teardown scorecard ---- */
 .score { display: grid; grid-template-columns: 1fr; gap: 0; margin: 18px 0; }
-.score .srow { display: grid; grid-template-columns: 1fr auto; align-items: start; gap: 16px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.score .srow { border-bottom: 1px solid var(--line); }
 .score .sinfo { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .score .sname { font-size: 14px; font-weight: 550; }
 .score .sproof { font-size: 12px; color: var(--mutedink); line-height: 1.42; }
 .score .sverdict { font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; white-space: nowrap; margin-top: 2px; }
 .score .sverdict.ahead { color: var(--sage); border: 1px solid color-mix(in srgb, var(--sage) 45%, var(--line)); background: color-mix(in srgb, var(--sage) 8%, transparent); }
 .score .sverdict.parity { color: var(--mutedink); border: 1px solid var(--line); }
+/* expandable per-competitor breakdown */
+.score .shead { display: grid; grid-template-columns: 1fr auto auto; align-items: start; gap: 14px; width: 100%; padding: 11px 0; margin: 0; background: none; border: 0; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.score .shead:hover .sname, .score .shead:focus-visible .sname { color: var(--sage); }
+.score .shead:focus-visible { outline: 2px solid color-mix(in srgb, var(--sage) 55%, transparent); outline-offset: 2px; border-radius: 4px; }
+.score .schev { align-self: center; color: var(--mutedink); flex: none; transition: transform .22s ease; }
+.score .srow.open .schev { transform: rotate(90deg); color: var(--sage); }
+.score .sbreak { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 1px 0 14px; }
+.score .sbreak[hidden] { display: none; }
+.score .bcell { display: flex; gap: 9px; align-items: flex-start; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); }
+.score .bcell.de { border-color: color-mix(in srgb, var(--sage) 42%, var(--line)); background: color-mix(in srgb, var(--sage) 7%, var(--card)); }
+.score .bmark, .slegend .bmark { width: 22px; height: 22px; border-radius: 6px; flex: none; margin-top: 1px; object-fit: contain; background: #f6f4ef; border: 1px solid var(--line); padding: 2px; box-sizing: border-box; }
+.score .bmark.de, .slegend .bmark.de { background: transparent; border: 0; padding: 0; }
+.score .btext { min-width: 0; }
+.score .btext b { font-size: 12px; font-weight: 650; }
+.score .btext .bwhat { display: block; font-size: 12px; color: var(--mutedink); line-height: 1.42; margin-top: 1px; }
+.score .btext .bwhat code { font-family: var(--mono); font-size: .86em; background: var(--muted); padding: 0 4px; border-radius: 4px; }
+.slegend { font-size: 12px; color: var(--mutedink); margin: 0 0 4px; display: flex; flex-wrap: wrap; gap: 6px 15px; align-items: center; }
+.slegend .lgi { display: inline-flex; align-items: center; gap: 6px; }
+.slegend .bmark { width: 20px; height: 20px; margin-top: 0; }
+@media (max-width: 620px) { .score .sbreak { grid-template-columns: 1fr; } }
 .codebar { margin: 20px 0 6px; }
 .codebar .cbrow { display: grid; grid-template-columns: 128px 1fr; gap: 14px; align-items: center; margin: 9px 0; }
 .codebar .cbname { font-family: var(--mono); font-size: 12.5px; }
@@ -658,13 +704,6 @@ main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; widt
 
   <!-- ===================== LEFT RAIL ===================== -->
   <aside class="rail" aria-label="Chapters">
-    <p class="rail-label">Search</p>
-    <div class="search-wrap">
-      <svg class="search-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="8.7" cy="8.7" r="5.2" stroke="currentColor" stroke-width="1.4"/><path d="m12.6 12.6 3.5 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-      <input class="rail-search" id="learn-search" type="search" placeholder="Search concepts + chapters" autocomplete="off" aria-label="Search concepts and chapters" />
-      <span class="search-shortcut" aria-hidden="true">/</span>
-      <div class="search-results" id="search-results" aria-live="polite" hidden></div>
-    </div>
     <p class="rail-label">The walk</p>
     <ol id="toc">
       <li><a href="#c0"><span class="n">00</span> Start here</a></li>
@@ -2042,21 +2081,97 @@ platform event
       <h3>Parity or ahead, at a fraction of the size</h3>
       <p>We compared Delta against the same three systems from chapter 4 - Pi, OpenClaw, and Hermes - across fourteen questions, each one something this page just taught you (can it survive a crash? manage a long conversation? cap spending?). We read their code to answer each one. The scores are <strong>our own assessment, not an independent test</strong>: <strong>parity</strong> means Delta holds its own on that dimension; <strong>ahead</strong> means it does the job at least as well while running on far less code. Read each verdict against what you now know it means.</p>
       <div class="fig">
+        <p class="slegend">Open any row for the system-by-system detail, read from each project's real source:
+          <span class="lgi"><img class="bmark oc" src="/logos/openclaw.svg" alt="OpenClaw logo" loading="lazy" />OpenClaw</span>
+          <span class="lgi"><img class="bmark pi" src="/logos/pi.svg" alt="Pi logo" loading="lazy" />Pi</span>
+          <span class="lgi"><img class="bmark he" src="/logos/hermes.svg" alt="Hermes logo" loading="lazy" />Hermes</span>
+          <span class="lgi"><img class="bmark de" src="/logos/delta.svg" alt="Delta logo" loading="lazy" />Delta</span>
+        </p>
         <div class="score">
-          <div class="srow"><div class="sinfo"><span class="sname">System-prompt size</span><span class="sproof">Its resident prompt targets under 2k tokens, where heavier harnesses bootstrap near 26k - a saving paid back on every single call.</span></div><span class="sverdict ahead">ahead</span></div>
-          <div class="srow"><div class="sinfo"><span class="sname">Context management</span><span class="sproof">Summarising older messages in stages, plus pulling back saved lessons, keeps a multi-hour run inside the model's size limit without losing the goal (chapter 9).</span></div><span class="sverdict ahead">ahead</span></div>
-          <div class="srow"><div class="sinfo"><span class="sname">Memory &amp; learning</span><span class="sproof">Scoped, deterministic recall straight from SQLite - no vector store to run, tune, or let drift (chapter 8).</span></div><span class="sverdict ahead">ahead</span></div>
-          <div class="srow"><div class="sinfo"><span class="sname">Tool system &amp; MCP</span><span class="sproof">A full MCP client with progressive tool disclosure - the same surface the others offer (chapter 10).</span></div><span class="sverdict parity">parity</span></div>
-          <div class="srow"><div class="sinfo"><span class="sname">Subagents / delegation</span><span class="sproof">In-process read-only research helpers plus a full spawned subagent, matching the field (chapter 10).</span></div><span class="sverdict parity">parity</span></div>
-          <div class="srow"><div class="sinfo"><span class="sname">Crash-resume durability</span><span class="sproof">Journaled intent and a per-turn checkpoint resume it mid-tool without repeating a side effect (chapter 11).</span></div><span class="sverdict ahead">ahead</span></div>
-          <div class="srow"><div class="sinfo"><span class="sname">Provider portability</span><span class="sproof">Three native model wires plus OpenRouter, on par with the portable stacks.</span></div><span class="sverdict parity">parity</span></div>
-          <div class="srow"><div class="sinfo"><span class="sname">Prompt caching</span><span class="sproof">Rolling cache breakpoints hold the discount across a long run instead of letting it decay.</span></div><span class="sverdict ahead">ahead</span></div>
-          <div class="srow"><div class="sinfo"><span class="sname">Budget control</span><span class="sproof">Hard caps on fresh tokens, steps, and dollars - a real ceiling, not a wall-clock timer (chapter 13).</span></div><span class="sverdict ahead">ahead</span></div>
-          <div class="srow"><div class="sinfo"><span class="sname">Untrusted-input safety</span><span class="sproof">Every tool result is framed as untrusted, with SSRF, write, and secret-scrub guards layered on top (chapter 11).</span></div><span class="sverdict ahead">ahead</span></div>
-          <div class="srow"><div class="sinfo"><span class="sname">Observability</span><span class="sproof">A durable event stream with live updates and an NDJSON export, on par with instrumented stacks (chapter 12).</span></div><span class="sverdict parity">parity</span></div>
-          <div class="srow"><div class="sinfo"><span class="sname">Skills</span><span class="sproof">On par with skill-capable harnesses, with selectable per-skill modes (MCP, local, or off) queued next.</span></div><span class="sverdict parity">parity</span></div>
-          <div class="srow"><div class="sinfo"><span class="sname">Self-improvement loop</span><span class="sproof">The agent reflects on its work and rewrites its own memory file, snapshotted and revertible (chapter 8).</span></div><span class="sverdict ahead">ahead</span></div>
-          <div class="srow"><div class="sinfo"><span class="sname">Runtime footprint / deps</span><span class="sproof">One self-contained binary with zero runtime dependencies, idling around 30MB of memory - nothing to patch that isn't load-bearing.</span></div><span class="sverdict ahead">ahead</span></div>
+          <div class="srow"><button class="shead" type="button" aria-expanded="false"><span class="sinfo"><span class="sname">System-prompt size</span><span class="sproof">Its resident prompt targets under 2k tokens, where heavier harnesses bootstrap near 26k - a saving paid back on every single call.</span></span><span class="sverdict ahead">ahead</span><svg class="schev" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg></button><div class="sbreak" hidden>
+            <div class="bcell"><img class="bmark oc" src="/logos/openclaw.svg" alt="OpenClaw logo" loading="lazy" /><span class="btext"><b>OpenClaw</b><span class="bwhat">No fixed spine - the assembled prompt balloons past ~26k once bootstrap files (150k-char budget) and full tool schemas inject.</span></span></div>
+            <div class="bcell"><img class="bmark pi" src="/logos/pi.svg" alt="Pi logo" loading="lazy" /><span class="btext"><b>Pi</b><span class="bwhat">Lean ~500-700-token base, but it grows with every <code>AGENTS.md</code> and skill it discovers and injects.</span></span></div>
+            <div class="bcell"><img class="bmark he" src="/logos/hermes.svg" alt="Hermes logo" loading="lazy" /><span class="btext"><b>Hermes</b><span class="bwhat">~3.5k-8k+ tokens of fixed guidance carried every call, before the skills index or context files even load.</span></span></div>
+            <div class="bcell de"><img class="bmark de" src="/logos/delta.svg" alt="Delta logo" loading="lazy" /><span class="btext"><b>Delta</b><span class="bwhat">Cached spine targets under 2k tokens; per-turn instructions ride a user message, never the prefix. <code>spine.ts</code></span></span></div>
+          </div></div>
+          <div class="srow"><button class="shead" type="button" aria-expanded="false"><span class="sinfo"><span class="sname">Context management</span><span class="sproof">Summarising older messages in stages, plus pulling back saved lessons, keeps a multi-hour run inside the model's size limit without losing the goal (chapter 9).</span></span><span class="sverdict ahead">ahead</span><svg class="schev" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg></button><div class="sbreak" hidden>
+            <div class="bcell"><img class="bmark oc" src="/logos/openclaw.svg" alt="OpenClaw logo" loading="lazy" /><span class="btext"><b>OpenClaw</b><span class="bwhat">Multi-strategy compaction with an overflow-retry loop; caps the active budget (~272k even on a 1M window).</span></span></div>
+            <div class="bcell"><img class="bmark pi" src="/logos/pi.svg" alt="Pi logo" loading="lazy" /><span class="btext"><b>Pi</b><span class="bwhat">LLM summarisation plus a length-stop guard that re-issues any tool call truncated mid-JSON.</span></span></div>
+            <div class="bcell"><img class="bmark he" src="/logos/hermes.svg" alt="Hermes logo" loading="lazy" /><span class="btext"><b>Hermes</b><span class="bwhat">Tiered summariser with protected head and tail and anti-thrash strikes; compacts at 50% of the window.</span></span></div>
+            <div class="bcell de"><img class="bmark de" src="/logos/delta.svg" alt="Delta logo" loading="lazy" /><span class="btext"><b>Delta</b><span class="bwhat">Staged Goal/Progress/Next summary at 120k tokens; keeps a 24k tail and only deactivates old turns so recall still reads them. <code>compaction.ts</code></span></span></div>
+          </div></div>
+          <div class="srow"><button class="shead" type="button" aria-expanded="false"><span class="sinfo"><span class="sname">Memory &amp; learning</span><span class="sproof">Scoped, deterministic recall straight from SQLite - no vector store to run, tune, or let drift (chapter 8).</span></span><span class="sverdict ahead">ahead</span><svg class="schev" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg></button><div class="sbreak" hidden>
+            <div class="bcell"><img class="bmark oc" src="/logos/openclaw.svg" alt="OpenClaw logo" loading="lazy" /><span class="btext"><b>OpenClaw</b><span class="bwhat">Hybrid - Markdown memory files plus a real <code>sqlite-vec</code> embedding store you must run and tune.</span></span></div>
+            <div class="bcell"><img class="bmark pi" src="/logos/pi.svg" alt="Pi logo" loading="lazy" /><span class="btext"><b>Pi</b><span class="bwhat">No memory rail - flat <code>AGENTS.md</code>/<code>CLAUDE.md</code> files re-read each run; no store at all.</span></span></div>
+            <div class="bcell"><img class="bmark he" src="/logos/hermes.svg" alt="Hermes logo" loading="lazy" /><span class="btext"><b>Hermes</b><span class="bwhat">Deterministic too - Markdown memory plus a SQLite FTS5/BM25 session search; vectors only as optional plugins.</span></span></div>
+            <div class="bcell de"><img class="bmark de" src="/logos/delta.svg" alt="Delta logo" loading="lazy" /><span class="btext"><b>Delta</b><span class="bwhat">Deterministic SQLite recall, no vectors to tune or drift; scoped by audience/kind/trust/identity so firms never bleed. <code>memory.ts</code></span></span></div>
+          </div></div>
+          <div class="srow"><button class="shead" type="button" aria-expanded="false"><span class="sinfo"><span class="sname">Tool system &amp; MCP</span><span class="sproof">A full MCP client with progressive tool disclosure - the same surface the others offer (chapter 10).</span></span><span class="sverdict parity">parity</span><svg class="schev" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg></button><div class="sbreak" hidden>
+            <div class="bcell"><img class="bmark oc" src="/logos/openclaw.svg" alt="OpenClaw logo" loading="lazy" /><span class="btext"><b>OpenClaw</b><span class="bwhat">MCP host and client, plus a tool-search catalog with a code-execution mode.</span></span></div>
+            <div class="bcell"><img class="bmark pi" src="/logos/pi.svg" alt="Pi logo" loading="lazy" /><span class="btext"><b>Pi</b><span class="bwhat">Seven built-in file/shell tools; MCP only as a userland extension, with no disclosure layer.</span></span></div>
+            <div class="bcell"><img class="bmark he" src="/logos/hermes.svg" alt="Hermes logo" loading="lazy" /><span class="btext"><b>Hermes</b><span class="bwhat">MCP client and server with tiered <code>tool_search</code> disclosure over ~33 toolsets.</span></span></div>
+            <div class="bcell de"><img class="bmark de" src="/logos/delta.svg" alt="Delta logo" loading="lazy" /><span class="btext"><b>Delta</b><span class="bwhat">Full MCP client with progressive disclosure - pins a small core, the rest stays behind <code>search_tools</code>. <code>mcp.ts</code></span></span></div>
+          </div></div>
+          <div class="srow"><button class="shead" type="button" aria-expanded="false"><span class="sinfo"><span class="sname">Subagents / delegation</span><span class="sproof">In-process read-only research helpers plus a full spawned subagent, matching the field (chapter 10).</span></span><span class="sverdict parity">parity</span><svg class="schev" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg></button><div class="sbreak" hidden>
+            <div class="bcell"><img class="bmark oc" src="/logos/openclaw.svg" alt="OpenClaw logo" loading="lazy" /><span class="btext"><b>OpenClaw</b><span class="bwhat">First-class ACP spawn stack with admission control and push-based completion.</span></span></div>
+            <div class="bcell"><img class="bmark pi" src="/logos/pi.svg" alt="Pi logo" loading="lazy" /><span class="btext"><b>Pi</b><span class="bwhat">Delegation only as an example extension spawning separate processes; not a core feature.</span></span></div>
+            <div class="bcell"><img class="bmark he" src="/logos/hermes.svg" alt="Hermes logo" loading="lazy" /><span class="btext"><b>Hermes</b><span class="bwhat"><code>delegate_task</code> with sync-batch and async modes, depth/iteration budgets, plus a mixture-of-agents path.</span></span></div>
+            <div class="bcell de"><img class="bmark de" src="/logos/delta.svg" alt="Delta logo" loading="lazy" /><span class="btext"><b>Delta</b><span class="bwhat">In-process read-only research helpers (fail-closed, one level) plus a full spawned subagent and an <code>eval_n</code> judge. <code>research.ts</code></span></span></div>
+          </div></div>
+          <div class="srow"><button class="shead" type="button" aria-expanded="false"><span class="sinfo"><span class="sname">Crash-resume durability</span><span class="sproof">Journaled intent and a per-turn checkpoint resume it mid-tool without repeating a side effect (chapter 11).</span></span><span class="sverdict ahead">ahead</span><svg class="schev" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg></button><div class="sbreak" hidden>
+            <div class="bcell"><img class="bmark oc" src="/logos/openclaw.svg" alt="OpenClaw logo" loading="lazy" /><span class="btext"><b>OpenClaw</b><span class="bwhat">Durable SQLite journaling and restart recovery, but turn-level - no per-tool exactly-once.</span></span></div>
+            <div class="bcell"><img class="bmark pi" src="/logos/pi.svg" alt="Pi logo" loading="lazy" /><span class="btext"><b>Pi</b><span class="bwhat">Append-only JSONL gives replay; idempotent mid-tool resume is a design doc, not shipped.</span></span></div>
+            <div class="bcell"><img class="bmark he" src="/logos/hermes.svg" alt="Hermes logo" loading="lazy" /><span class="btext"><b>Hermes</b><span class="bwhat">WAL store with side-effect-aware replay: it classifies interrupted tools and relabels rather than blindly re-running.</span></span></div>
+            <div class="bcell de"><img class="bmark de" src="/logos/delta.svg" alt="Delta logo" loading="lazy" /><span class="btext"><b>Delta</b><span class="bwhat">A per-tool journal on SQLite WAL resumes mid-tool and won't repeat a side effect; an armed-but-undone tool returns <code>[interrupted]</code>. <code>queue.ts</code></span></span></div>
+          </div></div>
+          <div class="srow"><button class="shead" type="button" aria-expanded="false"><span class="sinfo"><span class="sname">Provider portability</span><span class="sproof">Three native model wires plus OpenRouter, on par with the portable stacks.</span></span><span class="sverdict parity">parity</span><svg class="schev" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg></button><div class="sbreak" hidden>
+            <div class="bcell"><img class="bmark oc" src="/logos/openclaw.svg" alt="OpenClaw logo" loading="lazy" /><span class="btext"><b>OpenClaw</b><span class="bwhat">8+ native wire adapters with a failover cascade, via vendor SDKs.</span></span></div>
+            <div class="bcell"><img class="bmark pi" src="/logos/pi.svg" alt="Pi logo" loading="lazy" /><span class="btext"><b>Pi</b><span class="bwhat">39 providers over two wires - but 11 SDK dependencies and no automatic cross-provider failover.</span></span></div>
+            <div class="bcell"><img class="bmark he" src="/logos/hermes.svg" alt="Hermes logo" loading="lazy" /><span class="btext"><b>Hermes</b><span class="bwhat">6 wire adapters and 32 provider plugins, with credential-pool rotation and a fallback chain.</span></span></div>
+            <div class="bcell de"><img class="bmark de" src="/logos/delta.svg" alt="Delta logo" loading="lazy" /><span class="btext"><b>Delta</b><span class="bwhat">Three native wires (Anthropic / OpenAI / Responses) plus OpenRouter default and an ordered failover cascade - zero SDKs. <code>provider.ts</code></span></span></div>
+          </div></div>
+          <div class="srow"><button class="shead" type="button" aria-expanded="false"><span class="sinfo"><span class="sname">Prompt caching</span><span class="sproof">Rolling cache breakpoints hold the discount across a long run instead of letting it decay.</span></span><span class="sverdict ahead">ahead</span><svg class="schev" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg></button><div class="sbreak" hidden>
+            <div class="bcell"><img class="bmark oc" src="/logos/openclaw.svg" alt="OpenClaw logo" loading="lazy" /><span class="btext"><b>OpenClaw</b><span class="bwhat">An explicit stable-prefix / volatile-suffix cache boundary that survives across channel turns.</span></span></div>
+            <div class="bcell"><img class="bmark pi" src="/logos/pi.svg" alt="Pi logo" loading="lazy" /><span class="btext"><b>Pi</b><span class="bwhat">Mature rolling breakpoints with a 1-hour cache-retention window.</span></span></div>
+            <div class="bcell"><img class="bmark he" src="/logos/hermes.svg" alt="Hermes logo" loading="lazy" /><span class="btext"><b>Hermes</b><span class="bwhat">Four rolling <code>cache_control</code> breakpoints, aware of both native-Anthropic and OpenRouter transports.</span></span></div>
+            <div class="bcell de"><img class="bmark de" src="/logos/delta.svg" alt="Delta logo" loading="lazy" /><span class="btext"><b>Delta</b><span class="bwhat">Rolling <code>cache_control</code> breakpoints re-write the cache every turn, within Anthropic's four-breakpoint cap. <code>provider.ts</code></span></span></div>
+          </div></div>
+          <div class="srow"><button class="shead" type="button" aria-expanded="false"><span class="sinfo"><span class="sname">Budget control</span><span class="sproof">Hard caps on fresh tokens, steps, and dollars - a real ceiling, not a wall-clock timer (chapter 13).</span></span><span class="sverdict ahead">ahead</span><svg class="schev" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg></button><div class="sbreak" hidden>
+            <div class="bcell"><img class="bmark oc" src="/logos/openclaw.svg" alt="OpenClaw logo" loading="lazy" /><span class="btext"><b>OpenClaw</b><span class="bwhat">No hard token/dollar/step cap - a <code>while(true)</code> loop governed by a wall-clock timeout.</span></span></div>
+            <div class="bcell"><img class="bmark pi" src="/logos/pi.svg" alt="Pi logo" loading="lazy" /><span class="btext"><b>Pi</b><span class="bwhat">No hard caps either - <code>while(true)</code> with per-request timeouts only.</span></span></div>
+            <div class="bcell"><img class="bmark he" src="/logos/hermes.svg" alt="Hermes logo" loading="lazy" /><span class="btext"><b>Hermes</b><span class="bwhat">Hard step and output-char caps, but dollars are soft - a depleted account keeps inferencing.</span></span></div>
+            <div class="bcell de"><img class="bmark de" src="/logos/delta.svg" alt="Delta logo" loading="lazy" /><span class="btext"><b>Delta</b><span class="bwhat">Hard caps on fresh (non-cached) tokens, steps, and dollars per profile - work 2M/$5, chat 100k/$0.25. <code>profiles.ts</code></span></span></div>
+          </div></div>
+          <div class="srow"><button class="shead" type="button" aria-expanded="false"><span class="sinfo"><span class="sname">Untrusted-input safety</span><span class="sproof">Every tool result is framed as untrusted, with SSRF, write, and secret-scrub guards layered on top (chapter 11).</span></span><span class="sverdict ahead">ahead</span><svg class="schev" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg></button><div class="sbreak" hidden>
+            <div class="bcell"><img class="bmark oc" src="/logos/openclaw.svg" alt="OpenClaw logo" loading="lazy" /><span class="btext"><b>OpenClaw</b><span class="bwhat">Dedicated SSRF, prompt-injection regex detection, and secret-redaction layers.</span></span></div>
+            <div class="bcell"><img class="bmark pi" src="/logos/pi.svg" alt="Pi logo" loading="lazy" /><span class="btext"><b>Pi</b><span class="bwhat">No untrusted framing or secret scrub - safety is deferred to a container or micro-VM.</span></span></div>
+            <div class="bcell"><img class="bmark he" src="/logos/hermes.svg" alt="Hermes logo" loading="lazy" /><span class="btext"><b>Hermes</b><span class="bwhat"><code>&lt;untrusted_tool_result&gt;</code> framing, SSRF with DNS-rebinding re-checks, and default-on secret redaction.</span></span></div>
+            <div class="bcell de"><img class="bmark de" src="/logos/delta.svg" alt="Delta logo" loading="lazy" /><span class="btext"><b>Delta</b><span class="bwhat">Every result framed <code>&lt;untrusted&gt;</code>, plus SSRF, a write-guard on self/policy files, secret scrub, and a spine-echo guard. <code>untrusted.ts</code></span></span></div>
+          </div></div>
+          <div class="srow"><button class="shead" type="button" aria-expanded="false"><span class="sinfo"><span class="sname">Observability</span><span class="sproof">A durable event stream with live updates and an NDJSON export, on par with instrumented stacks (chapter 12).</span></span><span class="sverdict parity">parity</span><svg class="schev" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg></button><div class="sbreak" hidden>
+            <div class="bcell"><img class="bmark oc" src="/logos/openclaw.svg" alt="OpenClaw logo" loading="lazy" /><span class="btext"><b>OpenClaw</b><span class="bwhat">Live event stream plus OpenTelemetry and rich <code>/status</code> token breakdowns.</span></span></div>
+            <div class="bcell"><img class="bmark pi" src="/logos/pi.svg" alt="Pi logo" loading="lazy" /><span class="btext"><b>Pi</b><span class="bwhat">A typed event taxonomy and a documented span model; JSONL and HTML export.</span></span></div>
+            <div class="bcell"><img class="bmark he" src="/logos/hermes.svg" alt="Hermes logo" loading="lazy" /><span class="btext"><b>Hermes</b><span class="bwhat">Standardised JSONL trace export plus pluggable Langfuse / NeMo relays.</span></span></div>
+            <div class="bcell de"><img class="bmark de" src="/logos/delta.svg" alt="Delta logo" loading="lazy" /><span class="btext"><b>Delta</b><span class="bwhat">A durable SQLite event table with a live stream and an at-least-once NDJSON export. <code>events.ts</code></span></span></div>
+          </div></div>
+          <div class="srow"><button class="shead" type="button" aria-expanded="false"><span class="sinfo"><span class="sname">Skills</span><span class="sproof">On par with skill-capable harnesses, with selectable per-skill modes (MCP, local, or off) queued next.</span></span><span class="sverdict parity">parity</span><svg class="schev" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg></button><div class="sbreak" hidden>
+            <div class="bcell"><img class="bmark oc" src="/logos/openclaw.svg" alt="OpenClaw logo" loading="lazy" /><span class="btext"><b>OpenClaw</b><span class="bwhat">52 bundled skills injected as on-demand blocks with prompt-budget accounting.</span></span></div>
+            <div class="bcell"><img class="bmark pi" src="/logos/pi.svg" alt="Pi logo" loading="lazy" /><span class="btext"><b>Pi</b><span class="bwhat">Mature multi-root, standard-compliant, self-authoring skills.</span></span></div>
+            <div class="bcell"><img class="bmark he" src="/logos/hermes.svg" alt="Hermes logo" loading="lazy" /><span class="btext"><b>Hermes</b><span class="bwhat">Experience-driven <code>SKILL.md</code> authoring, provenance-gated so only agent-made skills self-manage.</span></span></div>
+            <div class="bcell de"><img class="bmark de" src="/logos/delta.svg" alt="Delta logo" loading="lazy" /><span class="btext"><b>Delta</b><span class="bwhat">Skills via the MCP registry today; a selectable per-skill mode (mcp / local / off) is queued next. <code>skill-registry.ts</code></span></span></div>
+          </div></div>
+          <div class="srow"><button class="shead" type="button" aria-expanded="false"><span class="sinfo"><span class="sname">Self-improvement loop</span><span class="sproof">The agent reflects on its work and rewrites its own memory file, snapshotted and revertible (chapter 8).</span></span><span class="sverdict ahead">ahead</span><svg class="schev" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg></button><div class="sbreak" hidden>
+            <div class="bcell"><img class="bmark oc" src="/logos/openclaw.svg" alt="OpenClaw logo" loading="lazy" /><span class="btext"><b>OpenClaw</b><span class="bwhat">Proposal-gated Skill Workshop edits plus self-written memory and a nightly "dreaming" sweep.</span></span></div>
+            <div class="bcell"><img class="bmark pi" src="/logos/pi.svg" alt="Pi logo" loading="lazy" /><span class="btext"><b>Pi</b><span class="bwhat">No autonomous loop - improvement is human-edited <code>AGENTS.md</code> and skills.</span></span></div>
+            <div class="bcell"><img class="bmark he" src="/logos/hermes.svg" alt="Hermes logo" loading="lazy" /><span class="btext"><b>Hermes</b><span class="bwhat">A sandboxed reflect-and-curate loop with a capture taxonomy and tar.gz rollback - its headline feature.</span></span></div>
+            <div class="bcell de"><img class="bmark de" src="/logos/delta.svg" alt="Delta logo" loading="lazy" /><span class="btext"><b>Delta</b><span class="bwhat">The <code>remember</code> tool atomically rewrites <code>DELTA.md</code>'s <code>## Learned</code>, snapshotted to 20 revisions and revertible. <code>self.ts</code></span></span></div>
+          </div></div>
+          <div class="srow"><button class="shead" type="button" aria-expanded="false"><span class="sinfo"><span class="sname">Runtime footprint / deps</span><span class="sproof">One self-contained binary with zero runtime dependencies, idling around 30MB of memory - nothing to patch that isn't load-bearing.</span></span><span class="sverdict ahead">ahead</span><svg class="schev" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg></button><div class="sbreak" hidden>
+            <div class="bcell"><img class="bmark oc" src="/logos/openclaw.svg" alt="OpenClaw logo" loading="lazy" /><span class="btext"><b>OpenClaw</b><span class="bwhat">63 runtime dependencies across a 24-package monorepo; ~617k lines of source.</span></span></div>
+            <div class="bcell"><img class="bmark pi" src="/logos/pi.svg" alt="Pi logo" loading="lazy" /><span class="btext"><b>Pi</b><span class="bwhat">18 runtime dependencies over ~110k lines; needs Node 22+.</span></span></div>
+            <div class="bcell"><img class="bmark he" src="/logos/hermes.svg" alt="Hermes logo" loading="lazy" /><span class="btext"><b>Hermes</b><span class="bwhat">31 pinned core deps (233 locked) on a FastAPI/pydantic runtime; ~759k lines of Python.</span></span></div>
+            <div class="bcell de"><img class="bmark de" src="/logos/delta.svg" alt="Delta logo" loading="lazy" /><span class="btext"><b>Delta</b><span class="bwhat">One compiled binary, zero runtime dependencies, ~30MB idle, ~12k lines of TypeScript. <code>package.json</code></span></span></div>
+          </div></div>
         </div>
         <div class="codebar" id="codebar">
           <p class="vsub" style="margin:6px 0 4px">And the code it takes to do it:</p>
@@ -2306,126 +2421,6 @@ platform event
   window.addEventListener("scroll", updateProgress, { passive: true });
   window.addEventListener("resize", updateProgress);
   updateProgress();
-
-  /* ---- search: concepts + chapters (+ "/" shortcut, like /docs) ----
-     The page's real value is the 58 glossary concepts and the body prose, not
-     the chapter titles (which are already visible in the rail). So the index
-     covers both: a concept hit shows its plain-English definition and jumps to
-     where the word is actually used; a chapter hit shows a snippet around the
-     match. The index is built lazily because the glossary object is populated
-     by a later inline script. */
-  var searchInput = document.getElementById("learn-search");
-  var searchResults = document.getElementById("search-results");
-  var DIACRITICS = new RegExp("[\\u0300-\\u036f]", "g");
-  function norm(v) { return v.normalize("NFKD").replace(DIACRITICS, "").toLowerCase(); }
-  function cleanText(node) { return (node.textContent || "").replace(/\s+/g, " ").trim(); }
-  function excerpt(body, terms) {
-    var nb = norm(body), pos = Infinity;
-    terms.forEach(function (t) { var i = nb.indexOf(t); if (i >= 0 && i < pos) pos = i; });
-    if (!isFinite(pos)) pos = 0;
-    var start = Math.max(0, pos - 45), end = Math.min(body.length, start + 150);
-    return (start > 0 ? "… " : "") + body.slice(start, end).trim() + (end < body.length ? " …" : "");
-  }
-  function termAnchor(key, title) {
-    var t = document.querySelector('.term[data-t="' + key + '"]');
-    if (t) return t;
-    var dts = document.querySelectorAll(".glist dt"), lt = title.toLowerCase();
-    for (var i = 0; i < dts.length; i++) { if (dts[i].textContent.trim().toLowerCase() === lt) return dts[i]; }
-    return document.getElementById("c14");
-  }
-  var _index = null;
-  function getIndex() {
-    if (_index) return _index;
-    var chapters = Array.prototype.slice.call(document.querySelectorAll("main section.ch")).map(function (sec) {
-      var h2 = sec.querySelector("h2"), numEl = sec.querySelector(".ch-tag .num");
-      var title = h2 ? h2.textContent.trim() : sec.id, body = cleanText(sec);
-      return { kind: "chapter", id: sec.id, num: numEl ? numEl.textContent.trim() : "", title: title, body: body, nTitle: norm(title), nBody: norm(title + " " + body) };
-    });
-    var G = window.__DH_GLOSSARY__ || {}, terms = [], seen = {};
-    Object.keys(G).filter(function (k) { return k !== "dotted"; }).forEach(function (k) {
-      var term = G[k].t || k, def = G[k].d || "";
-      seen[norm(term)] = true;
-      terms.push({ kind: "term", key: k, el: null, title: term, def: def, nTitle: norm(term), nBody: norm(term + " " + def) });
-    });
-    /* also index the curated chapter-14 list: a few concepts (e.g. "Budget")
-       live only there. Dedup by title against the tooltip terms above. */
-    Array.prototype.slice.call(document.querySelectorAll(".glist dt")).forEach(function (dt) {
-      var title = dt.textContent.trim(), nt = norm(title);
-      if (seen[nt]) return;
-      seen[nt] = true;
-      var dd = dt.nextElementSibling, def = dd ? cleanText(dd) : "";
-      terms.push({ kind: "term", key: null, el: dt, title: title, def: def, nTitle: nt, nBody: norm(title + " " + def) });
-    });
-    _index = chapters.concat(terms);
-    return _index;
-  }
-  function closeSearch() { searchResults.hidden = true; searchResults.replaceChildren(); }
-  function flashTerm(it) {
-    var el = it.el || termAnchor(it.key, it.title);
-    if (!el) return;
-    el.scrollIntoView({ block: "center", behavior: "smooth" });
-    el.classList.remove("term-flash"); void el.offsetWidth; el.classList.add("term-flash");
-    setTimeout(function () { el.classList.remove("term-flash"); }, 1400);
-  }
-  function renderSearch(q) {
-    var terms = norm(q).split(/\s+/).filter(Boolean);
-    if (!terms.length) { closeSearch(); return; }
-    var nq = terms.join(" ");
-    var matches = getIndex().map(function (it) {
-      var hay = it.nTitle + " " + it.nBody;
-      if (!terms.every(function (t) { return hay.indexOf(t) >= 0; })) return null;
-      var score = it.kind === "term" ? 3 : 0; /* nudge a concept hit so "what is X" surfaces the definition */
-      if (it.nTitle === nq) score += 40; else if (it.nTitle.indexOf(nq) === 0) score += 28; else if (it.nTitle.indexOf(nq) >= 0) score += 18;
-      terms.forEach(function (t) {
-        if (it.nTitle.indexOf(t) === 0) score += 8; else if (it.nTitle.indexOf(t) >= 0) score += 5; else if (it.nBody.indexOf(t) >= 0) score += 1;
-      });
-      return { it: it, score: score };
-    }).filter(Boolean).sort(function (a, b) { return b.score - a.score; }).slice(0, 8);
-
-    searchResults.replaceChildren();
-    searchResults.hidden = false;
-    if (!matches.length) {
-      var empty = document.createElement("p");
-      empty.className = "search-empty";
-      empty.textContent = "No matches on this page";
-      searchResults.appendChild(empty);
-      return;
-    }
-    matches.forEach(function (m) {
-      var it = m.it;
-      var a = document.createElement("a");
-      a.className = "search-result";
-      var lead = document.createElement("span");
-      var box = document.createElement("span"); box.style.flex = "1"; box.style.minWidth = "0";
-      var strong = document.createElement("strong"); strong.textContent = it.title;
-      var ex = document.createElement("span"); ex.className = "sr-ex";
-      box.appendChild(strong); box.appendChild(ex);
-      if (it.kind === "chapter") {
-        lead.className = "sr-n"; lead.textContent = it.num;
-        ex.textContent = excerpt(it.body, terms);
-        a.href = "#" + it.id;
-        a.addEventListener("click", function () { closeSearch(); searchInput.value = ""; });
-      } else {
-        lead.className = "sr-tag"; lead.textContent = "Term";
-        ex.textContent = it.def;
-        a.href = "#c14";
-        a.addEventListener("click", function (e) { e.preventDefault(); closeSearch(); searchInput.value = ""; flashTerm(it); });
-      }
-      a.appendChild(lead); a.appendChild(box);
-      searchResults.appendChild(a);
-    });
-  }
-  searchInput.addEventListener("input", function () { renderSearch(searchInput.value); });
-  searchInput.addEventListener("keydown", function (e) {
-    if (e.key === "Escape") { searchInput.value = ""; closeSearch(); searchInput.blur(); }
-    if (e.key === "Enter") { var first = searchResults.querySelector("a"); if (first) { e.preventDefault(); first.click(); } }
-  });
-  document.addEventListener("click", function (e) { if (!e.target.closest(".search-wrap")) closeSearch(); });
-  document.addEventListener("keydown", function (e) {
-    var t = e.target;
-    var typing = t && t.matches && (t.matches("input, textarea, select") || t.isContentEditable);
-    if ((e.key === "/" && !typing) || ((e.metaKey || e.ctrlKey) && e.key === "k")) { e.preventDefault(); searchInput.focus(); }
-  });
 
   wireTerms();
 })();
@@ -2912,6 +2907,17 @@ platform event
     }, { threshold: 0.4 });
     io.observe(cb);
   }
+
+  /* ---------- teardown scorecard: expand per-competitor breakdown ---------- */
+  document.querySelectorAll(".score .shead").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var row = btn.closest(".srow");
+      var open = row.classList.toggle("open");
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      var panel = row.querySelector(".sbreak");
+      if (panel) panel.hidden = !open;
+    });
+  });
 
   /* re-wire any glossary terms inside injected widgets */
   window.__DH_WIRE__ && window.__DH_WIRE__();

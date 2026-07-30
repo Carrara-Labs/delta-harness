@@ -102,7 +102,7 @@ const structuredData = {
       operatingSystem: "macOS, Linux",
       url: canonicalUrl,
       downloadUrl: `${canonicalUrl}install.sh`,
-      softwareVersion: "0.2.1",
+      softwareVersion: "0.2.5",
       description,
       license: "https://www.apache.org/licenses/LICENSE-2.0",
       isAccessibleForFree: true,

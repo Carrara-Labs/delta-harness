@@ -7,11 +7,7 @@
     <meta name="application-name" content="Delta" />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#f4efe6" id="theme-color" />
-    <meta
-      name="description"
-      content="From first local run to secure production: configure models, MCP tools, memory, subagents, observability and durable execution."
-    />
-    <title>Delta Docs – Build and operate durable agents</title>
+    <title>Delta Docs - Build and operate durable agents</title>
     <meta name="description" content="From first local run to secure production: configure models, MCP tools, memory, subagents, observability and durable execution." />
     <meta name="robots" content="index, follow, max-image-preview:large" />
     <link rel="canonical" href="https://deltaharness.dev/docs/" />
@@ -19,7 +15,7 @@
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Delta" />
     <meta property="og:locale" content="en_US" />
-    <meta property="og:title" content="Delta Docs – Build and operate durable agents" />
+    <meta property="og:title" content="Delta Docs - Build and operate durable agents" />
     <meta property="og:description" content="From first local run to secure production: configure models, MCP tools, memory, subagents, observability and durable execution." />
     <meta property="og:url" content="https://deltaharness.dev/docs/" />
     <meta property="og:image" content="https://deltaharness.dev/delta-og-image.png" />
@@ -28,11 +24,10 @@
     <meta property="og:image:height" content="1260" />
     <meta property="og:image:alt" content="Delta triangular logo and wordmark on a warm off-white background" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Delta Docs – Build and operate durable agents" />
+    <meta name="twitter:title" content="Delta Docs - Build and operate durable agents" />
     <meta name="twitter:description" content="From first local run to secure production: configure models, MCP tools, memory, subagents, observability and durable execution." />
     <meta name="twitter:image" content="https://deltaharness.dev/delta-og-image.png" />
     <meta name="twitter:image:alt" content="Delta triangular logo and wordmark on a warm off-white background" />
-    <link rel="alternate" type="text/markdown" href="/guide.md" title="Delta guide in Markdown" />
     <link rel="icon" href="/favicon.ico" sizes="64x64" />
     <link
       rel="icon"
@@ -1364,7 +1359,6 @@
 
         <nav class="nav-links" aria-label="Main navigation">
           <a href="/how-it-works">How it works</a>
-          <a href="/learn/">Learn</a>
           <a href="/docs/" class="is-active" aria-current="page">Documentation</a>
           <a href="/changelog">Changelog</a>
         </nav>
@@ -2066,7 +2060,7 @@ MODEL_HEADERS={&quot;originator&quot;:&quot;codex_cli_rs&quot;}
 </tbody>
 </table></div>
 <p><code>GET /v1/tasks/:id</code> includes <code>result</code> only for <code>done</code>, <code>failed</code>, or <code>cancelled</code>. Handled outcomes store a complete Responses-compatible object with <code>status</code>, <code>output_text</code>, <code>output</code>, model, previous response ID, and usage. Failed and cancelled output begins with a Delta status marker rather than pretending to be a successful answer. An unexpected exception outside Delta's handled run path can currently mark a task <code>failed</code> with an empty <code>{}</code> result and no normal <code>run.finished</code> event. A task or response SSE client waiting for that event can continue receiving heartbeats, so clients need their own terminal-status polling and timeout. Operators must alert on structured errors and malformed terminal results.</p>
-<p><strong>Progress events.</strong> <code>GET /v1/tasks/:id/events</code> follows the live run as Server-Sent Events; add <code>?coarse=1</code> to drop the per-token <code>output_text.delta</code> / <code>reasoning.delta</code> frames and keep only the structural heartbeat (run/turn/tool lifecycle, <code>model.call</code>, <code>checkpoint</code>, <code>error</code>). For a host that can't hold an SSE connection, <code>GET /v1/tasks/:id/events?since=&lt;id&gt;</code> returns a bounded JSON page <code>{ &quot;events&quot;: [...], &quot;cursor&quot;: N, &quot;done&quot;: bool }</code> - pass the returned <code>cursor</code> as the next <code>since</code> and stop when <code>done</code> is true (<code>limit</code> defaults to 200, max 500). <code>model.call</code> events carry <code>cache_hit_pct</code>, the share of that turn's input served from the prompt cache, so a host can watch cache warmth live. Both surfaces require the run's owner (see identity, below).</p>
+<p><strong>Progress events.</strong> <code>GET /v1/tasks/:id/events</code> follows the live run as Server-Sent Events; add <code>?coarse=1</code> to drop the per-token <code>output_text.delta</code> / <code>reasoning.delta</code> frames and keep only the structural heartbeat (run/turn/tool lifecycle, <code>model.call</code>, <code>checkpoint</code>, <code>error</code>). For a host that can't hold an SSE connection, <code>GET /v1/tasks/:id/events?since=&lt;id&gt;</code> returns a bounded JSON page <code>{ &quot;events&quot;: [...], &quot;cursor&quot;: N, &quot;done&quot;: bool }</code> - pass the returned <code>cursor</code> as the next <code>since</code> and stop when <code>done</code> is true (<code>limit</code> defaults to 200, max 500). <code>model.call</code> events carry <code>cache_hit_pct</code>, the share of that turn's input served from the prompt cache, so a host can watch cache warmth live. A <code>model.retry</code> event fires on every retry, re-auth, model switch, or provider failover, so a retrying or stalled provider is visible instead of silent dead air, and <code>model.call</code> also carries <code>wall_ms</code> and <code>retries</code> next to <code>latency_ms</code> so the pre-call gap (<code>wall_ms</code> minus <code>latency_ms</code>) is queryable. Both surfaces require the run's owner (see identity, below).</p>
 <p>Handled non-streaming API errors use this shape:</p>
 <div class="code-block"><div class="code-toolbar"><span>json</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-json">{&quot;error&quot;:{&quot;message&quot;:&quot;human-readable reason&quot;}}
 </code></pre></div>
@@ -3009,6 +3003,8 @@ DELTA_INSPECT_TOKEN=separate-root-inspection-token
 <tr><td><code>DELTA_PROVIDERS</code></td><td>empty</td><td>JSON array of fallback provider objects.</td></tr>
 <tr><td><code>DELTA_MODEL_TIMEOUT_MS</code></td><td><code>600000</code></td><td>Absolute model-call ceiling.</td></tr>
 <tr><td><code>DELTA_STREAM_IDLE_MS</code></td><td><code>60000</code></td><td>Abort a model stream after this long without a network chunk. <code>0</code> disables.</td></tr>
+<tr><td><code>DELTA_FIRST_BYTE_MS</code></td><td><code>30000</code></td><td>Deadline for connect + first response header on a model call - the phase a dead socket after a VM resume otherwise hangs in. <code>0</code> disables.</td></tr>
+<tr><td><code>DELTA_CACHE_TTL</code></td><td>unset</td><td><code>1h</code> keeps the stable prefix (system spine + tools) in the Anthropic prompt cache for an hour instead of five minutes. Faster, cheaper turn 1 for an agent serving several runs an hour; 1h cache writes bill double, so it stays opt-in.</td></tr>
 <tr><td><code>DELTA_VISION</code></td><td>auto</td><td><code>1</code> forces vision support; <code>0</code> disables it.</td></tr>
 <tr><td><code>DELTA_VISION_MODELS</code></td><td>built-in regex</td><td>Custom regular expression for automatic vision detection.</td></tr>
 </tbody>

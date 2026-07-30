@@ -30,7 +30,7 @@ const outputPath = resolve(root, "public/docs/index.html");
 const githubSourceBase = "https://github.com/Carrara-Labs/delta-harness/blob/main/";
 
 // SEO block injected into the generated <title> (ported from sync-docs.mjs).
-const docsTitle = "Delta Docs – Build and operate durable agents";
+const docsTitle = "Delta Docs - Build and operate durable agents";
 const docsDescription =
   "From first local run to secure production: configure models, MCP tools, memory, subagents, observability and durable execution.";
 const socialImageUrl = "https://deltaharness.dev/delta-og-image.png";
@@ -416,7 +416,9 @@ const siteRoutes: Array<{ path: string; changefreq: string; priority: string }> 
   { path: "/", changefreq: "weekly", priority: "1.0" },
   { path: "/docs/", changefreq: "weekly", priority: "0.9" },
   { path: "/how-it-works", changefreq: "weekly", priority: "0.8" },
+  { path: "/connect", changefreq: "weekly", priority: "0.8" },
   { path: "/changelog", changefreq: "weekly", priority: "0.7" },
+  { path: "/learn/", changefreq: "monthly", priority: "0.6" },
 ];
 
 function buildSitemap(): string {
