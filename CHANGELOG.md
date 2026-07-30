@@ -6,6 +6,39 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.6] — 2026-07-30
+
+Everything in this release was earned by a one-day registered experiment on a
+production-identical retrieval lane (72/72 runs, two blind graders, a same-config drift
+control — findings and operator guidance in `docs/research/effort-lab-2026-07-30.md`).
+Two telemetry blind spots that cost that lab real money and a wrong first diagnosis are
+now closed, and the Anthropic fast-mode wire ships inert-by-default so enabling it is a
+single env flip the day an org's allocation lands. No behavior changes when nothing is
+set; upgrading is a version bump.
+
+### Added
+
+- **`model.fallback` event** (sibling of `model.retry`) whenever a call is served by a
+  model other than the configured primary, plus `fallback: true` on that `model.call` and
+  a `FALLBACK` marker on the stderr turn line. In the lab, 27% of one arm's turns were
+  silently served by the fallback model after rate-limit retries — discoverable only by
+  diffing model names per call. Nothing to enable.
+- **`error.class` on failed `tool.result` events** — a low-cardinality class
+  (`self_cap`, `self_conflict`, `self_spine_echo`, `self_empty`, `self_unavailable`,
+  `self_protected`, `timeout`, `transient`, `categorical`; absent when nothing fits).
+  `is_error` alone was unclassifiable: a fleet-wide storm of instantly-refused `remember`
+  calls (~83%) was misdiagnosed as a policy gate when it was the size cap — the seeded
+  `DELTA.md` left 24 bytes of headroom under the 3200-byte default. Rule of thumb that
+  falls out: seed `DELTA.md` at no more than half of `DELTA_SELF_MAX_TOKENS × 4`.
+- **Anthropic fast mode wire** (`DELTA_SPEED=fast`, off by default and byte-identical
+  when unset). On the hard model allowlist (Opus 5, Opus 4.8) calls carry `speed: "fast"`
+  and the `fast-mode-2026-02-01` beta; the server-reported served speed lands on
+  `model.call` telemetry. 2× token pricing — override metering with `DELTA_MODEL_PRICES`
+  when running fast; the 1.25× cache-write multiplier stacks unchanged.
+- **`gen_ai.request.effort` on `model.call`** — the configured (or per-request) reasoning
+  effort every call ran at, so an experiment arm or a fleet audit is self-labeling in
+  telemetry instead of requiring a config cross-reference.
+
 ## [0.2.5] — 2026-07-30
 
 The first turn after an idle or suspended machine wakes is now fast and reliable, and a
