@@ -895,7 +895,9 @@ export async function executeRun(
         wall_ms: Date.now() - callT0,
         ...(retries ? { retries } : {}),
         ...(result.provider ? { "gen_ai.provider": result.provider } : {}),
-        // Speed the server says it served (fast-mode arms verify here, not by request intent).
+        // What was ASKED (effort) and what the server says it SERVED (speed) — so an
+        // experiment arm's calls are self-labeling in telemetry, no config cross-reference.
+        ...(reasoningEffort ? { "gen_ai.request.effort": reasoningEffort } : {}),
         ...(result.usage.speed ? { speed: result.usage.speed } : {}),
         tool_calls: result.message.tool_calls?.map((c) => c.function.name) ?? [],
       },
