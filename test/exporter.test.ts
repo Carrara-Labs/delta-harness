@@ -91,10 +91,24 @@ describe("exporter", () => {
     c.stop();
   });
 
-  test("capture_payloads=false strips attributes from payload-bearing events", async () => {
+  test("capture_payloads=false strips payloads but keeps the safe metric/enum subset", async () => {
     const db = openDb(":memory:");
     const events = new Events(db);
-    events.emit("model.call", { runId: "r1" }, { prompt: "secret user data" });
+    events.emit(
+      "model.call",
+      { runId: "r1" },
+      {
+        prompt: "secret user data",
+        "gen_ai.usage.output_tokens": 42,
+        "gen_ai.request.effort": "low",
+        fallback: true,
+      },
+    );
+    events.emit(
+      "tool.result",
+      { runId: "r1" },
+      { "gen_ai.tool.name": "remember", is_error: true, "error.class": "self_cap", body: "raw" },
+    );
     events.emit("run.finished", { runId: "r1" }, { status: "done" });
 
     const c = collector();
@@ -103,9 +117,34 @@ describe("exporter", () => {
     c.stop();
 
     const modelCall = c.received.find((r) => r["event.name"] === "model.call");
+    const toolResult = c.received.find((r) => r["event.name"] === "tool.result");
     const runFinished = c.received.find((r) => r["event.name"] === "run.finished");
-    expect(modelCall?.attributes).toBeUndefined(); // payload stripped
-    expect(runFinished?.attributes).toMatchObject({ status: "done" }); // non-payload kept
+    // payload keys stripped, safe keys survive — a default deployment still sees
+    // tokens, cost, effort, fallback, and error class (codex 0.2.6 P1)
+    expect(modelCall?.attributes).toEqual({
+      "gen_ai.usage.output_tokens": 42,
+      "gen_ai.request.effort": "low",
+      fallback: true,
+    });
+    expect(toolResult?.attributes).toEqual({
+      "gen_ai.tool.name": "remember",
+      is_error: true,
+      "error.class": "self_cap",
+    });
+    expect(runFinished?.attributes).toMatchObject({ status: "done" }); // non-payload kept whole
+  });
+
+  test("a payload-only event exports with no attributes at all when capture is off", async () => {
+    const db = openDb(":memory:");
+    const events = new Events(db);
+    events.emit("tool.call", { runId: "r1" }, { arguments: "secret args only" });
+    const c = collector();
+    const exp = new Exporter(db, { url: c.url, capturePayloads: false });
+    await exp.flush();
+    c.stop();
+    const toolCall = c.received.find((r) => r["event.name"] === "tool.call");
+    expect(toolCall).toBeDefined();
+    expect(toolCall?.attributes).toBeUndefined();
   });
 
   test("drop-on-overflow keeps the outbox bounded", async () => {

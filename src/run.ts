@@ -28,7 +28,7 @@ import type {
   ToolSpec,
   Usage,
 } from "./provider";
-import { normalizeEffort, OVERFLOW } from "./provider";
+import { KNOWN_EFFORTS, normalizeEffort, OVERFLOW } from "./provider";
 import { childTools, runResearch } from "./research";
 import { retrieveSkills } from "./retrieval";
 import { scrubText } from "./scrub";
@@ -901,7 +901,18 @@ export async function executeRun(
         ...(result.provider ? { "gen_ai.provider": result.provider } : {}),
         // What was ASKED (effort) and what the server says it SERVED (speed) — so an
         // experiment arm's calls are self-labeling in telemetry, no config cross-reference.
-        ...(reasoningEffort ? { "gen_ai.request.effort": reasoningEffort } : {}),
+        // Effort passes through to the wire unvalidated (the model 4xxs an unknown tier), but
+        // the exported ATTRIBUTE stays a closed set: request metadata is untrusted, and an
+        // arbitrary string here would be a high-cardinality leak to a second off-box sink.
+        ...(reasoningEffort
+          ? {
+              "gen_ai.request.effort": (KNOWN_EFFORTS as readonly string[]).includes(
+                reasoningEffort,
+              )
+                ? reasoningEffort
+                : "other",
+            }
+          : {}),
         ...(result.usage.speed ? { speed: result.usage.speed } : {}),
         ...(fellBack ? { fallback: true } : {}),
         tool_calls: result.message.tool_calls?.map((c) => c.function.name) ?? [],

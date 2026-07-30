@@ -1210,7 +1210,9 @@ async function streamAnthropic(
         usage.cacheRead = u.cache_read_input_tokens ?? 0;
         usage.cacheWrite = u.cache_creation_input_tokens ?? 0;
         usage.input = (u.input_tokens ?? 0) + usage.cacheRead + usage.cacheWrite;
-        if (u.speed) usage.speed = u.speed;
+        // Closed set only — this string is exported off-box as a telemetry attribute,
+        // so an unexpected server value must not become a high-cardinality leak.
+        if (u.speed === "fast" || u.speed === "standard") usage.speed = u.speed;
       } else if (ev.type === "content_block_start" && ev.content_block?.type === "tool_use") {
         calls.push({
           id: ev.content_block.id ?? "",

@@ -37,7 +37,15 @@ set; upgrading is a version bump.
   when running fast; the 1.25× cache-write multiplier stacks unchanged.
 - **`gen_ai.request.effort` on `model.call`** — the configured (or per-request) reasoning
   effort every call ran at, so an experiment arm or a fleet audit is self-labeling in
-  telemetry instead of requiring a config cross-reference.
+  telemetry instead of requiring a config cross-reference. The exported attribute is
+  bounded to the known tiers (anything else exports as `other`); the wire keeps the
+  existing pass-through semantics.
+- **Safe telemetry subset without payload consent.** Previously `capture_payloads=false`
+  (the default) stripped the WHOLE attribute object from `model.call`/`tool.call`/
+  `tool.result` before export — so a default deployment shipped those events with no
+  tokens, no cost, no error class, no fallback flag. Now an explicit allowlist of closed
+  enums, counters, and identifiers survives; prompt text, tool arguments, and tool
+  results still never leave without consent. (Found by the 0.2.6 codex review, P1.)
 
 ## [0.2.5] — 2026-07-30
 

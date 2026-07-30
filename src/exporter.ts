@@ -40,6 +40,36 @@ type EventRow = {
 
 const PAYLOAD_EVENTS = new Set(["model.call", "tool.call", "tool.result"]);
 
+/** Attributes on payload-bearing events that are safe to export WITHOUT payload consent:
+ * closed enums, counters, and identifiers only — never prompt text, tool arguments, or tool
+ * results. Before this allowlist, capture_payloads=false stripped the WHOLE attribute object,
+ * so a default deployment exported model.call/tool.result with no tokens, cost, error class,
+ * or fallback flag at all (codex 0.2.6 P1 — the "flag people miss" blind spot). */
+const SAFE_ATTRS = new Set([
+  "gen_ai.request.model",
+  "gen_ai.response.model",
+  "gen_ai.request.effort",
+  "gen_ai.response.finish_reasons",
+  "gen_ai.usage.input_tokens",
+  "gen_ai.usage.output_tokens",
+  "gen_ai.usage.cached_tokens",
+  "gen_ai.usage.cost_usd",
+  "cache_hit_pct",
+  "latency_ms",
+  "wall_ms",
+  "duration_ms",
+  "retries",
+  "gen_ai.provider",
+  "speed",
+  "fallback",
+  "gen_ai.tool.name",
+  "gen_ai.tool.call.id",
+  "tool_calls",
+  "is_error",
+  "error.class",
+  "interrupted",
+]);
+
 export class Exporter {
   private timer: ReturnType<typeof setInterval> | null = null;
   private sending = false;
@@ -117,6 +147,17 @@ export class Exporter {
    *  tenant opted in — secrets and full prompts never leave without consent. */
   private toRecord(r: EventRow): Record<string, unknown> {
     const includeData = this.cfg.capturePayloads || !PAYLOAD_EVENTS.has(r.type);
+    // No payload consent → keep the safe metric/enum subset instead of dropping everything.
+    let attributes: Record<string, unknown> | undefined;
+    if (includeData) attributes = JSON.parse(r.data);
+    else {
+      const filtered = Object.fromEntries(
+        Object.entries(JSON.parse(r.data) as Record<string, unknown>).filter(([k]) =>
+          SAFE_ATTRS.has(k),
+        ),
+      );
+      if (Object.keys(filtered).length) attributes = filtered;
+    }
     return {
       // Globally-unique + restart-stable: the collector dedupes on this (the
       // exporter is at-least-once, so a replayed batch must not duplicate).
@@ -130,7 +171,7 @@ export class Exporter {
       "task.id": r.task_id,
       "entity.id": r.entity_id,
       turn: r.turn,
-      ...(includeData ? { attributes: JSON.parse(r.data) } : {}),
+      ...(attributes ? { attributes } : {}),
     };
   }
 
