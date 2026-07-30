@@ -895,6 +895,8 @@ export async function executeRun(
         wall_ms: Date.now() - callT0,
         ...(retries ? { retries } : {}),
         ...(result.provider ? { "gen_ai.provider": result.provider } : {}),
+        // Speed the server says it served (fast-mode arms verify here, not by request intent).
+        ...(result.usage.speed ? { speed: result.usage.speed } : {}),
         tool_calls: result.message.tool_calls?.map((c) => c.function.name) ?? [],
       },
     );

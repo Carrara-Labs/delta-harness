@@ -1,8 +1,10 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import {
+  anthropicSupportsFast,
   anthropicUsesAdaptive,
   chat,
   chatVia,
+  FAST_MODE_BETA,
   normalizeEffort,
   type ProviderConfig,
   warmupWire,
@@ -27,10 +29,12 @@ describe("normalizeEffort", () => {
 // Scriptable mock of an OpenAI-compatible /chat/completions endpoint.
 let script: (callCount: number, body: Record<string, unknown>) => Response = () => sse();
 let calls = 0;
+let lastHeaders: Headers | undefined;
 const server = Bun.serve({
   port: 0,
   fetch: async (req) => {
     calls++;
+    lastHeaders = req.headers;
     return script(calls, (await req.json()) as Record<string, unknown>);
   },
 });
@@ -214,6 +218,90 @@ describe("provider streaming", () => {
       expect(seen.reasoning).toBeUndefined();
       expect(seen.reasoning_effort).toBeUndefined();
       expect(seen.thinking).toBeUndefined();
+    });
+  });
+
+  describe("fast mode (Anthropic speed wire)", () => {
+    let seen: Record<string, unknown> = {};
+    const capture = () => {
+      seen = {};
+      reset((_, body) => {
+        seen = body;
+        return sse(delta({ content: "ok" }, "stop"));
+      });
+    };
+
+    test("speed:fast + beta header on a supporting model", async () => {
+      capture();
+      await chat(
+        cfg({ api: "anthropic", models: ["claude-opus-5"], maxRetries: 0, speed: "fast" }),
+        {
+          messages: [{ role: "user", content: "hi" }],
+        },
+      );
+      expect(seen.speed).toBe("fast");
+      expect(lastHeaders?.get("anthropic-beta")).toBe(FAST_MODE_BETA);
+    });
+
+    test("unsupported model on the SAME config never sees the field (utility-lane safety)", async () => {
+      capture();
+      await chat(
+        cfg({ api: "anthropic", models: ["claude-haiku-4-5"], maxRetries: 0, speed: "fast" }),
+        { messages: [{ role: "user", content: "hi" }] },
+      );
+      expect("speed" in seen).toBe(false);
+      expect(lastHeaders?.get("anthropic-beta")).toBeNull();
+    });
+
+    test("speed unset → wire unchanged (no field, no beta header)", async () => {
+      capture();
+      await chat(cfg({ api: "anthropic", models: ["claude-opus-5"], maxRetries: 0 }), {
+        messages: [{ role: "user", content: "hi" }],
+      });
+      expect("speed" in seen).toBe(false);
+      expect(lastHeaders?.get("anthropic-beta")).toBeNull();
+    });
+
+    test("composes with adaptive effort (fast + low thinking is the lab's cheapest arm)", async () => {
+      capture();
+      await chat(
+        cfg({ api: "anthropic", models: ["claude-opus-5"], maxRetries: 0, speed: "fast" }),
+        {
+          messages: [{ role: "user", content: "hi" }],
+          reasoningEffort: "low",
+        },
+      );
+      expect(seen.speed).toBe("fast");
+      expect(seen.thinking).toEqual({ type: "adaptive" });
+      expect(seen.output_config).toEqual({ effort: "low" });
+    });
+
+    test("anthropicSupportsFast is a hard allowlist (Opus 5 / 4.8 only)", () => {
+      for (const m of ["claude-opus-5", "claude-opus-4-8", "claude-opus-5-20260601"])
+        expect(anthropicSupportsFast(m)).toBe(true);
+      for (const m of ["claude-opus-4-7", "claude-opus-4-5", "claude-sonnet-5", "claude-haiku-4-5"])
+        expect(anthropicSupportsFast(m)).toBe(false);
+    });
+
+    test("usage.speed echoed by the server lands on the result", async () => {
+      reset(() =>
+        sse(
+          { type: "message_start", message: { usage: { input_tokens: 10, speed: "fast" } } },
+          { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } },
+          {
+            type: "message_delta",
+            usage: { output_tokens: 5 },
+            delta: { stop_reason: "end_turn" },
+          },
+        ),
+      );
+      const r = await chat(
+        cfg({ api: "anthropic", models: ["claude-opus-5"], maxRetries: 0, speed: "fast" }),
+        { messages: [{ role: "user", content: "hi" }] },
+      );
+      expect(r.ok).toBe(true);
+      if (!r.ok) throw new Error("unreachable");
+      expect(r.usage.speed).toBe("fast");
     });
   });
 
