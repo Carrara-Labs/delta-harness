@@ -102,6 +102,9 @@ describe("exporter", () => {
         "gen_ai.usage.output_tokens": 42,
         "gen_ai.request.effort": "low",
         fallback: true,
+        // Model-controlled requested-name list: a hallucinated/injected name can be free
+        // text, so it must NOT survive without payload consent (codex 0.2.6 P1 follow-up).
+        tool_calls: ["exfil_SECRET_abc123"],
       },
     );
     events.emit(
@@ -126,6 +129,8 @@ describe("exporter", () => {
       "gen_ai.request.effort": "low",
       fallback: true,
     });
+    // explicit: the model-controlled name list did not ride the safe subset off-box
+    expect(modelCall?.attributes).not.toHaveProperty("tool_calls");
     expect(toolResult?.attributes).toEqual({
       "gen_ai.tool.name": "remember",
       is_error: true,

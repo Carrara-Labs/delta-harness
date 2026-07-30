@@ -44,8 +44,10 @@ set; upgrading is a version bump.
   (the default) stripped the WHOLE attribute object from `model.call`/`tool.call`/
   `tool.result` before export — so a default deployment shipped those events with no
   tokens, no cost, no error class, no fallback flag. Now an explicit allowlist of closed
-  enums, counters, and identifiers survives; prompt text, tool arguments, and tool
-  results still never leave without consent. (Found by the 0.2.6 codex review, P1.)
+  enums, counters, and identifiers survives; prompt text, tool arguments, tool results,
+  and the model's raw requested-tool-name list (`tool_calls`, which a hallucination or
+  injection can fill with free text) still never leave without consent. (Found by the
+  0.2.6 codex review, P1; a pre-publish round dropped `tool_calls` from the subset.)
 - **`self.pressure` event + loud stderr warning** when `DELTA.md` no longer fits its budget:
   fired once per run if the file is elided in the prompt (over cap — the agent is silently
   running with a hole cut out of its own identity) or uses more than 90% of the cap (every
@@ -59,9 +61,14 @@ set; upgrading is a version bump.
   varying content (byte counts, the current file), so no two failures ever compared equal
   and the 3-strike quarantine never fired — the lab watched 100+ same-cause `remember`
   refusals grind ~$10 in one arm. Failures now aggregate on `error.class` for the
-  self-write storm classes (`self_conflict` excluded — its merge-and-retry is designed to
-  succeed; transient/timeout still never latch), so the existing quarantine catches them
-  at 3. The quarantine norm now reads "failed the same way N×".
+  `remember`-targeted storm classes (`self_cap`, `self_spine_echo`, `self_empty`,
+  `self_unavailable`), so the existing quarantine catches them at 3. `self_conflict` is
+  excluded (its merge-and-retry is designed to succeed), transient/timeout still never
+  latch, and `self_protected` is excluded too (fixed message, and it fires on the generic
+  `write_file`/move/delete guard — latching it would quarantine a general tool run-wide).
+  The quarantine norm now reads "failed the same way N×". (A pre-publish codex round
+  hardened the latch ordering so a conflict whose body echoes the current file can never
+  sneak a latchable key through.)
 
 ## [0.2.5] — 2026-07-30
 

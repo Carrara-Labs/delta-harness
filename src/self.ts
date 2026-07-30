@@ -36,13 +36,23 @@ export async function loadSelf(
   maxTokens: number,
 ): Promise<{ text?: string; charter: Charter; bytes: number; elided: boolean }> {
   let raw = "";
+  let onDiskBytes = 0;
   try {
     const f = Bun.file(selfPath(workspace));
-    if ((await f.exists()) && f.size <= 1_000_000) raw = (await f.text()).trim();
+    if (await f.exists()) {
+      onDiskBytes = f.size;
+      if (f.size <= 1_000_000) raw = (await f.text()).trim();
+    }
   } catch {
     // unreadable = absent
   }
-  if (!raw) return { charter: {}, bytes: 0, elided: false };
+  if (!raw) {
+    // A present-but-over-1MB file is dropped whole — the agent runs with NO self-file at
+    // all, the loudest possible integrity failure, so report it as elided pressure rather
+    // than the silent bytes:0 that a genuinely absent/empty file gets.
+    const tooBig = onDiskBytes > 1_000_000;
+    return { charter: {}, bytes: tooBig ? onDiskBytes : 0, elided: tooBig };
+  }
   const maxChars = Math.max(1, maxTokens) * CHARS_PER_TOKEN;
   const elided = raw.length > maxChars;
   const text = elided ? elide(raw, maxChars) : raw;

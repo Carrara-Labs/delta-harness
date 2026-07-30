@@ -1079,28 +1079,29 @@ export function toolErrorClass(result: string): string | undefined {
   return undefined;
 }
 
-/** Self-write refusal classes whose failures should latch the breaker even though their
- * messages vary per call (byte counts, the current file text) and so never compare equal.
- * `self_conflict` is deliberately EXCLUDED: the conflict guard hands back the current file
- * for a merge-and-retry that is designed to succeed. Transient/timeout never latch. */
-const STORM_CLASSES = new Set([
-  "self_cap",
-  "self_spine_echo",
-  "self_empty",
-  "self_unavailable",
-  "self_protected",
-]);
+/** `remember`-targeted self-write refusals whose messages vary per call (byte counts, the
+ * current file text) and so never compare equal — the class key is what lets them latch.
+ * `self_conflict` is EXCLUDED (the conflict guard hands back the current file for a
+ * merge-and-retry designed to succeed); transient/timeout never latch. `self_protected` is
+ * also NOT here: its message is fixed (no varying content, so it never had the equality
+ * problem this set solves), it is produced by the GENERIC write_file/move/delete guard, and
+ * latching it would quarantine a general-purpose tool run-wide as collateral — a cost the
+ * lab never showed a benefit for (the observed storm was `remember`/self_cap, not write_file). */
+const STORM_CLASSES = new Set(["self_cap", "self_spine_echo", "self_empty", "self_unavailable"]);
 
-/** The breaker's aggregation key for a failed result: the exact categorical error when one
- * matches (pre-existing behavior), else a stable per-class key for storm classes. Without
- * the class key, the effort lab's `remember` grinding (100+ same-cause refusals in one arm,
- * ~$10 of waste) never tripped the 3-strike quarantine because each size-cap message embeds
- * a different byte count. Exported for tests. */
+/** The breaker's aggregation key for a failed result: a stable per-class key for storm
+ * classes, else the exact categorical error (pre-existing behavior). Without the class key,
+ * the effort lab's `remember` grinding (100+ same-cause refusals in one arm, ~$10 of waste)
+ * never tripped the 3-strike quarantine because each size-cap message embeds a different byte
+ * count. Classifying BEFORE the exact-categorical check is load-bearing: a conflict/transient/
+ * timeout must NEVER latch even when its body echoes text the categorical regex matches (a
+ * real conflict appends the current DELTA.md, which can contain words like "schema"/"not
+ * found"). Exported for tests. */
 export function breakerKey(result: string): string | null {
-  const exact = categoricalErr(result);
-  if (exact) return exact;
   const cls = toolErrorClass(result);
-  return cls && STORM_CLASSES.has(cls) ? `[class] ${cls}` : null;
+  if (cls === "self_conflict" || cls === "transient" || cls === "timeout") return null;
+  if (cls && STORM_CLASSES.has(cls)) return `[class] ${cls}`;
+  return categoricalErr(result);
 }
 
 /** Aggregate one settled tool-call batch (A4). A tool is a fresh categorical failure this turn ONLY

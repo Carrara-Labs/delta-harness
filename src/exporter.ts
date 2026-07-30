@@ -62,9 +62,12 @@ const SAFE_ATTRS = new Set([
   "gen_ai.provider",
   "speed",
   "fallback",
+  // Executed-tool identity: `name` here is a resolved registry tool (the unknown/injected
+  // branch never emits), so these are bounded. NOT `tool_calls` — that is the model's raw
+  // requested-name list (run.ts), which a hallucination or prompt injection can fill with
+  // free text, so it must not leave the box without payload consent.
   "gen_ai.tool.name",
   "gen_ai.tool.call.id",
-  "tool_calls",
   "is_error",
   "error.class",
   "interrupted",

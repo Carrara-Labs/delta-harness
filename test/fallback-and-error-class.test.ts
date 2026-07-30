@@ -137,6 +137,23 @@ describe("breakerKey (class-aware quarantine)", () => {
     expect(breakerKey("[tool error] something without a known shape")).toBeNull();
   });
 
+  test("a conflict whose appended file body contains categorical vocabulary still never latches", () => {
+    // The real conflict message appends the CURRENT DELTA.md; a technical persona's file can
+    // contain words the categorical regex matches ("schema", "not found"). Classify-first must
+    // win over the exact-categorical key so the documented self_conflict exclusion holds.
+    const conflict =
+      "[tool error] DELTA.md was updated by another run since you read it — re-apply on top of the CURRENT version below:\n\n# Persona\nI validate the JSON schema; the record was not found last run.";
+    expect(toolErrorClass(conflict)).toBe("self_conflict");
+    expect(breakerKey(conflict)).toBeNull();
+  });
+
+  test("self_protected does not latch (generic write_file guard must not be quarantined run-wide)", () => {
+    const protectedErr =
+      "[tool error] DELTA.md is your own living file — update it with the `remember` tool, not write_file/move/delete";
+    expect(toolErrorClass(protectedErr)).toBe("self_protected");
+    expect(breakerKey(protectedErr)).toBeNull();
+  });
+
   test("exact categorical errors keep their pre-existing full-string key", () => {
     const key = breakerKey("[tool error] ENOENT: no such file or directory");
     expect(key).toContain("ENOENT");
@@ -223,6 +240,22 @@ describe("self.pressure", () => {
     const queue = new Queue(deps);
     await queue.wait(queue.enqueue({ input: "hi" }).id);
     expect(pressures(deps).length).toBe(0);
+  });
+
+  test("a present-but-over-1MB self file fires pressure (identity fully dropped, not silent)", async () => {
+    // Over 1MB loadSelf refuses to read the file at all — the agent runs with NO self-file.
+    // That is the loudest integrity failure and must not stay silent (codex 0.2.6 P2).
+    const deps = makeDeps(async () => textResult("ok"), new Map(), {
+      workspace: wsWithSelf("# Persona\n" + "x".repeat(1_000_050)),
+      selfMaxBytes: 3200,
+    });
+    const queue = new Queue(deps);
+    await queue.wait(queue.enqueue({ input: "hi" }).id);
+    const rows = pressures(deps);
+    expect(rows.length).toBe(1);
+    const attrs = JSON.parse(rows[0]?.data ?? "{}");
+    expect(attrs.elided).toBe(true);
+    expect(attrs.bytes).toBeGreaterThan(1_000_000);
   });
 });
 
