@@ -80,10 +80,9 @@ export class TelegramCodec implements ChannelCodec {
       };
       const filePath = data.ok ? data.result?.file_path : undefined;
       if (typeof filePath !== "string" || !filePath) return null;
-      const bin = await fetch(
-        `https://api.telegram.org/file/bot${this.token}/${filePath}`,
-        { signal: AbortSignal.timeout(60000) },
-      );
+      const bin = await fetch(`https://api.telegram.org/file/bot${this.token}/${filePath}`, {
+        signal: AbortSignal.timeout(60000),
+      });
       if (!bin.ok) return null;
       return {
         bytes: new Uint8Array(await bin.arrayBuffer()),

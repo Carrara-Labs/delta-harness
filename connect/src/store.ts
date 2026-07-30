@@ -173,9 +173,7 @@ export class Store {
     const groupKey = `out:${args.eventId}`;
     const tx = this.db.transaction(() => {
       if (args.resetSession) {
-        this.db
-          .query(`DELETE FROM sessions WHERE conversation_id = ?`)
-          .run(args.conversationId);
+        this.db.query(`DELETE FROM sessions WHERE conversation_id = ?`).run(args.conversationId);
       }
       if (args.responseId) {
         this.db

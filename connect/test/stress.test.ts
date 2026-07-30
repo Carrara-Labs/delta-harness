@@ -168,7 +168,11 @@ describe("dispatch loop", () => {
         return { ok: true, retryable: false };
       },
       async download(ref: AttachmentRef) {
-        return { bytes: new Uint8Array([1, 2, 3]), name: ref.name, mime: ref.mime ?? "application/octet-stream" };
+        return {
+          bytes: new Uint8Array([1, 2, 3]),
+          name: ref.name,
+          mime: ref.mime ?? "application/octet-stream",
+        };
       },
     };
     const agent: AgentClient = {

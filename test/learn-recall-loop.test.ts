@@ -121,12 +121,12 @@ describe("the learning loop, end to end (review → learn → recall across thre
 
     // The headline assertion: the model, on a brand-new thread, LITERALLY saw the
     // learning the human's review produced on the previous thread.
-    const lastTurn = taskTurns.at(-1)!;
+    const lastTurn = taskTurns.at(-1) ?? [];
     expect(hasLearning(lastTurn)).toBe(true);
 
     // And it wasn't there before there was anything to learn — thread #1's own task
     // turn carried no recalled learning (sanity: recall isn't spuriously firing).
-    expect(hasLearning(taskTurns[0]!)).toBe(false);
+    expect(hasLearning(taskTurns[0] ?? [])).toBe(false);
 
     // Recall is a usefulness signal — the surfaced row's hit count advanced.
     const hits = (deps.db.query("SELECT hits FROM memory").get() as { hits: number }).hits;
@@ -160,6 +160,6 @@ describe("the learning loop, end to end (review → learn → recall across thre
     });
     expect((await queue.wait(other.id)).status).toBe("done");
 
-    expect(hasLearning(taskTurns.at(-1)!)).toBe(false);
+    expect(hasLearning(taskTurns.at(-1) ?? [])).toBe(false);
   });
 });

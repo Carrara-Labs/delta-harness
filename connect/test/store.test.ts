@@ -88,7 +88,8 @@ describe("outbox delivery (at-least-once, ordered, grouped)", () => {
     commit(s, "tg:1", ["answer"]);
     const r = s.nextQueuedOutbox();
     expect(r?.text).toBe("answer");
-    s.markOutboxSent(r!.dedup_key);
+    if (!r) throw new Error("expected a queued outbox row");
+    s.markOutboxSent(r.dedup_key);
     expect(s.nextQueuedOutbox()).toBeNull();
   });
 
@@ -98,7 +99,7 @@ describe("outbox delivery (at-least-once, ordered, grouped)", () => {
     s.markOutboxRetry("out:tg:1:0", 60_000); // 60s backoff
     const row = s.nextQueuedOutbox();
     expect(row?.dedup_key).toBe("out:tg:1:0"); // still the head, not skipped
-    expect(row!.next_attempt_at).toBeGreaterThan(Date.now()); // flush will wait on it
+    expect(row?.next_attempt_at).toBeGreaterThan(Date.now()); // flush will wait on it
   });
 
   test("retry dead-letters the WHOLE reply after the cap (no partial/out-of-order send)", () => {

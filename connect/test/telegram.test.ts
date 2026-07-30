@@ -44,11 +44,17 @@ describe("parseUpdate (untrusted input)", () => {
 
   test("a photo message -> the largest size, caption becomes the text", () => {
     const r = parseUpdate(
-      msg({ text: undefined, caption: "look at this", photo: [{ file_id: "small" }, { file_id: "big" }] }),
+      msg({
+        text: undefined,
+        caption: "look at this",
+        photo: [{ file_id: "small" }, { file_id: "big" }],
+      }),
       open,
     );
     expect(r?.event?.text).toBe("look at this");
-    expect(r?.event?.attachments).toEqual([{ fileId: "big", name: "photo.jpg", mime: "image/jpeg" }]);
+    expect(r?.event?.attachments).toEqual([
+      { fileId: "big", name: "photo.jpg", mime: "image/jpeg" },
+    ]);
   });
 
   test("a message with neither text nor a file (sticker) -> skip (event null)", () => {
