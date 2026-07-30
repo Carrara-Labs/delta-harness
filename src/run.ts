@@ -878,6 +878,10 @@ export async function executeRun(
     const cacheHit = result.usage.input
       ? Math.round((result.usage.cacheRead / result.usage.input) * 100)
       : 0;
+    // Served ≠ configured primary means the failover cascade won — a purity break the
+    // operator must see without diffing model names per call (the 2026-07-30 effort lab
+    // found 27% of an arm's turns silently served by the fallback model).
+    const fellBack = Boolean(deps.primaryModel && result.model !== deps.primaryModel);
     events.emit(
       "model.call",
       { ...spine, turn },
@@ -899,11 +903,23 @@ export async function executeRun(
         // experiment arm's calls are self-labeling in telemetry, no config cross-reference.
         ...(reasoningEffort ? { "gen_ai.request.effort": reasoningEffort } : {}),
         ...(result.usage.speed ? { speed: result.usage.speed } : {}),
+        ...(fellBack ? { fallback: true } : {}),
         tool_calls: result.message.tool_calls?.map((c) => c.function.name) ?? [],
       },
     );
+    if (fellBack)
+      events.emit(
+        "model.fallback",
+        { ...spine, turn },
+        {
+          "gen_ai.request.model": deps.primaryModel as string,
+          "gen_ai.response.model": result.model,
+          ...(result.provider ? { "gen_ai.provider": result.provider } : {}),
+          ...(retries ? { retries } : {}),
+        },
+      );
     console.error(
-      `[turn ${turn}] ${result.model} in=${result.usage.input} out=${result.usage.output} cache=${cacheHit}% $${result.usage.costUsd.toFixed(4)} ${result.latencyMs}ms · run $${usage.costUsd.toFixed(4)}`,
+      `[turn ${turn}] ${result.model} in=${result.usage.input} out=${result.usage.output} cache=${cacheHit}% $${result.usage.costUsd.toFixed(4)} ${result.latencyMs}ms · run $${usage.costUsd.toFixed(4)}${fellBack ? ` · FALLBACK (primary ${deps.primaryModel})` : ""}`,
     );
 
     // Cockpit capture (dev-only): snapshot the EXACT request/response for this call.
@@ -1012,6 +1028,27 @@ const categoricalErr = (result: string): string | null =>
   !TRANSIENT_TOOL_ERROR.test(result)
     ? result
     : null;
+
+/** Low-cardinality class for a failed tool result, exported on tool.result telemetry.
+ * The 2026-07-30 effort lab burned a day on a wrong root cause because telemetry said
+ * only is_error=true — the self-write refusals were unclassifiable (size cap vs conflict
+ * vs policy). Matches OUR OWN fixed error strings (pinned by test), self-write first
+ * because those messages embed variable content (byte counts, the current file) that
+ * defeats equality-based aggregation. Returns undefined when no class fits — emit
+ * nothing rather than a junk bucket. */
+export function toolErrorClass(result: string): string | undefined {
+  if (!result.startsWith("[tool error]")) return undefined;
+  if (/DELTA\.md would be \d+ bytes \(cap /.test(result)) return "self_cap";
+  if (result.includes("DELTA.md was updated by another run")) return "self_conflict";
+  if (result.includes("looks like your whole system prompt")) return "self_spine_echo";
+  if (result.includes("refusing to write an empty DELTA.md")) return "self_empty";
+  if (result.includes("self-write is not available")) return "self_unavailable";
+  if (result.includes("DELTA.md is your own living file")) return "self_protected";
+  if (/exceeded \d+ms timeout/.test(result)) return "timeout";
+  if (TRANSIENT_TOOL_ERROR.test(result)) return "transient";
+  if (CATEGORICAL_TOOL_ERROR.test(result)) return "categorical";
+  return undefined;
+}
 
 /** Aggregate one settled tool-call batch (A4). A tool is a fresh categorical failure this turn ONLY
  * if EVERY call to it returned the SAME categorical error (no success, no different/transient
@@ -1140,10 +1177,12 @@ async function execCall(
     // Cap oversized output at the source — it's persisted AND re-sent every turn, and a single
     // giant payload is the top cause of a mid-run context-window overflow. Spill keeps it re-readable.
     result = await capAndSpill(result, ctx.workspace, run.id, call.id, deps.toolResultCap);
+    const errClass = toolErrorClass(result);
     events.emit("tool.result", spine, {
       "gen_ai.tool.name": name,
       duration_ms: Math.round(performance.now() - start),
       is_error: result.startsWith("[tool error]"),
+      ...(errClass ? { "error.class": errClass } : {}),
     });
   }
 
