@@ -200,7 +200,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     timeoutMs: p.timeoutMs ?? modelTimeoutMs,
     streamIdleMs: p.streamIdleMs ?? streamIdleMs,
     firstByteMs: p.firstByteMs ?? firstByteMs,
-    ...(p.cacheTtl ?? cacheTtl ? { cacheTtl: p.cacheTtl ?? cacheTtl } : {}),
+    ...((p.cacheTtl ?? cacheTtl) ? { cacheTtl: p.cacheTtl ?? cacheTtl } : {}),
   }));
   // T5: a subscription (broker) provider with NO usable non-subscription fallback has no safety
   // net when the broker 409s / 401s / cools down after a 429. A real fallback = a non-broker

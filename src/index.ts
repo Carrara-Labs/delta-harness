@@ -239,7 +239,9 @@ heartbeat = setInterval(() => {
   lastBeat = Date.now();
   if (gapMs > Math.max(beatMs * 3, 60_000) && Date.now() - rewarmedAt > 60_000) {
     rewarmedAt = Date.now();
-    console.error(`delta: heartbeat gap ${Math.round(gapMs / 1000)}s (suspend/resume or stall) — refreshing provider wire`);
+    console.error(
+      `delta: heartbeat gap ${Math.round(gapMs / 1000)}s (suspend/resume or stall) — refreshing provider wire`,
+    );
     markWireSuspect();
     void warmupWire(cfg.providers);
   }

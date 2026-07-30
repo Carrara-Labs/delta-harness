@@ -1,5 +1,12 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { anthropicUsesAdaptive, chat, chatVia, normalizeEffort, type ProviderConfig, warmupWire } from "../src/provider";
+import {
+  anthropicUsesAdaptive,
+  chat,
+  chatVia,
+  normalizeEffort,
+  type ProviderConfig,
+  warmupWire,
+} from "../src/provider";
 
 describe("normalizeEffort", () => {
   test("normalizes case/space and passes ANY non-empty value through (the model is the authority)", () => {
@@ -449,7 +456,12 @@ describe("retry visibility (onRetry observer)", () => {
     const seen: Array<{ attempt: number; status?: number; nextDelayMs: number }> = [];
     const result = await chat(cfg({ maxRetries: 2, label: "primary" }), {
       messages: [{ role: "user", content: "hi" }],
-      onRetry: (i) => seen.push({ attempt: i.attempt, ...(i.status !== undefined ? { status: i.status } : {}), nextDelayMs: i.nextDelayMs }),
+      onRetry: (i) =>
+        seen.push({
+          attempt: i.attempt,
+          ...(i.status !== undefined ? { status: i.status } : {}),
+          nextDelayMs: i.nextDelayMs,
+        }),
     });
     expect(result.ok).toBe(true);
     expect(seen.map((s) => s.attempt)).toEqual([1, 2]);
@@ -480,13 +492,12 @@ describe("retry visibility (onRetry observer)", () => {
   });
 
   test("provider failover reports kind next_provider from chatVia, and a throwing observer never breaks the call", async () => {
-    reset((n) => (n <= 1 ? new Response("boom", { status: 500 }) : sse(delta({ content: "ok" }, "stop"))));
+    reset((n) =>
+      n <= 1 ? new Response("boom", { status: 500 }) : sse(delta({ content: "ok" }, "stop")),
+    );
     const seen: string[] = [];
     const result = await chatVia(
-      [
-        cfg({ maxRetries: 0, label: "primary" }),
-        cfg({ maxRetries: 0, label: "backup" }),
-      ],
+      [cfg({ maxRetries: 0, label: "primary" }), cfg({ maxRetries: 0, label: "backup" })],
       {
         messages: [{ role: "user", content: "hi" }],
         onRetry: (i) => {
@@ -517,6 +528,8 @@ describe("warmupWire", () => {
 
 describe("prompt-cache retention (DELTA_CACHE_TTL)", () => {
   let seen: Record<string, unknown> = {};
+  type Block = { cache_control?: unknown };
+  type WireMsg = { content: Block[] };
   const capture = () => {
     seen = {};
     reset((_, body) => {
@@ -532,19 +545,22 @@ describe("prompt-cache retention (DELTA_CACHE_TTL)", () => {
     await chat(cfg({ models: ["anthropic/claude-opus-5"], maxRetries: 0, cacheTtl: "1h" }), {
       messages: [sys, usr],
     });
-    const msgs = seen.messages as any[];
-    expect(msgs[0].content[0].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
-    expect(msgs[1].content[0].cache_control).toEqual({ type: "ephemeral" }); // rolling tail: default TTL
+    const msgs = seen.messages as WireMsg[];
+    expect(msgs[0]?.content[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    expect(msgs[1]?.content[0]?.cache_control).toEqual({ type: "ephemeral" }); // rolling tail: default TTL
   });
 
   test("anthropic wire: 1h on the system prefix, rolling tail stays default", async () => {
     capture();
-    await chat(cfg({ api: "anthropic", models: ["claude-opus-5"], maxRetries: 0, cacheTtl: "1h" }), {
-      messages: [sys, usr],
-    });
-    expect((seen.system as any[])[0].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
-    const last = (seen.messages as any[]).at(-1).content.at(-1);
-    expect(last.cache_control).toEqual({ type: "ephemeral" });
+    await chat(
+      cfg({ api: "anthropic", models: ["claude-opus-5"], maxRetries: 0, cacheTtl: "1h" }),
+      {
+        messages: [sys, usr],
+      },
+    );
+    expect((seen.system as Block[])[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    const last = (seen.messages as WireMsg[]).at(-1)?.content.at(-1);
+    expect(last?.cache_control).toEqual({ type: "ephemeral" });
   });
 
   test("unset: no ttl key anywhere (wire-identical to 0.2.4)", async () => {
@@ -552,6 +568,6 @@ describe("prompt-cache retention (DELTA_CACHE_TTL)", () => {
     await chat(cfg({ api: "anthropic", models: ["claude-opus-5"], maxRetries: 0 }), {
       messages: [sys, usr],
     });
-    expect((seen.system as any[])[0].cache_control).toEqual({ type: "ephemeral" });
+    expect((seen.system as Block[])[0]?.cache_control).toEqual({ type: "ephemeral" });
   });
 });

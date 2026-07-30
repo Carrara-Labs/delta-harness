@@ -1167,7 +1167,10 @@ async function streamAnthropic(
   const partialInput = new Map<number, string>(); // tool_use block index → json accumulator
 
   try {
-    for await (const data of sseLines(res.body, idle && idleMs > 0 ? { ctrl: idle, ms: idleMs } : undefined)) {
+    for await (const data of sseLines(
+      res.body,
+      idle && idleMs > 0 ? { ctrl: idle, ms: idleMs } : undefined,
+    )) {
       if (!data || data === "[DONE]") continue;
       let ev: AnthropicEvent;
       try {
@@ -1430,7 +1433,10 @@ async function streamResponses(
   const byItem = new Map<string, WireToolCall>(); // function_call item_id → call
 
   try {
-    for await (const data of sseLines(res.body, idle && idleMs > 0 ? { ctrl: idle, ms: idleMs } : undefined)) {
+    for await (const data of sseLines(
+      res.body,
+      idle && idleMs > 0 ? { ctrl: idle, ms: idleMs } : undefined,
+    )) {
       if (!data || data === "[DONE]") continue;
       let ev: ResponsesEvent;
       try {
