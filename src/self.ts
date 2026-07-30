@@ -34,7 +34,7 @@ export function selfPath(workspace: string): string {
 export async function loadSelf(
   workspace: string,
   maxTokens: number,
-): Promise<{ text?: string; charter: Charter }> {
+): Promise<{ text?: string; charter: Charter; bytes: number; elided: boolean }> {
   let raw = "";
   try {
     const f = Bun.file(selfPath(workspace));
@@ -42,12 +42,21 @@ export async function loadSelf(
   } catch {
     // unreadable = absent
   }
-  if (!raw) return { charter: {} };
+  if (!raw) return { charter: {}, bytes: 0, elided: false };
   const maxChars = Math.max(1, maxTokens) * CHARS_PER_TOKEN;
-  const text = raw.length > maxChars ? elide(raw, maxChars) : raw;
+  const elided = raw.length > maxChars;
+  const text = elided ? elide(raw, maxChars) : raw;
   // Parse the CAPPED text (codex #6): an oversized Success section must not slip into the
   // reflection rubric uncapped — the spine cap has to bound the identity fields too.
-  return { text, charter: parseCharterMarkdown(text) };
+  // bytes/elided surface self-file pressure to the caller: an over-cap file is a silent
+  // integrity failure (the agent runs with a hole cut out of its own identity) that the
+  // 2026-07-30 effort lab found live in a production bundle.
+  return {
+    text,
+    charter: parseCharterMarkdown(text),
+    bytes: Buffer.byteLength(raw, "utf8"),
+    elided,
+  };
 }
 
 /** The engine-owned spine section headers (see buildSpine). A hand-authored DELTA.md

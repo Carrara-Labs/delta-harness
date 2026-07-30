@@ -70,9 +70,14 @@ Operator rules that fall out of this:
    ```
 
 The existing categorical-failure breaker (0.2.4 A4) could not see this storm: the size-cap
-message embeds a changing byte count, so no two failures compare equal. Whether the breaker
-should learn class-based aggregation is a 0.2.7 question — decide it from `error.class`
-data, not another anecdote.
+message embeds a changing byte count, so no two failures compare equal. **0.2.6 closes this
+engine-side**: the breaker aggregates self-write storm classes on `error.class`
+(`self_conflict` excluded — its merge-and-retry is designed to succeed), so the existing
+3-strike quarantine catches a grinding `remember` regardless of app config. 0.2.6 also adds
+a `self.pressure` event + stderr warning when `DELTA.md` is elided or over 90% of its cap,
+and a bounded `error.message` snippet on failed tool results (exported only with payload
+consent) — the whole failure class is now loud at run start, diagnosable from telemetry,
+and capped at 3 calls instead of 100+.
 
 ## Fast mode (`DELTA_SPEED=fast`) — wired, not yet exercised
 

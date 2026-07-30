@@ -5,14 +5,16 @@
 //   storm (size cap vs conflict vs policy) cost a day on a wrong root cause.
 
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync as mkdtemp, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "../src/db";
+import { PROFILES } from "../src/profiles";
 import { Queue } from "../src/queue";
-import { toolErrorClass } from "../src/run";
+import { breakerKey, toolErrorClass } from "../src/run";
 import { writeSelf } from "../src/self";
-import { makeDeps, textResult } from "./helpers";
+import type { ToolDef } from "../src/tools";
+import { makeDeps, textResult, toolCallResult } from "./helpers";
 
 const tmps: string[] = [];
 afterAll(() => {
@@ -109,5 +111,154 @@ describe("toolErrorClass", () => {
   test("successes and unknown errors get no class", () => {
     expect(toolErrorClass("wrote 42 chars to notes.md")).toBeUndefined();
     expect(toolErrorClass("[tool error] something without a known shape")).toBeUndefined();
+  });
+});
+
+describe("breakerKey (class-aware quarantine)", () => {
+  test("storm classes aggregate on class even when messages vary", () => {
+    const a = breakerKey(
+      "[tool error] DELTA.md would be 3400 bytes (cap 3200) — compact your notes",
+    );
+    const b = breakerKey(
+      "[tool error] DELTA.md would be 3377 bytes (cap 3200) — compact your notes",
+    );
+    expect(a).toBe("[class] self_cap");
+    expect(b).toBe(a); // different byte counts, same key — this is what latches the breaker
+    expect(
+      breakerKey("[tool error] That looks like your whole system prompt, not your DELTA.md"),
+    ).toBe("[class] self_spine_echo");
+  });
+
+  test("conflict, transient, and unknown errors never latch", () => {
+    expect(
+      breakerKey("[tool error] DELTA.md was updated by another run since you read it — …"),
+    ).toBeNull();
+    expect(breakerKey("[tool error] fetch failed: socket hang up")).toBeNull();
+    expect(breakerKey("[tool error] something without a known shape")).toBeNull();
+  });
+
+  test("exact categorical errors keep their pre-existing full-string key", () => {
+    const key = breakerKey("[tool error] ENOENT: no such file or directory");
+    expect(key).toContain("ENOENT");
+  });
+
+  test("a remember-style storm with VARYING byte counts is quarantined after 3", async () => {
+    PROFILES.stormtest = {
+      name: "stormtest",
+      allowed: "*",
+      pinned: "*",
+      budget: { maxSteps: 30, maxTokens: 400_000, maxCostUsd: 1 },
+    };
+    let n = 0;
+    const grind: ToolDef = {
+      name: "grind",
+      description: "fails with a self_cap message whose byte count changes every call",
+      parameters: { type: "object", properties: {} },
+      idempotent: true,
+      execute: async () =>
+        `[tool error] DELTA.md would be ${3300 + ++n} bytes (cap 3200) — compact your notes and rewrite the whole file smaller.`,
+    };
+    let calls = 0;
+    const chat = async (req: { tools?: { function: { name: string } }[] }) => {
+      if ((req.tools ?? []).some((t) => t.function.name === "grind")) {
+        calls++;
+        return toolCallResult("grind", {}, `c${calls}`);
+      }
+      return textResult("stopped grinding");
+    };
+    const deps = makeDeps(chat as never, new Map([["grind", grind]]));
+    const queue = new Queue(deps);
+    const done = await queue.wait(
+      queue.enqueue({ input: "keep trying", metadata: { profile: "stormtest" } }).id,
+    );
+    expect(done.status).toBe("done");
+    expect(calls).toBe(3); // the lab storm was 100+ calls; the class key caps it at the limit
+  });
+});
+
+describe("self.pressure", () => {
+  function wsWithSelf(content: string): string {
+    const dir = mkdtemp(join(tmpdir(), "delta-selfpressure-"));
+    tmps.push(dir);
+    writeFileSync(join(dir, "DELTA.md"), content);
+    return dir;
+  }
+  const pressures = (deps: ReturnType<typeof makeDeps>) =>
+    deps.db.query("SELECT data FROM events WHERE type = 'self.pressure'").all() as {
+      data: string;
+    }[];
+
+  test("an over-cap self file fires the event with elided=true", async () => {
+    const deps = makeDeps(async () => textResult("ok"), new Map(), {
+      workspace: wsWithSelf("# Persona\n" + "x".repeat(400)),
+      selfMaxBytes: 100,
+    });
+    const queue = new Queue(deps);
+    await queue.wait(queue.enqueue({ input: "hi" }).id);
+    const rows = pressures(deps);
+    expect(rows.length).toBe(1);
+    const attrs = JSON.parse(rows[0]?.data ?? "{}");
+    expect(attrs.elided).toBe(true);
+    expect(attrs.cap).toBe(100);
+    expect(attrs.bytes).toBeGreaterThan(100);
+  });
+
+  test("a nearly-full self file (>90% of cap) fires with elided=false", async () => {
+    const deps = makeDeps(async () => textResult("ok"), new Map(), {
+      workspace: wsWithSelf("# Persona\n" + "x".repeat(85)), // 95B vs 100B cap
+      selfMaxBytes: 100,
+    });
+    const queue = new Queue(deps);
+    await queue.wait(queue.enqueue({ input: "hi" }).id);
+    const rows = pressures(deps);
+    expect(rows.length).toBe(1);
+    expect(JSON.parse(rows[0]?.data ?? "{}").elided).toBe(false);
+  });
+
+  test("a healthy self file stays silent", async () => {
+    const deps = makeDeps(async () => textResult("ok"), new Map(), {
+      workspace: wsWithSelf("# Persona\nlean"),
+      selfMaxBytes: 100,
+    });
+    const queue = new Queue(deps);
+    await queue.wait(queue.enqueue({ input: "hi" }).id);
+    expect(pressures(deps).length).toBe(0);
+  });
+});
+
+describe("error.message on tool.result", () => {
+  test("failed results carry a bounded, whitespace-collapsed snippet; successes none", async () => {
+    const boom: ToolDef = {
+      name: "boom",
+      description: "always fails with a long multi-line error",
+      parameters: { type: "object", properties: {} },
+      idempotent: true,
+      execute: async () => "[tool error] line one\n  line two   spaced " + "z".repeat(500),
+    };
+    let sent = false;
+    const chat = async () => {
+      if (!sent) {
+        sent = true;
+        return toolCallResult("boom", {}, "c1");
+      }
+      return textResult("done");
+    };
+    PROFILES.errmsg = {
+      name: "errmsg",
+      allowed: "*",
+      pinned: "*",
+      budget: { maxSteps: 10, maxTokens: 100_000, maxCostUsd: 1 },
+    };
+    const deps = makeDeps(chat as never, new Map([["boom", boom]]));
+    const queue = new Queue(deps);
+    await queue.wait(queue.enqueue({ input: "go", metadata: { profile: "errmsg" } }).id);
+    const rows = deps.db.query("SELECT data FROM events WHERE type = 'tool.result'").all() as {
+      data: string;
+    }[];
+    const attrs = rows.map((r) => JSON.parse(r.data));
+    const failed = attrs.find((a) => a.is_error);
+    expect(failed?.["error.message"]).toBeDefined();
+    expect(failed?.["error.message"].length).toBeLessThanOrEqual(200);
+    expect(failed?.["error.message"]).toContain("line one line two spaced"); // collapsed
   });
 });

@@ -275,6 +275,24 @@ export async function executeRun(
   // shared deps field, so concurrent runs can't race on it.
   const selfMaxBytes = deps.selfMaxBytes ?? 3200;
   const self = await loadSelf(resolve(deps.workspace), Math.max(1, Math.floor(selfMaxBytes / 4)));
+  // Self-file pressure guard: an over-cap DELTA.md is silently ELIDED in every prompt (the
+  // agent runs with a hole in its own identity) and a nearly-full one refuses every `remember`
+  // (no room left to learn). Both were found live in production bundles by the 2026-07-30
+  // effort lab — a config that cannot work must be loud, not discovered by forensics. Fires
+  // once per run (runs are minutes, not milliseconds).
+  if (self.bytes > 0 && (self.elided || self.bytes > selfMaxBytes * 0.9)) {
+    console.error(
+      `[self] DELTA.md is ${self.bytes}B against the ${selfMaxBytes}B cap` +
+        `${self.elided ? " and was ELIDED in the prompt" : ""} — ` +
+        `${Math.max(0, selfMaxBytes - self.bytes)}B of learning headroom; ` +
+        `raise DELTA_SELF_MAX_TOKENS or slim the seed (keep it ≤ half the cap)`,
+    );
+    events.emit("self.pressure", spine, {
+      bytes: self.bytes,
+      cap: selfMaxBytes,
+      elided: self.elided,
+    });
+  }
   let resuming = opts.resuming ?? false;
 
   // Tool directory (spec §D): the profile allows a subset of the registry and
@@ -1061,6 +1079,30 @@ export function toolErrorClass(result: string): string | undefined {
   return undefined;
 }
 
+/** Self-write refusal classes whose failures should latch the breaker even though their
+ * messages vary per call (byte counts, the current file text) and so never compare equal.
+ * `self_conflict` is deliberately EXCLUDED: the conflict guard hands back the current file
+ * for a merge-and-retry that is designed to succeed. Transient/timeout never latch. */
+const STORM_CLASSES = new Set([
+  "self_cap",
+  "self_spine_echo",
+  "self_empty",
+  "self_unavailable",
+  "self_protected",
+]);
+
+/** The breaker's aggregation key for a failed result: the exact categorical error when one
+ * matches (pre-existing behavior), else a stable per-class key for storm classes. Without
+ * the class key, the effort lab's `remember` grinding (100+ same-cause refusals in one arm,
+ * ~$10 of waste) never tripped the 3-strike quarantine because each size-cap message embeds
+ * a different byte count. Exported for tests. */
+export function breakerKey(result: string): string | null {
+  const exact = categoricalErr(result);
+  if (exact) return exact;
+  const cls = toolErrorClass(result);
+  return cls && STORM_CLASSES.has(cls) ? `[class] ${cls}` : null;
+}
+
 /** Aggregate one settled tool-call batch (A4). A tool is a fresh categorical failure this turn ONLY
  * if EVERY call to it returned the SAME categorical error (no success, no different/transient
  * result). That increments its consecutive-turn streak; anything else resets it. At the limit the
@@ -1087,7 +1129,7 @@ function aggregateBreaker(db: Database, run: RunRow, breaker: Breaker): void {
     const lastCall = calls[calls.length - 1]?.callId;
     if (n >= CATEGORICAL_TOOL_FAIL_LIMIT && !breaker.disabled.has(name) && lastCall) {
       breaker.disabled.add(name);
-      const norm = `\n[norm] '${name}' has failed identically ${n}× this run and is now disabled for the rest of it — use another approach; retrying it cannot succeed.`;
+      const norm = `\n[norm] '${name}' has failed the same way ${n}× this run and is now disabled for the rest of it — use another approach; retrying it cannot succeed.`;
       db.query(
         "UPDATE messages SET msg = json_set(msg, '$.content', json_extract(msg, '$.content') || ?) WHERE run_id = ? AND json_extract(msg, '$.tool_call_id') = ?",
       ).run(norm, run.id, lastCall);
@@ -1184,16 +1226,22 @@ async function execCall(
     // A4: record this call's outcome for the batch aggregation (below, after Promise.all). Classify
     // on the RAW pre-cap result — capAndSpill embeds this call's id in its spill-path notice, so an
     // oversized error would look different every call and never compare equal.
-    breaker.turn.push({ name, callId: call.id, categorical: categoricalErr(result) });
+    breaker.turn.push({ name, callId: call.id, categorical: breakerKey(result) });
     // Cap oversized output at the source — it's persisted AND re-sent every turn, and a single
     // giant payload is the top cause of a mid-run context-window overflow. Spill keeps it re-readable.
     result = await capAndSpill(result, ctx.workspace, run.id, call.id, deps.toolResultCap);
     const errClass = toolErrorClass(result);
+    const isErr = result.startsWith("[tool error]");
     events.emit("tool.result", spine, {
       "gen_ai.tool.name": name,
       duration_ms: Math.round(performance.now() - start),
-      is_error: result.startsWith("[tool error]"),
+      is_error: isErr,
       ...(errClass ? { "error.class": errClass } : {}),
+      // Bounded snippet so a refusal storm is diagnosable WITHOUT shelling into the box —
+      // the effort lab's misdiagnosis happened because telemetry had no error text at all.
+      // Deliberately NOT in the exporter's SAFE_ATTRS: it leaves the box only with payload
+      // consent (capture_payloads), locally it is always queryable.
+      ...(isErr ? { "error.message": result.replace(/\s+/g, " ").slice(0, 200) } : {}),
     });
   }
 

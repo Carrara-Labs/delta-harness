@@ -46,6 +46,22 @@ set; upgrading is a version bump.
   tokens, no cost, no error class, no fallback flag. Now an explicit allowlist of closed
   enums, counters, and identifiers survives; prompt text, tool arguments, and tool
   results still never leave without consent. (Found by the 0.2.6 codex review, P1.)
+- **`self.pressure` event + loud stderr warning** when `DELTA.md` no longer fits its budget:
+  fired once per run if the file is elided in the prompt (over cap — the agent is silently
+  running with a hole cut out of its own identity) or uses more than 90% of the cap (every
+  `remember` write is about to bounce). Both states were found live in production bundles;
+  a config that cannot work must be loud, not discovered by forensics.
+- **`error.message` on failed `tool.result` events** — a whitespace-collapsed snippet capped
+  at 200 chars, so a refusal storm is diagnosable without shelling into the box. Local-only
+  by default: deliberately NOT in the safe-export allowlist, so it leaves the box only with
+  payload consent.
+- **The categorical-failure breaker now latches storm classes.** Self-write refusals embed
+  varying content (byte counts, the current file), so no two failures ever compared equal
+  and the 3-strike quarantine never fired — the lab watched 100+ same-cause `remember`
+  refusals grind ~$10 in one arm. Failures now aggregate on `error.class` for the
+  self-write storm classes (`self_conflict` excluded — its merge-and-retry is designed to
+  succeed; transient/timeout still never latch), so the existing quarantine catches them
+  at 3. The quarantine norm now reads "failed the same way N×".
 
 ## [0.2.5] — 2026-07-30
 
