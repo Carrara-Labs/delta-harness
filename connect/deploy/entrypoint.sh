@@ -14,6 +14,10 @@ for f in DELTA.md POLICY.md vocab.json PROMPT_CONTEXT.md; do
     cp "/app/bundle-seed/$f" "/data/bundle/$f"
   fi
 done
+# Seed the skills/ tree (DELTA_SKILLS=local) on first boot only.
+if [ -d "/app/bundle-seed/skills" ] && [ ! -d "/data/bundle/skills" ]; then
+  cp -r "/app/bundle-seed/skills" "/data/bundle/skills"
+fi
 
 # Delta Connect is PID 1 and the sole process owner; never start a sibling
 # daemon here or the two owners will race for the DB and port.
