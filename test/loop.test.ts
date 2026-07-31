@@ -32,7 +32,7 @@ describe("budget guard", () => {
     );
     expect(done.status).toBe("failed");
     expect(done.error).toContain("budget exhausted");
-    expect(done.error).toContain(`${PROFILES.chat?.budget.maxSteps}`);
+    expect(done.error).toContain(`${PROFILES.safe?.budget.maxSteps}`);
     const payload = JSON.parse(done.result ?? "{}");
     expect(payload.output_text).toContain("budget exhausted");
   });
@@ -250,11 +250,14 @@ describe("profile ceiling (codex P1)", () => {
     expect(journal.result).toContain("unknown tool 'code'");
   });
 
-  test("narrowing below the ceiling is allowed", async () => {
+  test("narrowing below the ceiling is allowed (old names alias to safe/trusted)", async () => {
     const { getProfile } = await import("../src/profiles");
-    expect(getProfile("chat", "work").name).toBe("chat");
-    expect(getProfile("work", "chat").name).toBe("chat");
-    expect(getProfile(undefined, "chat").name).toBe("chat");
+    expect(getProfile("chat", "work").name).toBe("safe");
+    expect(getProfile("work", "chat").name).toBe("safe");
+    expect(getProfile(undefined, "chat").name).toBe("safe");
+    // canonical names resolve too
+    expect(getProfile("safe", "trusted").name).toBe("safe");
+    expect(getProfile(undefined, "trusted").name).toBe("trusted");
   });
 });
 

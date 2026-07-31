@@ -18,8 +18,8 @@ export type Profile = {
 };
 
 export const PROFILES: Record<string, Profile> = {
-  work: {
-    name: "work",
+  trusted: {
+    name: "trusted",
     allowed: "*",
     // Lean by default: a Delta may hold hundreds of connector tools (knowledge base + Gmail + Slack + …).
     // Pinning all of them resident exceeds the per-turn token budget before step 1 (the 464-tool
@@ -30,17 +30,38 @@ export const PROFILES: Record<string, Profile> = {
     // raised in lockstep so they don't become the artificial limiter. Tighten once usage is known.
     budget: { maxSteps: 100, maxTokens: 2_000_000, maxCostUsd: 5.0 },
   },
-  chat: {
-    name: "chat",
-    // No hands that mutate beyond the workspace, no delegation: chat placements
+  safe: {
+    name: "safe",
+    // No hands that mutate beyond the workspace, no delegation: the safe floor
     // must stay safe even when driven by untrusted inbound (spec §J trust model).
     // `recall` (read this thread's history) and `todo` (this thread's own plan) are read/own-state
-    // only → safe here, and a chat placement can still hit forced compaction + long tasks.
+    // only → safe here, and a safe placement can still hit forced compaction + long tasks.
     allowed: ["web_search", "web_fetch", "read_file", "list_dir", "recall", "todo"],
     pinned: ["web_search", "web_fetch", "read_file", "list_dir", "recall", "todo"],
     budget: { maxSteps: 10, maxTokens: 100_000, maxCostUsd: 0.25 },
   },
 };
+
+// The two tiers were renamed in 0.2.7 (chat→safe, work→trusted) to name the capability
+// axis, not an activity. The old names stay as aliases so existing DELTA_PROFILE=work /
+// =chat deployments and request metadata keep resolving unchanged — a pure rename, no
+// behavior change.
+const ALIASES: Record<string, string> = { chat: "safe", work: "trusted" };
+const SAFE_FLOOR = PROFILES.safe as Profile;
+function resolveProfile(key: string): Profile | undefined {
+  return PROFILES[key] ?? PROFILES[ALIASES[key] ?? ""];
+}
+
+/** Parse a comma-separated tool-name list env var. `undefined` = unset (no override);
+ *  `[]` = set-but-empty, which the envelope knob treats as fail-safe (the safe floor). */
+function envToolList(name: string): string[] | undefined {
+  const raw = process.env[name];
+  if (raw === undefined) return undefined;
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
 /** a is no more permissive than b: tools ⊆ and budgets ≤. */
 export function isSubset(a: Profile, b: Profile): boolean {
@@ -72,14 +93,22 @@ export function grantSelfWrite(profile: Profile, allow: boolean): Profile {
  * OVERRIDE the profile's budget in either direction (a $5-per-run default is right
  * for a chat sidekick and wrong for a deep-research agent; before this, a raised
  * DELTA_MAX_COST_USD was silently clamped back down and operators never knew). */
-export function getProfile(requested: unknown, ceiling = "work"): Profile {
-  const max = PROFILES[ceiling] ?? (PROFILES.work as Profile);
-  const req = typeof requested === "string" ? PROFILES[requested] : undefined;
+export function getProfile(requested: unknown, ceiling = "trusted"): Profile {
+  const max = resolveProfile(ceiling) ?? (PROFILES.trusted as Profile);
+  const req = typeof requested === "string" ? resolveProfile(requested) : undefined;
   const selected = req && isSubset(req, max) ? req : max;
+  // Envelope knob (0.2.7): DELTA_ALLOWED_TOOLS / DELTA_PINNED_TOOLS let an operator define any
+  // point on the capability spectrum without minting a named profile. Operator-owned env (like the
+  // budget overrides below), so it SETS the tool surface directly. Fail-safe: a var that is set but
+  // parses to nothing falls back to the safe floor's set, never to allow-all.
+  const allowed = envToolList("DELTA_ALLOWED_TOOLS");
+  const pinned = envToolList("DELTA_PINNED_TOOLS");
   const envTokens = Number(process.env.DELTA_MAX_TOKENS);
   const envCost = Number(process.env.DELTA_MAX_COST_USD);
   return {
     ...selected,
+    ...(allowed !== undefined ? { allowed: allowed.length ? allowed : SAFE_FLOOR.allowed } : {}),
+    ...(pinned !== undefined ? { pinned: pinned.length ? pinned : SAFE_FLOOR.pinned } : {}),
     budget: {
       ...selected.budget,
       ...(Number.isFinite(envTokens) && envTokens >= 0 ? { maxTokens: envTokens } : {}),

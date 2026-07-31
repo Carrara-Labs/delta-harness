@@ -242,7 +242,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       env.DELTA_CODE_CLI ?? "codex exec --sandbox workspace-write --skip-git-repo-check"
     ).split(" "),
     subagentDepth: Number(env.DELTA_SUBAGENT_DEPTH ?? 0),
-    profile: env.DELTA_PROFILE ?? "work",
+    profile: env.DELTA_PROFILE ?? "trusted",
     ...(env.TELEMETRY_URL ? { telemetryUrl: env.TELEMETRY_URL } : {}),
     ...(env.TELEMETRY_TOKEN ? { telemetryToken: env.TELEMETRY_TOKEN } : {}),
     capturePayloads: env.DELTA_CAPTURE_PAYLOADS === "1",
