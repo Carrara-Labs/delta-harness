@@ -372,6 +372,15 @@ export async function executeRun(
   };
   let researchSeq = 0; // distinct artifact dirs per `research` call within this run
   let researchInFlight = false; // at most one research batch per turn (bounds N + budget across calls)
+  // Turn-failure integrity (0.2.7): a `remember` write commits DELTA.md the instant it succeeds
+  // (durable, snapshotted) — even if the turn later hits the budget wall. Track it so finalize can
+  // acknowledge the committed side effect instead of returning a bare "failed", which reads as
+  // "nothing happened" and violates error-as-value.
+  let committedSelfWrite = false;
+  const selfWriteNote = (why: string): string =>
+    committedSelfWrite
+      ? `${why}\n\n[note: a change to your self-file (DELTA.md) was saved during this turn and persists — it was not rolled back.]`
+      : why;
   const ctx: ToolCtx = {
     workspace: resolve(deps.workspace),
     activate,
@@ -454,6 +463,7 @@ export async function executeRun(
               if (r.ok) {
                 deps.charter = parseCharterMarkdown(content);
                 selfBase = content;
+                committedSelfWrite = true; // durable side effect — finalize must acknowledge it
               } else if (r.conflict && typeof r.current === "string") {
                 selfBase = r.current; // the model will merge from this and retry
               }
@@ -647,7 +657,7 @@ export async function executeRun(
     if (stepCount >= b.maxSteps || billed >= b.maxTokens || usage.costUsd >= b.maxCostUsd) {
       const why = `budget exhausted: ${stepCount}/${b.maxSteps} steps, ${billed}/${b.maxTokens} tokens, $${usage.costUsd.toFixed(4)}/$${b.maxCostUsd}`;
       events.emit("error", spine, { "error.type": "budget", message: why });
-      return finalize(deps, run, spine, "failed", why, model, usage);
+      return finalize(deps, run, spine, "failed", selfWriteNote(why), model, usage);
     }
 
     // Build the turn's STABLE parts once — the spine, the ephemeral blocks, and the tool
@@ -785,7 +795,7 @@ export async function executeRun(
         if (stepCount >= b.maxSteps || billed2 >= b.maxTokens || usage.costUsd >= b.maxCostUsd) {
           const why = `budget exhausted (post-compaction): ${stepCount}/${b.maxSteps} steps, ${billed2}/${b.maxTokens} tokens, $${usage.costUsd.toFixed(4)}/$${b.maxCostUsd}`;
           events.emit("error", spine, { "error.type": "budget", message: why });
-          return finalize(deps, run, spine, "failed", why, model, usage);
+          return finalize(deps, run, spine, "failed", selfWriteNote(why), model, usage);
         }
         if (cu.shrank) {
           history = activeSessionMessages(db, run.session_id); // re-fetch the shrunken history
