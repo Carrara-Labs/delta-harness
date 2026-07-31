@@ -53,14 +53,24 @@ function resolveProfile(key: string): Profile | undefined {
 }
 
 /** Parse a comma-separated tool-name list env var. `undefined` = unset (no override);
- *  `[]` = set-but-empty, which the envelope knob treats as fail-safe (the safe floor). */
+ *  `[]` = set-but-empty OR malformed, which the envelope knob treats as fail-safe (the safe
+ *  floor). All-or-nothing: any member that isn't a plausible tool identifier voids the whole
+ *  var, so a typo never yields a silent partial set. */
 function envToolList(name: string): string[] | undefined {
   const raw = process.env[name];
   if (raw === undefined) return undefined;
-  return raw
+  const parts = raw
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+  return parts.some((p) => !/^[A-Za-z0-9_-]{1,128}$/.test(p)) ? [] : parts;
+}
+
+/** Intersect an env tool list with the tier's own allowed set: the ceiling is the honest max,
+ *  so DELTA_ALLOWED_TOOLS on a `safe` daemon can NARROW but never escalate it. Build a custom
+ *  powerful envelope from `trusted` (allowed "*", so the list passes through) plus the list. */
+function clampTools(list: string[], ceiling: string[] | "*"): string[] {
+  return ceiling === "*" ? list : list.filter((t) => ceiling.includes(t));
 }
 
 /** a is no more permissive than b: tools ⊆ and budgets ≤. */
@@ -103,12 +113,22 @@ export function getProfile(requested: unknown, ceiling = "trusted"): Profile {
   // parses to nothing falls back to the safe floor's set, never to allow-all.
   const allowed = envToolList("DELTA_ALLOWED_TOOLS");
   const pinned = envToolList("DELTA_PINNED_TOOLS");
+  const finalAllowed: string[] | "*" = (() => {
+    if (allowed === undefined) return selected.allowed;
+    const c = allowed.length ? clampTools(allowed, selected.allowed) : [];
+    return c.length ? c : SAFE_FLOOR.allowed;
+  })();
+  const finalPinned: string[] | "*" | "core" = (() => {
+    if (pinned === undefined) return selected.pinned;
+    const c = pinned.length ? clampTools(pinned, finalAllowed) : [];
+    return c.length ? c : SAFE_FLOOR.pinned;
+  })();
   const envTokens = Number(process.env.DELTA_MAX_TOKENS);
   const envCost = Number(process.env.DELTA_MAX_COST_USD);
   return {
     ...selected,
-    ...(allowed !== undefined ? { allowed: allowed.length ? allowed : SAFE_FLOOR.allowed } : {}),
-    ...(pinned !== undefined ? { pinned: pinned.length ? pinned : SAFE_FLOOR.pinned } : {}),
+    allowed: finalAllowed,
+    pinned: finalPinned,
     budget: {
       ...selected.budget,
       ...(Number.isFinite(envTokens) && envTokens >= 0 ? { maxTokens: envTokens } : {}),

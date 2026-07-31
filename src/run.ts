@@ -601,6 +601,7 @@ export async function executeRun(
   // Persistent across compaction (which deactivates rows) AND restarts, so the
   // maxSteps guard can't reset and the compaction trigger survives resume.
   let stepCount = run.steps;
+  let budgetWarned = false; // one-shot: the ~85% wrap-up nudge is shown once, not every step
   let lastInputTokens = run.last_input;
   // Byte-estimate of the request the last model call actually sent — paired with lastInputTokens
   // (the provider's REAL gross input for it) to project the next call's size (W2/S7). In-memory
@@ -740,12 +741,14 @@ export async function executeRun(
       b.maxTokens > 0 ? billed / b.maxTokens : 0,
       b.maxCostUsd > 0 ? usage.costUsd / b.maxCostUsd : 0,
     );
-    if (budgetFrac >= 0.85)
+    if (budgetFrac >= 0.85 && !budgetWarned) {
+      budgetWarned = true; // one-shot — repeating it just moves the cache tail every step
       ephemeral.push({
         role: "user",
         content:
           "# Budget\nYou are near this run's budget limit. Wrap up now: finish what is already in flight, deliver your best answer with what you have, and do not start new lines of work.",
       });
+    }
     const specs = toolSpecs(tools);
     const nonHistory: ChatMsg[] = [{ role: "system", content: system }, ...ephemeral];
 
