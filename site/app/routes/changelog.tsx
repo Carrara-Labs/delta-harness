@@ -96,11 +96,38 @@ const kindLabel: Record<Kind, string> = {
 // exactly. Update this alongside the root CHANGELOG.md when a release ships.
 const releases: Release[] = [
   {
+    version: "0.2.7",
+    date: "July 31, 2026",
+    iso: "2026-07-31",
+    tagline: "Agents that know their limits and can't wedge.",
+    latest: true,
+    note: "Agents that know their limits and can't wedge. The two run tiers are renamed to name what they are, the tool set becomes an operator knob, and a poisoned config is always recoverable. Default behavior is unchanged: with the new env vars unset, a deployment runs exactly as 0.2.6.",
+    groups: [
+      {
+        kind: "added",
+        items: [
+          "**Custom tool envelope.** `DELTA_ALLOWED_TOOLS` / `DELTA_PINNED_TOOLS` define an exact tool surface. They narrow within the tier and cannot escalate it (a `safe` daemon stays safe); build a broad envelope from `trusted` plus a list.",
+          "**Budget self-awareness.** A one-time qualitative wrap-up nudge to the model once any budget axis passes ~85%. Not a raw counter.",
+          "**Resilience.** An output-capped tool call is reissued smaller instead of executed truncated; one deterministic tool-argument repair pass; unified provider error classification (moderation terminal, quota fails over, transient retries).",
+          "**Safe mode.** `DELTA_SAFE_MODE=1` boots a neutral, safe-floor, no-MCP agent so a poisoned self-file or broken config can never wedge the daemon. Self-file revert via the existing Cockpit endpoints.",
+          "**Local skills.** `DELTA_SKILLS=local` reads `skills/<name>/SKILL.md` folders (use-only, progressive disclosure - only name and description enter the prompt). `off` hides skills entirely; `mcp` (default) is unchanged.",
+          "**`GET /v1/status`** - a secret-free model, effort, tier, and budget read for edge tooling.",
+        ],
+      },
+      {
+        kind: "changed",
+        items: [
+          "**The two run tiers are renamed** `chat` to `safe` and `work` to `trusted`, naming the capability axis rather than an activity. The old names remain aliases, so existing `DELTA_PROFILE=work` deployments resolve unchanged; the canonical name in telemetry and `/v1/status` is the new one.",
+          "**A committed self-file (`remember`) write on a budget-failed turn is surfaced** in the failure result instead of silently swallowed.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.2.6",
     date: "July 30, 2026",
     iso: "2026-07-30",
     tagline: "A default deployment that describes itself.",
-    latest: true,
     note: "A default deployment that describes itself. Two telemetry blind spots are closed, so a default deployment is fully self-describing: cost, fallbacks, and error classes are queryable without turning on payload capture. The Anthropic fast-mode wire ships inert by default, so enabling it is a single env flip the day an org's allocation lands. No behavior changes when nothing is set; upgrading is a version bump.",
     groups: [
       {

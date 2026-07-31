@@ -2132,7 +2132,7 @@ MODEL_HEADERS={&quot;originator&quot;:&quot;codex_cli_rs&quot;}
 <p>Delta validates the full batch before writing any file. Limits are 50 files per request, 25 MB per file, and 100 MB total. The later filesystem writes are not transactional, so a storage failure on file N can leave earlier files from that batch in place. Files land under <code>inbox/YYYY-MM-DD/</code>, and the first upload creates <code>FILES.md</code> with organization conventions. Pass the returned paths to the agent in the next request.</p>
 <p>Images are attached to a vision-capable model only after Delta itself has verified their provenance through upload, <code>read_file</code>, or an MCP image response. Up to four recent images smaller than about 3.4 MB each are attached. Provenance is process-local, so after a daemon restart re-read a workspace image, re-upload it, or retrieve it again through MCP before expecting an inline attachment. Old markers remain file references and can be re-read.</p>
 <h3 id="guide-built-in-capabilities">Built-in capabilities<a class="heading-link" href="#guide-built-in-capabilities" aria-label="Link to this section">#</a></h3>
-<p>The <code>work</code> profile exposes the built-in tools below. Tool failures are returned to the model as values, so one failed dependency does not crash the daemon.</p>
+<p>The <code>trusted</code> tier exposes the built-in tools below. Tool failures are returned to the model as values, so one failed dependency does not crash the daemon.</p>
 <div class="table-scroll"><table>
 <thead>
 <tr><th>Tool</th><th>What it does</th><th>Important limits</th></tr>
@@ -2197,7 +2197,7 @@ MODEL_HEADERS={&quot;originator&quot;:&quot;codex_cli_rs&quot;}
 </ul>
 <p>The child forwards the safe process environment plus the primary base URL, wire type, legacy model name, model fallbacks, utility model, profile, model and stream timeouts, result cap, remaining budget values, and one static primary key. It does not inherit the parent's MCP configuration, Exa key, telemetry, control-plane token, subscription broker token, provider cascade objects or secrets, model headers, custom prices, reasoning, vision settings, coding CLI, stable agent ID, learning and hydration settings, or custom self and policy caps. A broker-only parent therefore cannot currently power a spawned subagent unless a static primary model key is also available. The same bundle does not guarantee the same resolved behavior: the child can reset to the default coding CLI, default identity, and 800-token file caps.</p>
 <p>The child allowlist forwards both <code>DELTA_MODEL_PRIMARY</code> and the legacy <code>DELTA_MODEL</code> alias, so a subagent runs on the parent's configured model. The child also does not receive <code>MODEL_HEADERS</code>, <code>DELTA_MODEL_PRICES</code>, or reasoning settings, so a custom-header route, custom metering, or parent reasoning configuration is not reproduced in the child.</p>
-<p>Subagents share the workspace. A subagent can also receive the <code>remember</code> tool under the <code>work</code> profile, so it can replace the shared <code>DELTA.md</code>; its revision database is temporary. Use delegation only for tasks whose file and self-memory effects are intentional.</p>
+<p>Subagents share the workspace. A subagent can also receive the <code>remember</code> tool under the <code>trusted</code> tier, so it can replace the shared <code>DELTA.md</code>; its revision database is temporary. Use delegation only for tasks whose file and self-memory effects are intentional.</p>
 <p><code>eval_n</code> runs variants concurrently against the same workspace. Use it for drafting, analysis, or other non-mutating work. Do not use it for concurrent edits to the same files.</p>
 <p>Each child prints a <code>DELTA_USAGE</code> marker. Valid parsed usage is added to the parent and constrained by the remaining fresh-token and dollar budget. Missing or malformed child usage fails open as zero. External spend by a coding CLI or subscription route is not discovered through this marker. The current <code>eval_n</code> judge call is not charged to the parent usage total.</p>
 <p>All tool calls returned by one model turn execute concurrently, including mutations, and up to <code>DELTA_MAX_CONCURRENCY</code> different sessions can run concurrently (default 8). The <code>DELTA.md</code> self-file is guarded by optimistic concurrency - a write that raced a diverged base is refused and the run re-reads, re-merges, and retries - but there is no compare-and-swap layer for other files or external resources. Same-session serialization does not serialize sibling tool calls within one turn. Design mutating tools to be idempotent and conflict-aware, and avoid parallel tasks that can touch the same state.</p>
@@ -2264,7 +2264,7 @@ DELTA_MCP_REFRESH_TOKEN=first-boot-refresh-token
 <p>Every MCP result is framed as untrusted data before it reaches the model. The server still owns the side effects and authorization of its tools.</p>
 <p>Crash idempotence is inferred from the MCP tool name. Names containing an underscore- or dot-delimited segment such as <code>get</code>, <code>list</code>, <code>search</code>, <code>read</code>, <code>version</code>, <code>versions</code>, or <code>file</code> are treated as read-only and may be re-executed after interruption. All other MCP tools are treated as non-idempotent. Name mutations so they do not contain those read segments. In particular, a mutating name such as <code>get_or_create</code> is unsafe because Delta will classify it as idempotent.</p>
 <h4 id="guide-progressive-tool-loading">Progressive tool loading<a class="heading-link" href="#guide-progressive-tool-loading" aria-label="Link to this section">#</a></h4>
-<p>A large connector surface should not put hundreds of schemas in every prompt. The <code>work</code> profile:</p>
+<p>A large connector surface should not put hundreds of schemas in every prompt. The <code>trusted</code> tier:</p>
 <ol>
 <li>pins all built-in tools</li>
 <li>pins MCP tools whose suffix appears in <code>vocab.coreVerbs</code></li>
@@ -2363,6 +2363,18 @@ DELTA_HYDRATE_SEARCH_TOOL=crm__search_knowledge
 </ul>
 <p>Facts, preferences, and pitfalls go to the MCP tool selected by <code>vocab.writeVerbSuffix</code>; <code>vocab.writeShape</code> maps them into that product's exact arguments. Procedures use the capability adapter instead.</p>
 <p>These external stores are optional. A plain Delta works with local memory only.</p>
+<p><strong>Choosing a skills backend (<code>DELTA_SKILLS</code>, added 0.2.7).</strong> The capability backend is selectable, and the default preserves prior behavior:</p>
+<div class="code-block"><div class="code-toolbar"><span>dotenv</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-dotenv">DELTA_SKILLS=mcp    # default - the skill-registry MCP tools above (unchanged)
+DELTA_SKILLS=local  # read skill folders from the workspace, no service required
+DELTA_SKILLS=off    # no skills at all - no retrieval, no skill tools, no mention
+</code></pre></div>
+<p>With <code>local</code>, drop a folder tree in the workspace and Delta discovers it at boot:</p>
+<div class="code-block"><div class="code-toolbar"><span>text</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-text">skills/
+  cite-check/
+    SKILL.md        # front matter with name + description; the body is the procedure
+    rubric.md       # reference files, data, or scripts - read on demand
+</code></pre></div>
+<p>Only each skill's <code>name</code> and <code>description</code> enter the prompt (progressive disclosure). The agent reads <code>SKILL.md</code> and any bundled files on demand with <code>read_file</code>, and runs bundled scripts with the <code>code</code> tool. Discovery is boot-time, direct-child-only, and rejects symlinks. Local skills are read-only in this release: reflection proposes improvements only to a backend that accepts writes (the MCP registry). <code>off</code> is fully invisible. Default <code>mcp</code> needs no change.</p>
 <h4 id="guide-promotion-to-shared-knowledge">Promotion to shared knowledge<a class="heading-link" href="#guide-promotion-to-shared-knowledge" aria-label="Link to this section">#</a></h4>
 <p>Non-user learning enters a durable SQLite outbox before any external proposal:</p>
 <ul>
@@ -2398,21 +2410,27 @@ DELTA_HYDRATE_SEARCH_TOOL=crm__search_knowledge
 </code></pre></div>
 <p>Only the exact <code>review_kind</code> value <code>submission_disposition</code> switches reflection to the correction-focused rubric. Delta does not validate reviewer identity, fetch the submission, or structurally compare proposed and accepted work. It asks the reflection model to ground learning in the supplied digest. The trusted control plane must authenticate the disposition and construct the real proposed-versus-accepted content rather than forwarding an end-user claim that review happened.</p>
 <h3 id="guide-durable-execution-and-budgets">Durable execution and budgets<a class="heading-link" href="#guide-durable-execution-and-budgets" aria-label="Link to this section">#</a></h3>
-<h4 id="guide-profiles">Profiles<a class="heading-link" href="#guide-profiles" aria-label="Link to this section">#</a></h4>
-<p>Two placement profiles ship:</p>
+<h4 id="guide-tiers-and-the-tool-envelope">Tiers and the tool envelope<a class="heading-link" href="#guide-tiers-and-the-tool-envelope" aria-label="Link to this section">#</a></h4>
+<p>Two capability tiers ship. The tier sets which tools an agent may use and its budget ceilings; a request may narrow the tier but never escalate it.</p>
 <div class="table-scroll"><table>
 <thead>
-<tr><th>Profile</th><th>Allowed tools</th><th>Initial schemas</th><th align="right">Steps</th><th align="right">Fresh tokens</th><th align="right">Cost</th></tr>
+<tr><th>Tier</th><th>Allowed tools</th><th>Initial schemas</th><th align="right">Steps</th><th align="right">Fresh tokens</th><th align="right">Cost</th></tr>
 </thead>
 <tbody>
-<tr><td><code>work</code></td><td>All registered tools</td><td>Lean core</td><td align="right">100</td><td align="right">2,000,000</td><td align="right">$5.00</td></tr>
-<tr><td><code>chat</code></td><td><code>web_search</code>, <code>web_fetch</code>, <code>read_file</code>, <code>list_dir</code>, <code>recall</code>, <code>todo</code></td><td>All six</td><td align="right">10</td><td align="right">100,000</td><td align="right">$0.25</td></tr>
+<tr><td><code>trusted</code></td><td>All registered tools</td><td>Lean core</td><td align="right">100</td><td align="right">2,000,000</td><td align="right">$5.00</td></tr>
+<tr><td><code>safe</code></td><td><code>web_search</code>, <code>web_fetch</code>, <code>read_file</code>, <code>list_dir</code>, <code>recall</code>, <code>todo</code></td><td>All six</td><td align="right">10</td><td align="right">100,000</td><td align="right">$0.25</td></tr>
 </tbody>
 </table></div>
 <p>Set the daemon ceiling:</p>
-<div class="code-block"><div class="code-toolbar"><span>dotenv</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-dotenv">DELTA_PROFILE=work
+<div class="code-block"><div class="code-toolbar"><span>dotenv</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-dotenv">DELTA_PROFILE=trusted
 </code></pre></div>
-<p>A request can choose <code>metadata.profile: &quot;chat&quot;</code> on a <code>work</code> daemon. It cannot choose <code>work</code> on a <code>chat</code> daemon. Unknown or more-permissive request values stay at the placement ceiling. This protection assumes the daemon ceiling itself is valid: an unknown <code>DELTA_PROFILE</code> currently falls open to <code>work</code>. Validate the environment before launch and allow only <code>work</code> or <code>chat</code>.</p>
+<p>A request can choose <code>metadata.profile: &quot;safe&quot;</code> on a <code>trusted</code> daemon. It cannot choose <code>trusted</code> on a <code>safe</code> daemon. Unknown or more-permissive request values stay at the placement ceiling.</p>
+<p><strong>Renamed in 0.2.7 - no action needed for a live agent.</strong> These two tiers were previously named <code>work</code> and <code>chat</code>; they are now <code>trusted</code> and <code>safe</code>, naming the capability level rather than an activity. The old names still resolve as aliases, so an existing <code>DELTA_PROFILE=work</code> or <code>DELTA_PROFILE=chat</code> keeps working unchanged. The only observable difference is the canonical name reported in telemetry and <code>GET /v1/status</code>, which is now <code>trusted</code> / <code>safe</code>. No tool or budget behavior changes.</p>
+<p><strong>Custom tool envelope.</strong> Instead of a named tier, set the exact tool surface directly:</p>
+<div class="code-block"><div class="code-toolbar"><span>dotenv</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-dotenv">DELTA_ALLOWED_TOOLS=read_file,web_search,write_file,grep
+DELTA_PINNED_TOOLS=read_file,web_search
+</code></pre></div>
+<p>The list is intersected with the tier's own allowed set, so it can only narrow a tier, never escalate it - a <code>safe</code> daemon cannot be widened this way. To build a broad custom envelope, start from <code>trusted</code> (which allows every tool) and list exactly what you want. A set-but-empty or malformed list falls back to the <code>safe</code> floor rather than allowing everything.</p>
 <p>Lower the token and cost ceilings:</p>
 <div class="code-block"><div class="code-toolbar"><span>dotenv</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-dotenv">DELTA_MAX_TOKENS=250000
 DELTA_MAX_COST_USD=1
@@ -2930,6 +2948,16 @@ primary_region = &quot;iad&quot;
 <li>monitor resumed runs and promotion failures</li>
 </ol>
 <p>There is no automatic pre-migration snapshot. A rollback after a schema-changing release may require restoring the pre-upgrade database together with a compatible workspace snapshot.</p>
+<p><strong>Upgrading to 0.2.7 from an earlier version.</strong> This release is drop-in: with the new environment variables unset, a deployment behaves exactly as 0.2.6. Two things are worth knowing:</p>
+<ul>
+<li><strong>The tiers were renamed</strong> <code>work</code> to <code>trusted</code> and <code>chat</code> to <code>safe</code>. Old names still resolve as aliases, so <strong>no configuration change is required</strong>; only the canonical name in telemetry and <code>GET /v1/status</code> changes. If a dashboard or alert keys on the literal string <code>work</code> or <code>chat</code>, update it to <code>trusted</code> / <code>safe</code>.</li>
+<li><strong>New settings, all opt-in:</strong> <code>DELTA_ALLOWED_TOOLS</code> / <code>DELTA_PINNED_TOOLS</code> (a custom tool envelope, see <a href="#guide-tiers-and-the-tool-envelope">Tiers and the tool envelope</a>); <code>DELTA_SKILLS</code> = <code>mcp</code> | <code>local</code> | <code>off</code> (skills backend, default <code>mcp</code> unchanged, see <a href="#guide-3-external-context-and-reusable-skills">reusable skills</a>); <code>DELTA_SAFE_MODE=1</code> (recovery boot, below). Leaving each unset changes nothing.</li>
+</ul>
+<p><strong>Safe mode (recovery).</strong> If an agent's self-file or bundle becomes corrupted - accidentally, or by a prompt-injection that reached the writable memory - boot it once with:</p>
+<div class="code-block"><div class="code-toolbar"><span>dotenv</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-dotenv">DELTA_SAFE_MODE=1
+</code></pre></div>
+<p>The daemon starts neutral and unwedgeable: the <code>safe</code> tool floor, no MCP servers, no self-write, no reflection, and it skips the workspace prompt layers (<code>DELTA.md</code>, <code>POLICY.md</code>, <code>PROMPT_CONTEXT.md</code>) so a poisoned self-file cannot influence it. You can always reach the agent to diagnose it, revert the self-file from a prior revision through the Cockpit, then restart normally. Safe mode ignores <code>DELTA_ALLOWED_TOOLS</code> and the self-write flags, so it cannot be widened.</p>
+<p><strong>Read current model, tier, and budget (<code>GET /v1/status</code>).</strong> A secret-free, seam-token-gated endpoint returns the running agent's version, tier, model, reasoning effort, budget ceilings, and MCP server names - no keys. It backs edge tooling such as a channel gateway's <code>/model</code> and <code>/status</code> commands.</p>
 <h3 id="guide-security-model">Security model<a class="heading-link" href="#guide-security-model" aria-label="Link to this section">#</a></h3>
 <h4 id="guide-put-a-trusted-gateway-in-front">Put a trusted gateway in front<a class="heading-link" href="#guide-put-a-trusted-gateway-in-front" aria-label="Link to this section">#</a></h4>
 <p>Set both credentials in production:</p>
@@ -3071,7 +3099,11 @@ DELTA_INSPECT_TOKEN=separate-root-inspection-token
 <tr><th>Variable</th><th>Default</th><th>Purpose</th></tr>
 </thead>
 <tbody>
-<tr><td><code>DELTA_PROFILE</code></td><td><code>work</code></td><td>Placement ceiling. Validate exactly <code>work</code> or <code>chat</code>; another value currently widens to <code>work</code>.</td></tr>
+<tr><td><code>DELTA_PROFILE</code></td><td><code>trusted</code></td><td>Placement ceiling: <code>trusted</code> or <code>safe</code> (the old <code>work</code> / <code>chat</code> still resolve as aliases). An unknown value currently widens to <code>trusted</code>; validate before launch.</td></tr>
+<tr><td><code>DELTA_ALLOWED_TOOLS</code></td><td>unset</td><td>Comma-separated custom tool allow-list, intersected with the tier (narrows only, never escalates). Set-but-empty or malformed falls back to the <code>safe</code> floor.</td></tr>
+<tr><td><code>DELTA_PINNED_TOOLS</code></td><td>unset</td><td>Comma-separated tools kept resident from step one, intersected with the resolved allow-list.</td></tr>
+<tr><td><code>DELTA_SAFE_MODE</code></td><td>unset</td><td><code>1</code> boots a neutral recovery agent: <code>safe</code> floor, no MCP, no self-write, no reflection, workspace prompt layers skipped. Ignores the two variables above.</td></tr>
+<tr><td><code>DELTA_SKILLS</code></td><td><code>mcp</code></td><td>Capability backend: <code>mcp</code> (registry, unchanged), <code>local</code> (workspace <code>skills/</code> folders, use-only), or <code>off</code> (fully invisible).</td></tr>
 <tr><td><code>DELTA_MAX_TOKENS</code></td><td>profile value</td><td>Optional lower fresh-token cap.</td></tr>
 <tr><td><code>DELTA_MAX_COST_USD</code></td><td>profile value</td><td>Optional lower model-cost cap.</td></tr>
 <tr><td><code>DELTA_COMPACT_AT_TOKENS</code></td><td><code>120000</code></td><td>Previous-input threshold for automatic compaction.</td></tr>
@@ -3207,7 +3239,7 @@ DELTA_INSPECT_TOKEN=separate-root-inspection-token
 <li>Captured calls are normalized successful main-loop calls, not raw provider traffic or complete internal-call traces.</li>
 <li>Root inspection can directly address hidden workspace <code>.delta</code> paths; its token is root-equivalent and writes can corrupt live state.</li>
 <li>Token and dollar budgets cover recorded model usage only and can overshoot by one call plus background work.</li>
-<li>An invalid daemon <code>DELTA_PROFILE</code> currently falls open to <code>work</code>; deployment validation must reject it.</li>
+<li>An invalid daemon <code>DELTA_PROFILE</code> currently falls open to <code>trusted</code>; deployment validation must reject it.</li>
 <li>Four workers bound queued sessions, not sibling tools or untracked background reflections.</li>
 <li>Shutdown does not drain tasks, reflection, or telemetry, and long-lived SSE endpoints do not impose production backpressure.</li>
 <li>Events are operational, at-least-once observability rather than a transactionally complete audit ledger.</li>

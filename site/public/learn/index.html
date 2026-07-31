@@ -1436,7 +1436,7 @@ tools:    [ <span class="k">get_weather</span>, <span class="k">read_calendar</s
               <div class="db">
                 <p>The token part of the ceiling counts only <em>fresh</em> work: <code>billed = max(0, input − cacheRead) + output</code>. In plain terms, the big chunk of conversation that gets re-sent every turn but served from the <span class="term" data-t="promptcache">cache</span> does not count against your token budget (its small cache-read price still counts toward the dollar ceiling). This is why a long Delta run does not blow its budget just by carrying its own history.</p>
                 <span class="k">At the code</span>
-                <p>The guard in <code>run.ts</code> stops the run if <code>steps ≥ maxSteps</code>, or <code>billed ≥ maxTokens</code>, or <code>costUsd ≥ maxCostUsd</code>. Those ceilings come from the run's <span class="term" data-t="profile">profile</span> (<code>src/profiles.ts</code>): the <code>work</code> profile allows <strong>100 steps / 2M tokens / $5</strong>, and the tighter <code>chat</code> profile allows <strong>10 steps / 100k tokens / $0.25</strong>.</p>
+                <p>The guard in <code>run.ts</code> stops the run if <code>steps ≥ maxSteps</code>, or <code>billed ≥ maxTokens</code>, or <code>costUsd ≥ maxCostUsd</code>. Those ceilings come from the run's <span class="term" data-t="profile">profile</span> (<code>src/profiles.ts</code>): the <code>trusted</code> tier allows <strong>100 steps / 2M tokens / $5</strong>, and the tighter <code>safe</code> tier allows <strong>10 steps / 100k tokens / $0.25</strong>.</p>
               </div>
             </details>
           </div></div>
@@ -2003,7 +2003,7 @@ A teammate can act on your reply without re-checking it.
       <p>Every run happens under a <span class="term" data-t="profile">profile</span> - a named preset that fixes two things: which tools the agent may touch at all, and its <span class="term" data-t="budget">budget</span> ceiling in steps, tokens, and dollars. The profile is the single dial for how autonomous - how "wild" - an agent is allowed to get. Delta ships two.</p>
       <div class="roadmap-cards">
         <div class="rc next">
-          <p class="rck">chat - boxed in</p>
+          <p class="rck">safe - boxed in</p>
           <ul>
             <li>Read-only and own-state tools only: web search, web fetch, read a file, list a folder, <span class="term" data-t="recall">recall</span> this thread, keep a todo.</li>
             <li>No writing, no <span class="term" data-t="remember">remembering</span>, no delegating.</li>
@@ -2012,7 +2012,7 @@ A teammate can act on your reply without re-checking it.
           </ul>
         </div>
         <div class="rc">
-          <p class="rck">work - fully autonomous</p>
+          <p class="rck">trusted - fully autonomous</p>
           <ul>
             <li>Every registered tool: writing files, remembering lessons, delegating to <span class="term" data-t="subagent">subagents</span>, running code.</li>
             <li>100 steps · 2M tokens · $5 a run.</li>
@@ -2020,12 +2020,13 @@ A teammate can act on your reply without re-checking it.
           </ul>
         </div>
       </div>
-      <p>The two are strictly ordered: <code>chat</code> is "no more permissive" than <code>work</code> - a subset of the tools and a smaller budget. And here is the rule that makes it safe: <strong>when the operator starts an agent, they pick the most powerful profile it may ever use; a later message can ask for less, never more.</strong> An untrusted message can never talk an agent into more power than the operator granted it.</p>
+      <p>The two are strictly ordered: <code>safe</code> is "no more permissive" than <code>trusted</code> - a subset of the tools and a smaller budget. And here is the rule that makes it safe: <strong>when the operator starts an agent, they pick the most powerful tier it may ever use; a later message can ask for less, never more.</strong> An untrusted message can never talk an agent into more power than the operator granted it.</p>
+      <p>Between those two ends you can dial the <em>exact</em> set of tools with an operator env knob (<code>DELTA_ALLOWED_TOOLS</code>), intersected with the tier so it can only narrow, never widen - a <code>safe</code> agent can never be handed more. And if a self-file is ever corrupted - by accident or by a prompt-injection that reached the writable memory - a one-flag <strong>safe mode</strong> (<code>DELTA_SAFE_MODE=1</code>) boots the agent neutral, ignoring its own memory, so it can never get wedged and you can always reach it to fix it.</p>
       <details class="deeper">
         <summary><svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg><span class="dk">Go deeper</span><span class="dt">how the ceiling actually holds</span><span class="peek">narrow-only, never escalate</span></summary>
         <div class="db">
           <p>The operator picks a ceiling profile when they place the daemon. A request may carry a profile name in its metadata, but it is only honoured if it is a subset of that ceiling - fewer tools, and budgets that are smaller or equal. Ask for more and you are silently held at the ceiling; ask for less and you get the tighter box. Because inbound callers are treated as untrusted, this narrow-only direction is the whole game: a prompt-injection attack buried in a Telegram message cannot widen its own permissions.</p>
-          <p>Two escape hatches, both operator-controlled. The operator's own budget knobs on their own daemon can raise or lower the dollar and token caps directly (a $5 default is wrong for a deep-research agent). And a trusted, authenticated gateway can be vouched for so that even a restricted profile is handed the single <span class="term" data-t="remember">remember</span> tool - so a locked-down chat agent can still learn, but only when a real gateway is fronting it.</p>
+          <p>Two escape hatches, both operator-controlled. The operator's own budget knobs on their own daemon can raise or lower the dollar and token caps directly (a $5 default is wrong for a deep-research agent). And a trusted, authenticated gateway can be vouched for so that even a restricted profile is handed the single <span class="term" data-t="remember">remember</span> tool - so a locked-down safe agent can still learn, but only when a real gateway is fronting it.</p>
         </div>
       </details>
       <details class="deeper code">
@@ -2067,7 +2068,7 @@ platform event
       </details>
 
       <h3>Reaching wide, staying safe</h3>
-      <p>The two choices compose into one operating decision. Put Connect in front of a public Telegram DM and bind that agent to the <code>chat</code> profile: it can search the web and answer, but a hijacked message can't make it change a single file or run up a real bill (its cap is cents). Point your own trusted channel at a <code>work</code> agent and it can do the entire job, autonomously. Same engine, same binary - two completely different blast radii, and the core never grew a line of channel code to get there.</p>
+      <p>The two choices compose into one operating decision. Put Connect in front of a public Telegram DM and bind that agent to the <code>safe</code> tier: it can search the web and answer, but a hijacked message can't make it change a single file or run up a real bill (its cap is cents). Point your own trusted channel at a <code>trusted</code> agent and it can do the entire job, autonomously. Same engine, same binary - two completely different blast radii, and the core never grew a line of channel code to get there.</p>
       <div class="note">
         <p class="nt">The whole philosophy in miniature</p>
         <p>A lesser design bakes channels and a sprawling permissions matrix into the agent and calls it "features." Delta does the opposite: the engine stays a small, legible loop; reach is an optional edge you bolt on; power is a dial you turn. Leanness in the core, choice at the boundary.</p>

@@ -821,7 +821,7 @@ Images are attached to a vision-capable model only after Delta itself has verifi
 
 ## Built-in capabilities
 
-The `work` profile exposes the built-in tools below. Tool failures are returned to the model as values, so one failed dependency does not crash the daemon.
+The `trusted` tier exposes the built-in tools below. Tool failures are returned to the model as values, so one failed dependency does not crash the daemon.
 
 | Tool | What it does | Important limits |
 |---|---|---|
@@ -902,7 +902,7 @@ The child forwards the safe process environment plus the primary base URL, wire 
 
 The child allowlist forwards both `DELTA_MODEL_PRIMARY` and the legacy `DELTA_MODEL` alias, so a subagent runs on the parent's configured model. The child also does not receive `MODEL_HEADERS`, `DELTA_MODEL_PRICES`, or reasoning settings, so a custom-header route, custom metering, or parent reasoning configuration is not reproduced in the child.
 
-Subagents share the workspace. A subagent can also receive the `remember` tool under the `work` profile, so it can replace the shared `DELTA.md`; its revision database is temporary. Use delegation only for tasks whose file and self-memory effects are intentional.
+Subagents share the workspace. A subagent can also receive the `remember` tool under the `trusted` tier, so it can replace the shared `DELTA.md`; its revision database is temporary. Use delegation only for tasks whose file and self-memory effects are intentional.
 
 `eval_n` runs variants concurrently against the same workspace. Use it for drafting, analysis, or other non-mutating work. Do not use it for concurrent edits to the same files.
 
@@ -1010,7 +1010,7 @@ Crash idempotence is inferred from the MCP tool name. Names containing an unders
 
 ### Progressive tool loading
 
-A large connector surface should not put hundreds of schemas in every prompt. The `work` profile:
+A large connector surface should not put hundreds of schemas in every prompt. The `trusted` tier:
 
 1. pins all built-in tools
 2. pins MCP tools whose suffix appears in `vocab.coreVerbs`
@@ -1134,6 +1134,25 @@ Facts, preferences, and pitfalls go to the MCP tool selected by `vocab.writeVerb
 
 These external stores are optional. A plain Delta works with local memory only.
 
+**Choosing a skills backend (`DELTA_SKILLS`, added 0.2.7).** The capability backend is selectable, and the default preserves prior behavior:
+
+```dotenv
+DELTA_SKILLS=mcp    # default — the skill-registry MCP tools above (unchanged)
+DELTA_SKILLS=local  # read skill folders from the workspace, no service required
+DELTA_SKILLS=off    # no skills at all — no retrieval, no skill tools, no mention
+```
+
+With `local`, drop a folder tree in the workspace and Delta discovers it at boot:
+
+```text
+skills/
+  cite-check/
+    SKILL.md        # front matter with name + description; the body is the procedure
+    rubric.md       # reference files, data, or scripts — read on demand
+```
+
+Only each skill's `name` and `description` enter the prompt (progressive disclosure). The agent reads `SKILL.md` and any bundled files on demand with `read_file`, and runs bundled scripts with the `code` tool. Discovery is boot-time, direct-child-only, and rejects symlinks. Local skills are read-only in this release: reflection proposes improvements only to a backend that accepts writes (the MCP registry). `off` is fully invisible. Default `mcp` needs no change.
+
 ### Promotion to shared knowledge
 
 Non-user learning enters a durable SQLite outbox before any external proposal:
@@ -1182,22 +1201,33 @@ Only the exact `review_kind` value `submission_disposition` switches reflection 
 
 ## Durable execution and budgets
 
-### Profiles
+### Tiers and the tool envelope
 
-Two placement profiles ship:
+Two capability tiers ship. The tier sets which tools an agent may use and its budget ceilings; a request may narrow the tier but never escalate it.
 
-| Profile | Allowed tools | Initial schemas | Steps | Fresh tokens | Cost |
+| Tier | Allowed tools | Initial schemas | Steps | Fresh tokens | Cost |
 |---|---|---|---:|---:|---:|
-| `work` | All registered tools | Lean core | 100 | 2,000,000 | $5.00 |
-| `chat` | `web_search`, `web_fetch`, `read_file`, `list_dir`, `recall`, `todo` | All six | 10 | 100,000 | $0.25 |
+| `trusted` | All registered tools | Lean core | 100 | 2,000,000 | $5.00 |
+| `safe` | `web_search`, `web_fetch`, `read_file`, `list_dir`, `recall`, `todo` | All six | 10 | 100,000 | $0.25 |
 
 Set the daemon ceiling:
 
 ```dotenv
-DELTA_PROFILE=work
+DELTA_PROFILE=trusted
 ```
 
-A request can choose `metadata.profile: "chat"` on a `work` daemon. It cannot choose `work` on a `chat` daemon. Unknown or more-permissive request values stay at the placement ceiling. This protection assumes the daemon ceiling itself is valid: an unknown `DELTA_PROFILE` currently falls open to `work`. Validate the environment before launch and allow only `work` or `chat`.
+A request can choose `metadata.profile: "safe"` on a `trusted` daemon. It cannot choose `trusted` on a `safe` daemon. Unknown or more-permissive request values stay at the placement ceiling.
+
+**Renamed in 0.2.7 — no action needed for a live agent.** These two tiers were previously named `work` and `chat`; they are now `trusted` and `safe`, naming the capability level rather than an activity. The old names still resolve as aliases, so an existing `DELTA_PROFILE=work` or `DELTA_PROFILE=chat` keeps working unchanged. The only observable difference is the canonical name reported in telemetry and `GET /v1/status`, which is now `trusted` / `safe`. No tool or budget behavior changes.
+
+**Custom tool envelope.** Instead of a named tier, set the exact tool surface directly:
+
+```dotenv
+DELTA_ALLOWED_TOOLS=read_file,web_search,write_file,grep
+DELTA_PINNED_TOOLS=read_file,web_search
+```
+
+The list is intersected with the tier's own allowed set, so it can only narrow a tier, never escalate it — a `safe` daemon cannot be widened this way. To build a broad custom envelope, start from `trusted` (which allows every tool) and list exactly what you want. A set-but-empty or malformed list falls back to the `safe` floor rather than allowing everything.
 
 Lower the token and cost ceilings:
 
@@ -1882,6 +1912,21 @@ Before a production upgrade:
 
 There is no automatic pre-migration snapshot. A rollback after a schema-changing release may require restoring the pre-upgrade database together with a compatible workspace snapshot.
 
+**Upgrading to 0.2.7 from an earlier version.** This release is drop-in: with the new environment variables unset, a deployment behaves exactly as 0.2.6. Two things are worth knowing:
+
+- **The tiers were renamed** `work` to `trusted` and `chat` to `safe`. Old names still resolve as aliases, so **no configuration change is required**; only the canonical name in telemetry and `GET /v1/status` changes. If a dashboard or alert keys on the literal string `work` or `chat`, update it to `trusted` / `safe`.
+- **New settings, all opt-in:** `DELTA_ALLOWED_TOOLS` / `DELTA_PINNED_TOOLS` (a custom tool envelope, see [Tiers and the tool envelope](#tiers-and-the-tool-envelope)); `DELTA_SKILLS` = `mcp` | `local` | `off` (skills backend, default `mcp` unchanged, see [reusable skills](#3-external-context-and-reusable-skills)); `DELTA_SAFE_MODE=1` (recovery boot, below). Leaving each unset changes nothing.
+
+**Safe mode (recovery).** If an agent's self-file or bundle becomes corrupted — accidentally, or by a prompt-injection that reached the writable memory — boot it once with:
+
+```dotenv
+DELTA_SAFE_MODE=1
+```
+
+The daemon starts neutral and unwedgeable: the `safe` tool floor, no MCP servers, no self-write, no reflection, and it skips the workspace prompt layers (`DELTA.md`, `POLICY.md`, `PROMPT_CONTEXT.md`) so a poisoned self-file cannot influence it. You can always reach the agent to diagnose it, revert the self-file from a prior revision through the Cockpit, then restart normally. Safe mode ignores `DELTA_ALLOWED_TOOLS` and the self-write flags, so it cannot be widened.
+
+**Read current model, tier, and budget (`GET /v1/status`).** A secret-free, seam-token-gated endpoint returns the running agent's version, tier, model, reasoning effort, budget ceilings, and MCP server names — no keys. It backs edge tooling such as a channel gateway's `/model` and `/status` commands.
+
 ## Security model
 
 ### Put a trusted gateway in front
@@ -2033,7 +2078,11 @@ The values below are the current public operating surface. Unless noted otherwis
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DELTA_PROFILE` | `work` | Placement ceiling. Validate exactly `work` or `chat`; another value currently widens to `work`. |
+| `DELTA_PROFILE` | `trusted` | Placement ceiling: `trusted` or `safe` (the old `work` / `chat` still resolve as aliases). An unknown value currently widens to `trusted`; validate before launch. |
+| `DELTA_ALLOWED_TOOLS` | unset | Comma-separated custom tool allow-list, intersected with the tier (narrows only, never escalates). Set-but-empty or malformed falls back to the `safe` floor. |
+| `DELTA_PINNED_TOOLS` | unset | Comma-separated tools kept resident from step one, intersected with the resolved allow-list. |
+| `DELTA_SAFE_MODE` | unset | `1` boots a neutral recovery agent: `safe` floor, no MCP, no self-write, no reflection, workspace prompt layers skipped. Ignores the two variables above. |
+| `DELTA_SKILLS` | `mcp` | Capability backend: `mcp` (registry, unchanged), `local` (workspace `skills/` folders, use-only), or `off` (fully invisible). |
 | `DELTA_MAX_TOKENS` | profile value | Optional lower fresh-token cap. |
 | `DELTA_MAX_COST_USD` | profile value | Optional lower model-cost cap. |
 | `DELTA_COMPACT_AT_TOKENS` | `120000` | Previous-input threshold for automatic compaction. |
@@ -2203,7 +2252,7 @@ These are deliberate truths of the current codebase:
 - Captured calls are normalized successful main-loop calls, not raw provider traffic or complete internal-call traces.
 - Root inspection can directly address hidden workspace `.delta` paths; its token is root-equivalent and writes can corrupt live state.
 - Token and dollar budgets cover recorded model usage only and can overshoot by one call plus background work.
-- An invalid daemon `DELTA_PROFILE` currently falls open to `work`; deployment validation must reject it.
+- An invalid daemon `DELTA_PROFILE` currently falls open to `trusted`; deployment validation must reject it.
 - Four workers bound queued sessions, not sibling tools or untracked background reflections.
 - Shutdown does not drain tasks, reflection, or telemetry, and long-lived SSE endpoints do not impose production backpressure.
 - Events are operational, at-least-once observability rather than a transactionally complete audit ledger.
