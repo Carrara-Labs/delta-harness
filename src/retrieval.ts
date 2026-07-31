@@ -38,6 +38,25 @@ export async function retrieveSkills(
     const first = refs[0];
     if (!first) return null;
 
+    if (first.location) {
+      opts.events?.emit("retrieval", (opts.spine ?? {}) as Spine, {
+        surfaced: refs.length,
+        names: refs.map((r) => r.name).slice(0, MAX_K),
+      });
+      return elide(
+        `${HEADER}\n\n${refs
+          .map((ref) =>
+            elide(
+              `## ${ref.name}${ref.description ? ` — ${ref.description}` : ""}\n` +
+                `Read ${ref.location} with read_file before acting.`,
+              MAX_REF_LINE,
+            ),
+          )
+          .join("\n\n")}`,
+        MAX_BLOCK_CHARS,
+      );
+    }
+
     const top = await capability.get(first.name, ctx);
     if (top)
       opts.events?.emit("retrieval", (opts.spine ?? {}) as Spine, {

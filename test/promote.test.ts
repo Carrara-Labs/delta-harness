@@ -161,6 +161,22 @@ describe("promotion outbox", () => {
     expect(a.capabilityCalls[0]?.body).toBe("1. Verify\n2. Deploy");
   });
 
+  test("a use-only capability adapter never claims an authoring row", async () => {
+    const db = openDb(":memory:");
+    const a = adapters();
+    delete a.capability.propose;
+    const d = deps(db, a);
+    seed(d, { source: "review", destination: "capability" });
+
+    expect(await drainOnce(d)).toMatchObject({ claimed: 0, failed: 0 });
+    expect(
+      db.query("SELECT lifecycle, attempts FROM promotion").get() as {
+        lifecycle: string;
+        attempts: number;
+      },
+    ).toEqual({ lifecycle: "staged", attempts: 0 });
+  });
+
   test("self learning waits for distinct-run recurrence", async () => {
     const db = openDb(":memory:");
     const a = adapters();

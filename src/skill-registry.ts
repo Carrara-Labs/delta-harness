@@ -15,6 +15,20 @@ import type { ToolCtx, Tools } from "./tools";
 const CREATE_RE = /skill.*(create|propose)/i;
 const UPDATE_RE = /skill.*update/i;
 export const SKILL_WRITE_RE = /skill.*(create|update|propose)/i;
+const SKILL_TOOL_SUFFIXES = [
+  "skill_search",
+  "skill_get",
+  "skill_file_get",
+  "skill_versions",
+  "skill_create",
+  "skill_update",
+  "skill_propose",
+];
+export const isSkillRegistryTool = (name: string): boolean =>
+  SKILL_TOOL_SUFFIXES.some((suffix) => name === suffix || name.endsWith(`__${suffix}`));
+export function stripSkillRegistryTools(tools: Tools): void {
+  for (const name of tools.keys()) if (isSkillRegistryTool(name)) tools.delete(name);
+}
 /** Find a skill-registry write tool by verb (read tools are get/list/search — excluded). */
 export function findSkillTool(tools: Tools, re: RegExp) {
   return [...tools.values()].find((t) => re.test(t.name));

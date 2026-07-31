@@ -412,6 +412,7 @@ export class Queue {
    * daemon default). Fully background: waiters already got their response, and a
    * reflection failure is logged, never fatal (spec §H). */
   private maybeReflect(runId: string): void {
+    if (this.deps.safeMode) return;
     const run = getRun(this.deps.db, runId);
     if (run?.status !== "done") return;
     // Opt-in from EITHER side: the daemon default OR the per-run request. (Using

@@ -7,8 +7,8 @@
 // a run mid-flight. Writes are atomic (temp+rename); a successful self-write snapshots
 // the prior version into the `self_revisions` table (in the DB — prod: outside the
 // workspace; dev: under the reserved `.delta/` dir) with bounded retention, so a bad
-// self-edit is revertible. No CAS: concurrent runs are last-writer-wins (a lost note,
-// never corruption).
+// self-edit is revertible. Writes use an optimistic base-content check, so concurrent
+// runs get a mergeable conflict instead of silently losing a note.
 
 import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";

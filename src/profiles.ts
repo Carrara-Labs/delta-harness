@@ -47,7 +47,8 @@ export const PROFILES: Record<string, Profile> = {
 // =chat deployments and request metadata keep resolving unchanged — a pure rename, no
 // behavior change.
 const ALIASES: Record<string, string> = { chat: "safe", work: "trusted" };
-const SAFE_FLOOR = PROFILES.safe as Profile;
+/** The raw safe-floor profile (pre-env-override). Safe mode clones this directly. */
+export const SAFE_FLOOR = PROFILES.safe as Profile;
 function resolveProfile(key: string): Profile | undefined {
   return PROFILES[key] ?? PROFILES[ALIASES[key] ?? ""];
 }

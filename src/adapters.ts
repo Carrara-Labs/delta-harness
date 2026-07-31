@@ -13,7 +13,7 @@ import type { ToolCtx } from "./tools";
 
 /** A skill the capability store can surface for a task — the structured unit the
  * binary renders. The adapter owns how it's pulled from the backend's reply. */
-export type SkillRef = { name: string; description?: string; version?: number };
+export type SkillRef = { name: string; description?: string; version?: number; location?: string };
 
 /** A proposed new/improved procedure — the neutral input to CapabilityAdapter.propose. */
 export type SkillProposal = {
@@ -61,7 +61,7 @@ export interface CapabilityAdapter {
   health(): RoleHealth;
   search(query: string, ctx: ToolCtx): Promise<SkillRef[]>;
   get(name: string, ctx: ToolCtx): Promise<{ version: number; body: string } | null>;
-  propose(p: SkillProposal & { idempotencyKey: string }, ctx: ToolCtx): Promise<"ok" | "error">;
+  propose?(p: SkillProposal & { idempotencyKey: string }, ctx: ToolCtx): Promise<"ok" | "error">;
 }
 
 /** What the binary knows when it proposes a curated write — the backend-neutral

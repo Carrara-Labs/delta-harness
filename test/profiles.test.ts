@@ -49,7 +49,14 @@ describe("profiles: tiers, aliases, envelope knob (0.2.7)", () => {
   test("fail-safe: set-but-empty falls back to the safe floor, never allow-all", () => {
     process.env.DELTA_ALLOWED_TOOLS = "  , ,  ";
     const p = getProfile(undefined, "trusted"); // full ceiling
-    expect(p.allowed).toEqual(["web_search", "web_fetch", "read_file", "list_dir", "recall", "todo"]);
+    expect(p.allowed).toEqual([
+      "web_search",
+      "web_fetch",
+      "read_file",
+      "list_dir",
+      "recall",
+      "todo",
+    ]);
     expect(p.allowed).not.toBe("*");
   });
 

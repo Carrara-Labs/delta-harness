@@ -37,6 +37,7 @@ export type ReflectDeps = {
   /** The store-role seam (v3.1 §1.8). A product binds its own; absent, the defaults
    *  wrap the skill registry (capability) + the knowledge base (curated) built from `tools`/`vocab`. */
   capability?: CapabilityAdapter;
+  skills?: "mcp" | "local" | "off";
   curated?: CuratedAdapter;
   memoryNamespace?: string;
   promoteMinRuns?: number;
@@ -71,6 +72,17 @@ const REFLECT_REVIEW_SYSTEM = `A human just reviewed work you proposed. The tran
 Ground the artifact in the DIFF, not your original intent. Only distill a correction that GENERALIZES: if the review was a clean approval, or the edits/notes are purely one-off and task-specific with no reusable pattern, reply exactly: {"kind":"none"}
 ${DO_NOT_DISTILL}
 ${ARTIFACT_SHAPE}`;
+
+const ARTIFACT_SHAPE_OFF = `Reply with a JSON object and nothing else:
+{"kind":"learning"|"preference"|"pitfall","content":"<one crisp reusable sentence>","aliases":["<search alias>"],"proposed_audience":"agent"|"task_type"|"org","task_type":"<canonical use-case, only when task_type>","confidence":0..1}`;
+const withoutSkills = (prompt: string) =>
+  prompt
+    .replace(ARTIFACT_SHAPE, ARTIFACT_SHAPE_OFF)
+    .split("\n")
+    .filter((line) => !/skill/i.test(line))
+    .join("\n");
+const REFLECT_SYSTEM_OFF = withoutSkills(REFLECT_SYSTEM);
+const REFLECT_REVIEW_SYSTEM_OFF = withoutSkills(REFLECT_REVIEW_SYSTEM);
 
 /** Review-turn detection: the control plane stamps submission-disposition turns
  * with review_kind so reflection swaps to the proposed-vs-accepted rubric. */
@@ -136,9 +148,11 @@ export async function reflect(
   // Past this seam the binary never touches a skill-registry field name or the knowledge-base envelope.
   const cap = deps.capability ?? new SkillRegistryAdapter(deps.tools);
   const cur = deps.curated ?? new DefaultCuratedAdapter(deps.tools, deps.vocab);
+  const skillsOn = deps.skills !== "off";
+  const canAuthorCapability = skillsOn && typeof cap.propose === "function";
   let capBound = false;
   try {
-    capBound = cap.health() === "bound";
+    capBound = skillsOn && cap.health() === "bound";
   } catch {}
   // The existing-skill index, so the distiller improves by EXACT name instead of
   // inventing a near-duplicate (prefer patching the skill that was in play).
@@ -157,7 +171,17 @@ export async function reflect(
     : "";
   const result = await (deps.chatUtility ?? deps.chat)({
     messages: [
-      { role: "system", content: (review ? REFLECT_REVIEW_SYSTEM : REFLECT_SYSTEM) + rubric },
+      {
+        role: "system",
+        content:
+          (skillsOn
+            ? review
+              ? REFLECT_REVIEW_SYSTEM
+              : REFLECT_SYSTEM
+            : review
+              ? REFLECT_REVIEW_SYSTEM_OFF
+              : REFLECT_SYSTEM_OFF) + rubric,
+      },
       { role: "user", content: rendered + skillsBlock },
     ],
     maxTokens: REFLECT_MAX_TOKENS,
@@ -267,7 +291,7 @@ export async function reflect(
   if (outcome === "low-confidence" || outcome === "error") return null;
 
   let enqueued = false;
-  if (audience !== "user") {
+  if (audience !== "user" && (artifactKind !== "procedure" || canAuthorCapability)) {
     const memory = deps.db
       .query(
         `SELECT m.id, m.hash FROM memory m JOIN memory_occurrence o ON o.memory_id = m.id

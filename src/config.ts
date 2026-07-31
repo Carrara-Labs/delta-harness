@@ -15,9 +15,13 @@ import {
   type ReasoningEffort,
 } from "./provider";
 import { HARNESS_VERSION } from "./version";
-import { parseVocab, type Vocab } from "./vocab";
+import { NEUTRAL_VOCAB, parseVocab, type Vocab } from "./vocab";
+
+export type SkillsMode = "mcp" | "local" | "off";
 
 export type Config = {
+  /** Explicit recovery boot: neutral prompt layers and the unoverrideable safe floor. */
+  safeMode: boolean;
   port: number;
   dbPath: string;
   /** Max concurrent RUNS (one per active session) the queue dispatches at once
@@ -50,6 +54,8 @@ export type Config = {
   telemetryToken?: string;
   capturePayloads: boolean;
   mcpServers: McpServerConfig[];
+  /** Capability retrieval backend. Unset defaults to today's MCP skill registry. */
+  skills: SkillsMode;
   /** THE context-window knob (`DELTA_COMPACT_AT_TOKENS`). The pre-send gate compacts older turns
    * once the ESTIMATED assembled request would exceed this many tokens, so the active window is
    * bounded here. One dial, operator's choice:
@@ -130,23 +136,26 @@ export type Config = {
 };
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
+  const safeMode = env.DELTA_SAFE_MODE === "1";
   warnLegacyBundleEnv(env);
   // Product vocab: DELTA_VOCAB env wins; else a vocab.json in the bundle (the clean
   // file form the Cockpit shows/edits); else the neutral default. Reading the bundle
   // file here keeps a product's nouns out of a giant env string.
   const workspaceDir = resolve(env.DELTA_WORKSPACE ?? "workspace");
-  const vocab = parseVocab(env.DELTA_VOCAB ?? readIfExists(resolve(workspaceDir, "vocab.json")));
+  const vocab = safeMode
+    ? NEUTRAL_VOCAB
+    : parseVocab(env.DELTA_VOCAB ?? readIfExists(resolve(workspaceDir, "vocab.json")));
   const models = [
     // T2: the control plane emits DELTA_MODEL_PRIMARY; DELTA_MODEL is the legacy harness name.
     aliased(env, "DELTA_MODEL_PRIMARY", "DELTA_MODEL") ?? "anthropic/claude-sonnet-5",
-    ...(env.DELTA_MODEL_FALLBACKS?.split(",").map((m) => m.trim()) ?? []),
+    ...(safeMode ? [] : (env.DELTA_MODEL_FALLBACKS?.split(",").map((m) => m.trim()) ?? [])),
   ].filter(Boolean);
   // T1: static per-request headers a bundle supplies (e.g. Codex `originator`). Fails loudly on
   // malformed/reserved input — an operator-owned, security-relevant field, not a fail-open one.
-  const modelHeaders = parseModelHeaders(env.MODEL_HEADERS, "MODEL_HEADERS");
+  const modelHeaders = safeMode ? undefined : parseModelHeaders(env.MODEL_HEADERS, "MODEL_HEADERS");
   // Reasoning effort passes through to the model (the supported set is model-dependent); warn — but
   // don't drop — an unrecognized value so a typo is visible while a valid future tier still works.
-  const reasoningEffort = normalizeEffort(env.DELTA_REASONING_EFFORT);
+  const reasoningEffort = safeMode ? undefined : normalizeEffort(env.DELTA_REASONING_EFFORT);
   if (reasoningEffort && !(KNOWN_EFFORTS as readonly string[]).includes(reasoningEffort)) {
     console.error(
       `delta: DELTA_REASONING_EFFORT='${reasoningEffort}' is not a recognized level (${KNOWN_EFFORTS.join(", ")}) — sending it as-is; the model 4xxs if it doesn't support it.`,
@@ -155,9 +164,10 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   // Vision (Sprint 8): does the PRIMARY model read images? Gates image-marker
   // expansion — a non-vision model keeps markers as text (their own placeholder).
   // Family heuristic with an env override for the fleets' long tail of slugs.
-  const visionRe = env.DELTA_VISION_MODELS
-    ? new RegExp(env.DELTA_VISION_MODELS, "i")
-    : /claude|gpt-4o|gpt-4\.1|gpt-5|gemini|qwen[\w.-]*vl|pixtral|vision|glm[\w.-]*v|grok/i;
+  const visionRe =
+    !safeMode && env.DELTA_VISION_MODELS
+      ? new RegExp(env.DELTA_VISION_MODELS, "i")
+      : /claude|gpt-4o|gpt-4\.1|gpt-5|gemini|qwen[\w.-]*vl|pixtral|vision|glm[\w.-]*v|grok/i;
   const vision =
     env.DELTA_VISION === "1" || (env.DELTA_VISION !== "0" && visionRe.test(models[0] ?? ""));
   // Robustness ceilings. Absolute model cap is generous (idle watchdog is the fast stall detector);
@@ -165,11 +175,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const modelTimeoutMs = Number(env.DELTA_MODEL_TIMEOUT_MS ?? 600_000); // 10 min absolute backstop
   const streamIdleMs = Number(env.DELTA_STREAM_IDLE_MS ?? 60_000); // per-chunk stall; 0 disables
   const firstByteMs = Number(env.DELTA_FIRST_BYTE_MS ?? 30_000); // connect+first-header deadline
-  const cacheTtl = env.DELTA_CACHE_TTL === "1h" ? ("1h" as const) : undefined; // stable-prefix cache retention
+  const cacheTtl = !safeMode && env.DELTA_CACHE_TTL === "1h" ? ("1h" as const) : undefined; // stable-prefix cache retention
   // Anthropic fast mode opt-in (research preview, 2× pricing — pair with DELTA_MODEL_PRICES).
   // Only "fast" is meaningful; anything else is a visible no-op, mirroring the effort warning.
-  const speed = env.DELTA_SPEED === "fast" ? ("fast" as const) : undefined;
-  if (env.DELTA_SPEED && !speed) {
+  const speed = !safeMode && env.DELTA_SPEED === "fast" ? ("fast" as const) : undefined;
+  if (!safeMode && env.DELTA_SPEED && !speed) {
     console.error(
       `delta: DELTA_SPEED='${env.DELTA_SPEED}' is not recognized ("fast" or unset) — ignoring.`,
     );
@@ -198,20 +208,22 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     // subscription token to a metered host — so it requires an explicit
     // non-OpenRouter MODEL_BASE_URL; otherwise the credential is ignored and the
     // static key path stands.
-    ...brokerCredential(env),
+    ...(!safeMode ? brokerCredential(env) : {}),
     timeoutMs: modelTimeoutMs,
     streamIdleMs,
     firstByteMs,
     ...(cacheTtl ? { cacheTtl } : {}),
   };
   // Every provider in the cascade inherits the same wall-clock ceilings.
-  const providers = [provider, ...parseFallbackProviders(env, models)].map((p) => ({
-    ...p,
-    timeoutMs: p.timeoutMs ?? modelTimeoutMs,
-    streamIdleMs: p.streamIdleMs ?? streamIdleMs,
-    firstByteMs: p.firstByteMs ?? firstByteMs,
-    ...((p.cacheTtl ?? cacheTtl) ? { cacheTtl: p.cacheTtl ?? cacheTtl } : {}),
-  }));
+  const providers = [provider, ...(safeMode ? [] : parseFallbackProviders(env, models))].map(
+    (p) => ({
+      ...p,
+      timeoutMs: p.timeoutMs ?? modelTimeoutMs,
+      streamIdleMs: p.streamIdleMs ?? streamIdleMs,
+      firstByteMs: p.firstByteMs ?? firstByteMs,
+      ...((p.cacheTtl ?? cacheTtl) ? { cacheTtl: p.cacheTtl ?? cacheTtl } : {}),
+    }),
+  );
   // T5: a subscription (broker) provider with NO usable non-subscription fallback has no safety
   // net when the broker 409s / 401s / cools down after a 429. A real fallback = a non-broker
   // provider that actually has a credential (a static apiKey or its own Credential) — a keyless
@@ -220,12 +232,13 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const hasUsableFallback = providers.some(
     (p) => !(p.credential instanceof BrokerCredential) && (p.apiKey !== "" || p.credential),
   );
-  if (hasBroker && !hasUsableFallback) {
+  if (!safeMode && hasBroker && !hasUsableFallback) {
     console.error(
       "delta: a subscription (broker) provider is configured but there is NO usable non-subscription fallback provider — a broker 409/401/429 will have no safety net. Add a keyed provider (e.g. OpenRouter) to DELTA_PROVIDERS.",
     );
   }
   return {
+    safeMode,
     port: Number(env.PORT ?? 8080),
     dbPath: env.DELTA_DB ?? "data/delta.db",
     maxConcurrency: Math.min(256, positiveInt(env.DELTA_MAX_CONCURRENCY, 8)),
@@ -243,11 +256,12 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       env.DELTA_CODE_CLI ?? "codex exec --sandbox workspace-write --skip-git-repo-check"
     ).split(" "),
     subagentDepth: Number(env.DELTA_SUBAGENT_DEPTH ?? 0),
-    profile: env.DELTA_PROFILE ?? "trusted",
+    profile: safeMode ? "safe" : (env.DELTA_PROFILE ?? "trusted"),
     ...(env.TELEMETRY_URL ? { telemetryUrl: env.TELEMETRY_URL } : {}),
     ...(env.TELEMETRY_TOKEN ? { telemetryToken: env.TELEMETRY_TOKEN } : {}),
     capturePayloads: env.DELTA_CAPTURE_PAYLOADS === "1",
-    mcpServers: parseMcpServers(env.DELTA_MCP_SERVERS),
+    mcpServers: safeMode ? [] : parseMcpServers(env.DELTA_MCP_SERVERS),
+    skills: safeMode ? "off" : parseSkillsMode(env.DELTA_SKILLS),
     // The context-window dial (see the Config field doc). Default 120k = balanced + safe on any
     // ≥200k model; raise for performance up to `model_window − max_output`, lower for cost.
     // Validated to a finite positive integer — NaN/Inf would silently DISABLE the gate (every
@@ -258,13 +272,13 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     })(),
     // Task-start hydration (§E) — read tools called at task start. NEUTRAL by default
     // (a product names its own reads); empty = the agent hydrates nothing.
-    hydrateTools: (env.DELTA_HYDRATE_TOOLS ?? "")
+    hydrateTools: (safeMode ? "" : (env.DELTA_HYDRATE_TOOLS ?? ""))
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
     // Task-keyed relevance search (§E / G3a). Unset by default; a product points it at
     // its own search tool.
-    hydrateSearchTool: env.DELTA_HYDRATE_SEARCH_TOOL || undefined,
+    hydrateSearchTool: safeMode ? undefined : env.DELTA_HYDRATE_SEARCH_TOOL || undefined,
     // The two bundle markdown files are FIXED filenames (DELTA.md self-file + POLICY.md
     // contract) — no path knobs (codex #23). Identity comes from DELTA.md alone; the
     // live remote-charter override is gone (codex #21) so a self-edit actually wins.
@@ -272,8 +286,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     selfMaxTokens: positiveInt(env.DELTA_SELF_MAX_TOKENS, 800),
     policyMaxTokens: positiveInt(env.DELTA_POLICY_MAX_TOKENS, 800),
     vision,
-    reflect: env.DELTA_REFLECT === "1",
-    allowSelfWrite: env.DELTA_ALLOW_SELF_WRITE === "1",
+    reflect: !safeMode && env.DELTA_REFLECT === "1",
+    allowSelfWrite: !safeMode && env.DELTA_ALLOW_SELF_WRITE === "1",
     strictTenant: env.DELTA_STRICT_TENANT === "1",
     trustReviewMetadata: env.DELTA_TRUST_REVIEW_METADATA === "1",
     // Review-loop vocabulary: neutral by default, one JSON env to serve another product.
@@ -297,7 +311,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     // Auxiliary-call model (Sprint 2): compaction summaries, reflection, eval_n judging are
     // summarize/pick tasks — haiku does them at 1/2–1/5 the price. DELTA_UTILITY_MODEL=""
     // disables the lane. Falls back to the main cascade per-call on any failure.
-    utilityModel: env.DELTA_UTILITY_MODEL ?? "anthropic/claude-haiku-4.5",
+    utilityModel: safeMode ? "" : (env.DELTA_UTILITY_MODEL ?? "anthropic/claude-haiku-4.5"),
     // Self-scheduling (Sprint 4): the control plane owns the clock (this VM autosuspends).
     ...(env.DELTA_CONTROL_URL ? { controlUrl: env.DELTA_CONTROL_URL } : {}),
     ...(env.DELTA_CONTROL_TOKEN ? { controlToken: env.DELTA_CONTROL_TOKEN } : {}),
@@ -415,6 +429,13 @@ function safeOrigin(url: string): string {
 function positiveInt(raw: string | undefined, fallback: number): number {
   const n = Number(raw ?? fallback);
   return Number.isFinite(n) ? Math.max(1, Math.floor(n)) : fallback;
+}
+
+function parseSkillsMode(raw: string | undefined): SkillsMode {
+  if (!raw || raw === "mcp") return "mcp";
+  if (raw === "local" || raw === "off") return raw;
+  console.error(`delta: DELTA_SKILLS='${raw}' is not recognized (mcp, local, off) — using mcp.`);
+  return "mcp";
 }
 
 /** Like positiveInt but allows 0 (a disable sentinel). Blank/NaN/Infinity → fallback, so a

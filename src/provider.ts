@@ -128,14 +128,35 @@ export type ProviderConfig = {
 export const OVERFLOW =
   /prompt is too long|request_too_large|exceeds the context window|maximum context length of [\d,]+ tokens?|maximum context length is \d+ tokens|context[_ ]length[_ ]exceeded/i;
 
+export const outputCapped = (reason: string): boolean =>
+  /^(length|max_tokens|max_output_tokens|model_length)$/i.test(reason);
+
+export type ProviderErrorClass = "moderation" | "quota" | "auth" | "transient" | "request";
+const CONTENT_POLICY_RE =
+  /content_filter|responsibleaipolicyviolation|violates our usage policies|flagged by [^.\n]{0,80}\bsafety/i;
+const QUOTA_BILLING_RE =
+  /insufficient_quota|quota exceeded|billing|out of budget|available balance/i;
+const RETRIABLE =
+  /overloaded|rate.?limit|timeout|timed out|fetch failed|socket|ECONN|network|stream ended|Unterminated/i;
+
+/** One provider-error taxonomy for retry/failover behavior and telemetry. */
+export function providerErrorClass(status: number | undefined, text: string): ProviderErrorClass {
+  if (CONTENT_POLICY_RE.test(text)) return "moderation";
+  if (QUOTA_BILLING_RE.test(text)) return "quota";
+  if (status === undefined) return "transient"; // no HTTP response = network/transport error → fail over
+  if (status === 401 || status === 403 || status === 409) return "auth";
+  if (status === 408 || status === 429 || (status ?? 0) >= 500 || RETRIABLE.test(text))
+    return "transient";
+  return "request";
+}
+
 /** Should the cascade fall through to the next provider on this result? Per §C:
  * a NoServableToken (409), an auth failure (401/403), a rate limit (429), a 5xx
  * after in-provider retries, or a network error. A plain 4xx (our bad request) is
  * NOT failover-worthy — retrying it on the next provider just burns two of them. */
 export function failoverWorthy(r: ModelResult): boolean {
   if (r.ok || r.aborted) return false;
-  const s = r.status;
-  return s === undefined || s === 409 || s === 401 || s === 403 || s === 429 || s >= 500;
+  return ["quota", "auth", "transient"].includes(providerErrorClass(r.status, r.error));
 }
 
 /** Re-establish the provider wire after a boot or a VM suspend/resume — BEST-EFFORT
@@ -336,15 +357,6 @@ const STEP_MAX_TOKENS = (() => {
 export function normalizeEffort(v: unknown): ReasoningEffort | undefined {
   const s = typeof v === "string" ? v.trim().toLowerCase() : "";
   return s || undefined;
-}
-
-const RETRIABLE =
-  /overloaded|rate.?limit|timeout|timed out|fetch failed|socket|ECONN|network|stream ended|Unterminated/i;
-
-function retriable(status: number | undefined, message: string): boolean {
-  if (status === 408 || status === 429 || (status !== undefined && status >= 500)) return true;
-  if (status !== undefined) return false; // other HTTP 4xx: our fault, don't retry
-  return RETRIABLE.test(message);
 }
 
 /** Conservative cooldown for a subscription 429 that carried no usable Retry-After — long enough
@@ -583,13 +595,14 @@ export async function chat(cfg: ProviderConfig, req: ChatRequest): Promise<Model
       last = await once(cfg, model, perCall);
       if (last.ok || last.aborted) return last;
       const s = last.status;
+      const errorClass = providerErrorClass(s, last.error);
       // Repair/cool the credential on a rejection FIRST — this must happen even if we already
       // streamed (we can't retry mid-turn, but the NEXT turn must not reuse a dead token or
       // re-hit a throttled identity). Invalidate on EVERY 401/403 (codex P1): the reauthed flag
       // below only gates the in-turn RETRY, not the cache-drop, so a persistent 401 keeps
       // re-minting across turns instead of pinning the rejected bearer until expiry.
-      if (s === 401 || s === 403) cfg.credential?.invalidate?.();
-      if (s === 429 && shared) {
+      if (errorClass === "auth" && (s === 401 || s === 403)) cfg.credential?.invalidate?.();
+      if (s === 429 && shared && errorClass === "transient") {
         // Cool the shared identity down. Honor Retry-After when parseable; else a conservative
         // default. Jitter desynchronizes the fleet so VMs don't all reopen on the same boundary.
         const base = last.retryAfter ?? DEFAULT_429_COOLDOWN_MS;
@@ -600,7 +613,12 @@ export async function chat(cfg: ProviderConfig, req: ChatRequest): Promise<Model
       // token revoked/rotated before its claimed expiry (the broker may have a fresher one). This
       // re-auth is NOT a transient-error attempt, so don't spend a retry slot on it (codex P2): the
       // `attempt--` cancels the loop's `attempt++` so a later 5xx still gets its full retry budget.
-      if ((s === 401 || s === 403) && cfg.credential?.invalidate && !reauthed) {
+      if (
+        errorClass === "auth" &&
+        (s === 401 || s === 403) &&
+        cfg.credential?.invalidate &&
+        !reauthed
+      ) {
         reauthed = true;
         attempt--;
         reportRetry(req, {
@@ -614,12 +632,13 @@ export async function chat(cfg: ProviderConfig, req: ChatRequest): Promise<Model
         });
         continue;
       }
-      // Credential-wide failures aren't model-specific — don't try this provider's other models,
-      // fail over to the next provider. A 429 is identity-wide only for a SHARED subscription
-      // credential; a metered/keyed provider falls through to its normal retry+next-model path.
-      // chatVia owns the next_provider report — only IT knows whether another provider exists.
-      if (s === 401 || s === 403 || s === 409 || (s === 429 && shared)) return last;
-      const exhausted = !retriable(s, last.error) || attempt >= maxRetries;
+      // A shared subscription 429 is identity-wide: cool it above and let chatVia fail over,
+      // rather than retrying this provider or hammering another model with the same identity.
+      if (errorClass === "transient" && s === 429 && shared) return last;
+      // Policy/request failures are deterministic; quota/auth failures belong to the
+      // provider identity, not another model on the same provider.
+      if (errorClass !== "transient") return last;
+      const exhausted = attempt >= maxRetries;
       const nextModel = cfg.models[cfg.models.indexOf(model) + 1];
       // Report only real transitions: a retry that WILL happen, or a move to a model that
       // EXISTS. The terminal failure of the last model is chatVia's (or the turn's) story.
@@ -1507,6 +1526,8 @@ async function streamResponses(
         case "response.completed":
         case "response.incomplete": {
           completed = true;
+          if (ev.type === "response.incomplete")
+            finishReason = ev.response?.incomplete_details?.reason ?? "incomplete";
           const u = ev.response?.usage;
           if (u) {
             usage.input = u.input_tokens ?? 0;
@@ -1561,6 +1582,7 @@ type ResponsesEvent = {
   message?: string;
   response?: {
     error?: { message?: string };
+    incomplete_details?: { reason?: string };
     usage?: {
       input_tokens?: number;
       output_tokens?: number;

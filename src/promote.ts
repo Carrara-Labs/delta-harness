@@ -108,6 +108,8 @@ export async function drainOnce(deps: PromoteDeps): Promise<DrainResult> {
       .all(binding, minRuns) as Row[];
 
     for (const row of rows) {
+      if (row.destination_role === "capability" && typeof deps.capability.propose !== "function")
+        continue;
       const adapter = row.destination_role === "capability" ? deps.capability : deps.curated;
       let bound = false;
       try {
@@ -130,23 +132,31 @@ export async function drainOnce(deps: PromoteDeps): Promise<DrainResult> {
       let error = "adapter returned error";
       try {
         if (row.destination_role === "capability") {
-          const base = await deps.capability.get(row.name, deps.ctx);
-          result = await deps.capability.propose(
-            {
-              name: row.name,
-              body: base ? mergeSkillBody(base.body, row.body) : row.body,
-              description: row.content,
-              idempotencyKey: row.idempotency_key,
-              ...(base
-                ? {
-                    basedOnVersion: base.version,
-                    rebuild: (freshBody: string) => mergeSkillBody(freshBody, row.body),
-                  }
-                : {}),
-              note: `Promoted reflection from run ${row.run_id ?? "unknown"}.`,
-            },
-            deps.ctx,
-          );
+          // A use-only backend (e.g. local skills) has no propose — nothing should have
+          // staged a capability row for it, but fail gracefully rather than assert. Bind to
+          // preserve the adapter's `this` (it reaches its own tools).
+          const propose = deps.capability.propose?.bind(deps.capability);
+          if (!propose) {
+            error = "capability backend is use-only (no propose)";
+          } else {
+            const base = await deps.capability.get(row.name, deps.ctx);
+            result = await propose(
+              {
+                name: row.name,
+                body: base ? mergeSkillBody(base.body, row.body) : row.body,
+                description: row.content,
+                idempotencyKey: row.idempotency_key,
+                ...(base
+                  ? {
+                      basedOnVersion: base.version,
+                      rebuild: (freshBody: string) => mergeSkillBody(freshBody, row.body),
+                    }
+                  : {}),
+                note: `Promoted reflection from run ${row.run_id ?? "unknown"}.`,
+              },
+              deps.ctx,
+            );
+          }
         } else {
           result = await deps.curated.propose(
             {

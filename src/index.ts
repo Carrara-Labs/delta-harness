@@ -16,6 +16,7 @@ import { Events } from "./events";
 import { Exporter } from "./exporter";
 import { sweepTrash } from "./files";
 import { acquireLease, releaseLease, renewLease } from "./lease";
+import { LocalSkillsAdapter } from "./local-skills";
 import { McpRegistry } from "./mcp";
 import { fileRefreshStore, RefreshingMcpCredential } from "./mcp-refresh";
 import { loadPolicy } from "./policy";
@@ -26,6 +27,7 @@ import { pruneLocalState } from "./retention";
 import type { Deps } from "./run";
 import { loadSelf } from "./self";
 import { createServer } from "./server";
+import { stripSkillRegistryTools } from "./skill-registry";
 import { elide, testTools } from "./tools";
 import { HARNESS_VERSION } from "./version";
 
@@ -76,6 +78,7 @@ function buildDeps(cfg: Config, dbPath: string): Deps {
     tools,
     workspace: cfg.workspace,
     profile: cfg.profile,
+    safeMode: cfg.safeMode,
     allowSelfWrite: cfg.allowSelfWrite,
     compactAtTokens: cfg.compactAtTokens,
     toolTimeoutMs: cfg.toolTimeoutMs,
@@ -89,6 +92,8 @@ function buildDeps(cfg: Config, dbPath: string): Deps {
     promoteMinRuns: cfg.promoteMinRuns,
     promoteClaimTtlMs: cfg.promoteClaimTtlMs,
     capabilitySearchK: cfg.capabilitySearchK,
+    skills: cfg.skills,
+    ...(cfg.skills === "local" ? { capability: new LocalSkillsAdapter(cfg.workspace) } : {}),
     ...(cfg.reasoningEffort ? { reasoningEffort: cfg.reasoningEffort } : {}),
     vision: cfg.vision,
     ...(cfg.agentId ? { agentId: cfg.agentId } : {}),
@@ -107,6 +112,8 @@ function buildDeps(cfg: Config, dbPath: string): Deps {
  * next run. A missing DELTA.md is fine (the neutral base persona stands); an oversized
  * POLICY.md throws (fail boot — a fixed rule is never elided). */
 async function loadIdentity(deps: Deps, cfg: Config): Promise<void> {
+  deps.primaryModel = cfg.provider.models[0];
+  if (cfg.safeMode) return;
   const self = await loadSelf(cfg.workspace, cfg.selfMaxTokens);
   if (self.charter.persona || self.charter.mission || self.charter.success)
     deps.charter = self.charter;
@@ -130,7 +137,6 @@ async function loadIdentity(deps: Deps, cfg: Config): Promise<void> {
       2_000,
     );
   if (context.turn) deps.contextTurn = context.turn;
-  deps.primaryModel = cfg.provider.models[0];
 }
 
 // Local conveniences (spec §2–3), handled before any daemon boot. `dev` spawns the
@@ -273,53 +279,57 @@ process.once("SIGINT", () => shutdown(0));
 // Product-neutral: a product points DELTA_MCP_REFRESH_SERVER at its own backend.
 // The required trio to attach the credential; the wider set catches a lone stray var
 // (a TOKEN/CLIENT_ID with no URL) so a half-configured refresh warns instead of no-oping.
-const refreshRequired = [
-  process.env.DELTA_MCP_REFRESH_URL,
-  process.env.DELTA_MCP_REFRESH_FILE,
-  process.env.DELTA_MCP_REFRESH_SERVER,
-];
-const refreshAny =
-  refreshRequired.some(Boolean) ||
-  Boolean(process.env.DELTA_MCP_REFRESH_TOKEN) ||
-  Boolean(process.env.DELTA_MCP_REFRESH_CLIENT_ID);
-if (refreshRequired.every(Boolean)) {
-  const serverName = process.env.DELTA_MCP_REFRESH_SERVER;
-  const credential = new RefreshingMcpCredential({
-    tokenUrl: process.env.DELTA_MCP_REFRESH_URL as string,
-    clientId: process.env.DELTA_MCP_REFRESH_CLIENT_ID ?? "delta-agent",
-    ...fileRefreshStore(
-      process.env.DELTA_MCP_REFRESH_FILE as string,
-      process.env.DELTA_MCP_REFRESH_TOKEN,
-    ),
-  });
-  let attached = 0;
-  for (const s of cfg.mcpServers) {
-    if (s.transport === "http" && s.name === serverName) {
-      s.credential = credential;
-      attached++;
+if (!cfg.safeMode) {
+  const refreshRequired = [
+    process.env.DELTA_MCP_REFRESH_URL,
+    process.env.DELTA_MCP_REFRESH_FILE,
+    process.env.DELTA_MCP_REFRESH_SERVER,
+  ];
+  const refreshAny =
+    refreshRequired.some(Boolean) ||
+    Boolean(process.env.DELTA_MCP_REFRESH_TOKEN) ||
+    Boolean(process.env.DELTA_MCP_REFRESH_CLIENT_ID);
+  if (refreshRequired.every(Boolean)) {
+    const serverName = process.env.DELTA_MCP_REFRESH_SERVER;
+    const credential = new RefreshingMcpCredential({
+      tokenUrl: process.env.DELTA_MCP_REFRESH_URL as string,
+      clientId: process.env.DELTA_MCP_REFRESH_CLIENT_ID ?? "delta-agent",
+      ...fileRefreshStore(
+        process.env.DELTA_MCP_REFRESH_FILE as string,
+        process.env.DELTA_MCP_REFRESH_TOKEN,
+      ),
+    });
+    let attached = 0;
+    for (const s of cfg.mcpServers) {
+      if (s.transport === "http" && s.name === serverName) {
+        s.credential = credential;
+        attached++;
+      }
     }
-  }
-  // Don't fail silently: a provisioning typo (wrong server name) leaves the MCP calls
-  // unauthenticated, which surfaces later as opaque 401s — say so at boot instead.
-  if (!attached)
+    // Don't fail silently: a provisioning typo (wrong server name) leaves the MCP calls
+    // unauthenticated, which surfaces later as opaque 401s — say so at boot instead.
+    if (!attached)
+      console.error(
+        `delta: DELTA_MCP_REFRESH_SERVER='${serverName}' matched no http MCP server — refresh credential NOT attached.`,
+      );
+  } else if (refreshAny) {
     console.error(
-      `delta: DELTA_MCP_REFRESH_SERVER='${serverName}' matched no http MCP server — refresh credential NOT attached.`,
+      "delta: partial DELTA_MCP_REFRESH_* config — need URL + FILE + SERVER together. Refresh credential NOT attached.",
     );
-} else if (refreshAny) {
-  console.error(
-    "delta: partial DELTA_MCP_REFRESH_* config — need URL + FILE + SERVER together. Refresh credential NOT attached.",
-  );
+  }
+
+  // Connect configured MCP servers (spec §D). Their tools fold into the registry
+  // and appear in the tool directory. A failing server is logged, never fatal.
+  mcp = new McpRegistry(deps.tools);
+  for (const server of cfg.mcpServers) {
+    const r = await mcp.add(server);
+    console.log(
+      r.ok ? `mcp: ${server.name} → ${r.tools} tools` : `mcp: ${server.name} failed — ${r.error}`,
+    );
+  }
 }
 
-// Connect configured MCP servers (spec §D). Their tools fold into the registry
-// and appear in the tool directory. A failing server is logged, never fatal.
-mcp = new McpRegistry(deps.tools);
-for (const server of cfg.mcpServers) {
-  const r = await mcp.add(server);
-  console.log(
-    r.ok ? `mcp: ${server.name} → ${r.tools} tools` : `mcp: ${server.name} failed — ${r.error}`,
-  );
-}
+if (cfg.skills !== "mcp") stripSkillRegistryTools(deps.tools);
 
 await loadIdentity(deps, cfg); // DELTA.md self-file + POLICY.md contract
 
@@ -403,5 +413,5 @@ if (cfg.retentionSweepMs > 0) {
   retentionTimer.unref?.(); // a pending sweep must never hold the process open
 }
 console.log(
-  `delta listening on :${server.port} · db ${cfg.dbPath} · workspace ${cfg.workspace} · providers ${cfg.providers.map((p) => p.label ?? p.baseUrl).join(" → ")} · models ${cfg.provider.models.join(" → ")}${cfg.telemetryUrl ? ` · telemetry → ${cfg.telemetryUrl}` : ""}`,
+  `delta listening on :${server.port} · db ${cfg.dbPath} · workspace ${cfg.workspace}${cfg.safeMode ? " · SAFE MODE" : ""} · providers ${cfg.providers.map((p) => p.label ?? p.baseUrl).join(" → ")} · models ${cfg.provider.models.join(" → ")}${cfg.telemetryUrl ? ` · telemetry → ${cfg.telemetryUrl}` : ""}`,
 );

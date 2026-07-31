@@ -17,7 +17,7 @@ import { expandImageMarkers } from "./files";
 import { hydrate, type RecalledMemory, recallAgentMemory } from "./hydrate";
 import type { Policy } from "./policy";
 import { renderPolicy } from "./policy";
-import { getProfile, grantSelfWrite } from "./profiles";
+import { getProfile, grantSelfWrite, SAFE_FLOOR } from "./profiles";
 import { renderTemplate, turnVars } from "./promptcontext";
 import type {
   AssistantMsg,
@@ -28,7 +28,13 @@ import type {
   ToolSpec,
   Usage,
 } from "./provider";
-import { KNOWN_EFFORTS, normalizeEffort, OVERFLOW } from "./provider";
+import {
+  KNOWN_EFFORTS,
+  normalizeEffort,
+  OVERFLOW,
+  outputCapped,
+  providerErrorClass,
+} from "./provider";
 import { childTools, runResearch } from "./research";
 import { retrieveSkills } from "./retrieval";
 import { scrubText } from "./scrub";
@@ -104,6 +110,8 @@ export type Deps = {
   agentId?: string;
   /** Placement profile ceiling; requests may narrow, never escalate. */
   profile?: string;
+  /** Operator-selected neutral recovery branch; bypasses profile/env expansion. */
+  safeMode?: boolean;
   /** Grant `remember` self-write to a chat placement (trusted-gateway deployments). */
   allowSelfWrite?: boolean;
   /** Compact older turns once a call's prompt exceeds this many input tokens. */
@@ -135,6 +143,8 @@ export type Deps = {
   vocab?: Vocab;
   /** Versioned procedure store (portability seam); the skill registry over the allowed tool map by default. */
   capability?: CapabilityAdapter;
+  /** Capability backend selector; undefined is the historical MCP default. */
+  skills?: "mcp" | "local" | "off";
   /** Number of task-relevant capabilities surfaced ephemerally per run. */
   capabilitySearchK?: number;
   /** Reasoning effort for the main model (extended thinking); per-run metadata overrides. */
@@ -264,17 +274,18 @@ export async function executeRun(
     deps.reasoningEffort;
   // Placement ceiling (untrusted metadata may only narrow it), then the
   // trusted-gateway self-write grant (off by default). See grantSelfWrite.
-  const profile = grantSelfWrite(
-    getProfile(req.metadata?.profile, deps.profile),
-    deps.allowSelfWrite ?? false,
-  );
+  const profile = deps.safeMode
+    ? structuredClone(SAFE_FLOOR)
+    : grantSelfWrite(getProfile(req.metadata?.profile, deps.profile), deps.allowSelfWrite ?? false);
   const vocab = deps.vocab ?? NEUTRAL_VOCAB;
   // Run-local snapshot of the writable self-file (codex #9/#10): DELTA.md is read ONCE
   // here and used for every turn of this run. A self-edit during the run lands on disk
   // but is invisible to THIS run — it takes effect on the next run. Never read from a
   // shared deps field, so concurrent runs can't race on it.
   const selfMaxBytes = deps.selfMaxBytes ?? 3200;
-  const self = await loadSelf(resolve(deps.workspace), Math.max(1, Math.floor(selfMaxBytes / 4)));
+  const self: Awaited<ReturnType<typeof loadSelf>> = deps.safeMode
+    ? { charter: {}, bytes: 0, elided: false }
+    : await loadSelf(resolve(deps.workspace), Math.max(1, Math.floor(selfMaxBytes / 4)));
   // Self-file pressure guard: an over-cap DELTA.md is silently ELIDED in every prompt (the
   // agent runs with a hole in its own identity) and a nearly-full one refuses every `remember`
   // (no room left to learn). Both were found live in production bundles by the 2026-07-30
@@ -473,11 +484,10 @@ export async function executeRun(
         }
       : {}),
   };
-  const capability = deps.capability ?? new SkillRegistryAdapter(allowedMap);
   const retrievalBlock =
-    typeof req.input === "string" && req.input.trim()
+    deps.skills !== "off" && typeof req.input === "string" && req.input.trim()
       ? await Promise.race([
-          retrieveSkills(capability, req.input, ctx, {
+          retrieveSkills(deps.capability ?? new SkillRegistryAdapter(allowedMap), req.input, ctx, {
             k: deps.capabilitySearchK ?? 5,
             events,
             spine,
@@ -510,7 +520,7 @@ export async function executeRun(
       .get(run.session_id);
     let block: string | null = null;
     const recalled: RecalledMemory[] = [];
-    if (sessionEmpty) {
+    if (sessionEmpty && !deps.safeMode) {
       // Subject-scoped recency reads still require a subject (no cross-user bleed).
       // The task-keyed search runs ONLY under a per-run act-as token — with or
       // without a subject: the knowledge base's search_text ignores subject args entirely,
@@ -669,14 +679,14 @@ export async function executeRun(
     // so the fixed contract never omits its write-rail rule before a tool activates.
     const writeToolName = [...allowedMap.keys()].find((n) => n.endsWith(vocab.writeVerbSuffix));
     const policyText =
-      deps.policy && (deps.policy.fromFile || writeToolName)
+      !deps.safeMode && deps.policy && (deps.policy.fromFile || writeToolName)
         ? renderPolicy(deps.policy.template, vocab, writeToolName ?? "your review-rail write tool")
         : undefined;
     const system = buildSpine({
       ...(deps.agentId ? { agentId: deps.agentId } : {}),
       pinned: [...tools.values()].filter((t) => t.name !== searchTool.name),
       searchable: allowedMap.size - active.size,
-      ...(deps.contextStable ? { context: deps.contextStable } : {}),
+      ...(!deps.safeMode && deps.contextStable ? { context: deps.contextStable } : {}),
       ...(self.text ? { self: self.text } : {}),
       ...(policyText ? { policy: policyText } : {}),
     });
@@ -686,7 +696,7 @@ export async function executeRun(
     // values never bust the prefix (context) and per-turn instructions specialize the task
     // rather than override the Policy (codex #13).
     const ephemeral: ChatMsg[] = [];
-    if (deps.contextTurn) {
+    if (!deps.safeMode && deps.contextTurn) {
       // Cap the rendered block (codex #12): even with per-value + key-count caps on the
       // caller's request.* metadata, bound the whole thing so a big template can't bloat
       // the per-turn prompt. Elide keeps head + tail.
@@ -851,6 +861,7 @@ export async function executeRun(
       // never 300 chars of provider-controlled text as an exported attribute.
       onRetry: (info) => {
         retries++;
+        const errorClass = providerErrorClass(info.status, info.error);
         events.emit(
           "model.retry",
           { ...spine, turn },
@@ -860,7 +871,8 @@ export async function executeRun(
             ...(info.provider ? { "gen_ai.provider": info.provider } : {}),
             attempt: info.attempt,
             ...(info.status !== undefined ? { status: info.status } : {}),
-            "error.type": classifyRetryError(info.status, info.error),
+            "error.type": errorClass,
+            "error.class": errorClass,
             message: info.error.replace(/\s+/g, " ").slice(0, 160),
             next_delay_ms: info.nextDelayMs,
           },
@@ -905,7 +917,15 @@ export async function executeRun(
           }
         }
       }
-      events.emit("error", { ...spine, turn }, { "error.type": "model", message: result.error });
+      events.emit(
+        "error",
+        { ...spine, turn },
+        {
+          "error.type": "model",
+          "error.class": providerErrorClass(result.status, result.error),
+          message: result.error,
+        },
+      );
       return finalize(deps, run, spine, "failed", result.error, result.model, usage);
     }
 
@@ -1005,8 +1025,12 @@ export async function executeRun(
           }),
         }
       : null;
-    // Assistant message + tool intents commit atomically: after a crash the
-    // journal always knows which calls were armed.
+    const cappedCalls = outputCapped(result.finishReason) ? (result.message.tool_calls ?? []) : [];
+    const capResult = (name: string) =>
+      `[tool error] output cap (${result.finishReason}) may have truncated '${name}'; ` +
+      "the call was not executed. Reissue a smaller/chunked call.";
+    // Assistant message + tool intents commit atomically. Output-capped calls land
+    // already answered/done, so neither normal execution nor resume can fire them.
     db.transaction(() => {
       insertMessage(db, run, result.message);
       db.query("UPDATE runs SET usage = ?, steps = ?, last_input = ? WHERE id = ?").run(
@@ -1016,10 +1040,30 @@ export async function executeRun(
         run.id,
       );
       for (const call of result.message.tool_calls ?? []) {
-        db.query(
-          `INSERT OR IGNORE INTO journal (run_id, call_id, tool, args, status, created_at)
-           VALUES (?, ?, ?, ?, 'intent', ?)`,
-        ).run(run.id, call.id, call.function.name, call.function.arguments, Date.now());
+        if (cappedCalls.includes(call)) {
+          const synthetic = capResult(call.function.name);
+          db.query(
+            `INSERT INTO journal
+               (run_id, call_id, tool, args, status, result, created_at, finished_at)
+             VALUES (?, ?, ?, ?, 'done', ?, ?, ?)
+             ON CONFLICT (run_id, call_id) DO UPDATE SET
+               status='done', result=excluded.result, finished_at=excluded.finished_at`,
+          ).run(
+            run.id,
+            call.id,
+            call.function.name,
+            call.function.arguments,
+            synthetic,
+            Date.now(),
+            Date.now(),
+          );
+          insertMessage(db, run, { role: "tool", tool_call_id: call.id, content: synthetic });
+        } else {
+          db.query(
+            `INSERT OR IGNORE INTO journal (run_id, call_id, tool, args, status, created_at)
+             VALUES (?, ?, ?, ?, 'intent', ?)`,
+          ).run(run.id, call.id, call.function.name, call.function.arguments, Date.now());
+        }
       }
       if (capture)
         db.query(
@@ -1027,6 +1071,16 @@ export async function executeRun(
            VALUES (?, ?, ?, ?, ?, ?)`,
         ).run(run.id, run.session_id, turn, capture.req, capture.res, Date.now());
     })();
+    for (const call of cappedCalls)
+      events.emit(
+        "tool.result",
+        { ...spine, turn },
+        {
+          "gen_ai.tool.name": call.function.name,
+          is_error: true,
+          "error.class": "tool_args_truncated",
+        },
+      );
     events.emit(
       "checkpoint",
       { ...spine, turn },
@@ -1045,18 +1099,6 @@ function pendingCalls(db: Database, run: RunRow, assistant: AssistantMsg) {
       .map((m) => (m as { tool_call_id: string }).tool_call_id),
   );
   return (assistant.tool_calls ?? []).filter((c) => !answered.has(c.id));
-}
-
-/** Stable, low-cardinality error class for a model.retry event — the exported facet.
- * The free-text message stays short + sanitized; dashboards group on THIS. */
-function classifyRetryError(status: number | undefined, error: string): string {
-  if (status === 429) return "rate_limit";
-  if (status === 401 || status === 403) return "auth";
-  if (status !== undefined && status >= 500) return "server";
-  if (status !== undefined) return "client";
-  if (/timed out|timeout/i.test(error)) return "timeout";
-  if (/overloaded/i.test(error)) return "overloaded";
-  return "network";
 }
 
 /** A4 retry-loop breaker state (per run, in-memory). `disabled` = tools quarantined this run;
@@ -1095,6 +1137,9 @@ const categoricalErr = (result: string): string | null =>
  * nothing rather than a junk bucket. */
 export function toolErrorClass(result: string): string | undefined {
   if (!result.startsWith("[tool error]")) return undefined;
+  if (result.includes("output cap (") && result.includes("the call was not executed"))
+    return "tool_args_truncated";
+  if (result.includes("arguments failed to parse")) return "tool_args_invalid";
   if (/DELTA\.md would be \d+ bytes \(cap /.test(result)) return "self_cap";
   if (result.includes("DELTA.md was updated by another run")) return "self_conflict";
   if (result.includes("looks like your whole system prompt")) return "self_spine_echo";
@@ -1127,7 +1172,14 @@ const STORM_CLASSES = new Set(["self_cap", "self_spine_echo", "self_empty", "sel
  * found"). Exported for tests. */
 export function breakerKey(result: string): string | null {
   const cls = toolErrorClass(result);
-  if (cls === "self_conflict" || cls === "transient" || cls === "timeout") return null;
+  if (
+    cls === "self_conflict" ||
+    cls === "transient" ||
+    cls === "timeout" ||
+    cls === "tool_args_invalid" ||
+    cls === "tool_args_truncated"
+  )
+    return null;
   if (cls && STORM_CLASSES.has(cls)) return `[class] ${cls}`;
   return categoricalErr(result);
 }
@@ -1163,6 +1215,53 @@ function aggregateBreaker(db: Database, run: RunRow, breaker: Breaker): void {
         "UPDATE messages SET msg = json_set(msg, '$.content', json_extract(msg, '$.content') || ?) WHERE run_id = ? AND json_extract(msg, '$.tool_call_id') = ?",
       ).run(norm, run.id, lastCall);
     }
+  }
+}
+
+function escapeLiteralControls(raw: string): string {
+  let out = "";
+  let quoted = false;
+  let escaped = false;
+  for (const ch of raw) {
+    if (!quoted) {
+      out += ch;
+      if (ch === '"') quoted = true;
+    } else if (escaped) {
+      out += ch;
+      escaped = false;
+    } else if (ch === "\\") {
+      out += ch;
+      escaped = true;
+    } else if (ch === '"') {
+      out += ch;
+      quoted = false;
+    } else {
+      out += ch.charCodeAt(0) < 0x20 ? JSON.stringify(ch).slice(1, -1) : ch;
+    }
+  }
+  return out;
+}
+
+/** Parse once as-is, then make one bounded syntax-only repair pass. */
+export function parseToolArgs(raw: string): {
+  args?: Record<string, unknown>;
+  repaired: boolean;
+} {
+  const parseObject = (text: string): Record<string, unknown> | undefined => {
+    const value = JSON.parse(text) as unknown;
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
+  };
+  try {
+    return { args: parseObject(raw || "{}"), repaired: false };
+  } catch {}
+  if (raw.length > 64_000) return { repaired: false };
+  const fixed = escapeLiteralControls(raw).replace(/,\s*([}\]])/g, "$1");
+  try {
+    return { args: parseObject(fixed), repaired: fixed !== raw };
+  } catch {
+    return { repaired: false };
   }
 }
 
@@ -1206,22 +1305,13 @@ async function execCall(
     // (fetch/Bun.spawn); true preemption needs process isolation (backlog: exec/fs seam).
     const toolMs = tool.timeoutMs ?? deps.toolTimeoutMs ?? 0;
     try {
-      let args: Record<string, unknown>;
-      try {
-        args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
-      } catch (e) {
-        // An unparseable arguments string is almost always TRUNCATION: the turn hit the
-        // per-call output cap mid tool_use JSON. A raw SyntaxError sends the model into a
-        // blind retry loop (the identical call truncates identically); name the mechanism
-        // and the way out instead.
+      const parsed = parseToolArgs(call.function.arguments);
+      if (!parsed.args)
         throw new Error(
-          `tool '${name}' arguments failed to parse (${(e as Error).message}); ` +
-            `the ${call.function.arguments?.length ?? 0}-char arguments string is likely ` +
-            `truncated at the per-call output cap - retrying the same call can never work; ` +
-            `send a smaller payload (chunk it via the tool's staging path if it has one), ` +
-            `or the operator can raise DELTA_STEP_MAX_TOKENS`,
+          `tool '${name}' arguments failed to parse as a JSON object after one bounded repair; ` +
+            `reissue valid arguments (use a smaller/chunked payload if they were cut)`,
         );
-      }
+      const args = parsed.args;
       if (toolMs > 0) {
         // Compose the caller's cancel with a fresh timeout controller; the timer is cleared the
         // moment the tool settles, so a fast call leaves no lingering timer.

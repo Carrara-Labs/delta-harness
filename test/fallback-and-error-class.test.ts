@@ -207,7 +207,7 @@ describe("self.pressure", () => {
 
   test("an over-cap self file fires the event with elided=true", async () => {
     const deps = makeDeps(async () => textResult("ok"), new Map(), {
-      workspace: wsWithSelf("# Persona\n" + "x".repeat(400)),
+      workspace: wsWithSelf(`# Persona\n${"x".repeat(400)}`),
       selfMaxBytes: 100,
     });
     const queue = new Queue(deps);
@@ -222,7 +222,7 @@ describe("self.pressure", () => {
 
   test("a nearly-full self file (>90% of cap) fires with elided=false", async () => {
     const deps = makeDeps(async () => textResult("ok"), new Map(), {
-      workspace: wsWithSelf("# Persona\n" + "x".repeat(85)), // 95B vs 100B cap
+      workspace: wsWithSelf(`# Persona\n${"x".repeat(85)}`), // 95B vs 100B cap
       selfMaxBytes: 100,
     });
     const queue = new Queue(deps);
@@ -246,7 +246,7 @@ describe("self.pressure", () => {
     // Over 1MB loadSelf refuses to read the file at all — the agent runs with NO self-file.
     // That is the loudest integrity failure and must not stay silent (codex 0.2.6 P2).
     const deps = makeDeps(async () => textResult("ok"), new Map(), {
-      workspace: wsWithSelf("# Persona\n" + "x".repeat(1_000_050)),
+      workspace: wsWithSelf(`# Persona\n${"x".repeat(1_000_050)}`),
       selfMaxBytes: 3200,
     });
     const queue = new Queue(deps);
@@ -266,7 +266,7 @@ describe("error.message on tool.result", () => {
       description: "always fails with a long multi-line error",
       parameters: { type: "object", properties: {} },
       idempotent: true,
-      execute: async () => "[tool error] line one\n  line two   spaced " + "z".repeat(500),
+      execute: async () => `[tool error] line one\n  line two   spaced ${"z".repeat(500)}`,
     };
     let sent = false;
     const chat = async () => {
