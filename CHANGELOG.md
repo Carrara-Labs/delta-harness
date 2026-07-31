@@ -6,6 +6,36 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.7] — 2026-07-31
+
+Agents that know their limits and can't wedge. The two run tiers are renamed to name what
+they are, the tool set becomes an operator knob, and a poisoned config is always recoverable.
+Default behavior is unchanged: with the new env vars unset, a deployment runs exactly as 0.2.6.
+
+### Added
+- Envelope knob: `DELTA_ALLOWED_TOOLS` / `DELTA_PINNED_TOOLS` define a custom capability
+  envelope. They narrow within the tier and cannot escalate it (a `safe` daemon stays safe);
+  build a custom powerful envelope from `trusted` plus a list.
+- Budget self-awareness: a one-time qualitative wrap-up nudge to the model once any budget
+  axis passes ~85%. Not a raw counter.
+- Resilience: an output-capped tool call is reissued smaller instead of executed truncated;
+  one deterministic tool-argument repair pass for slightly-malformed calls; unified provider
+  error classification (moderation terminal, quota fails over, transient retries).
+- Safe mode: `DELTA_SAFE_MODE=1` boots a neutral, safe-floor, no-MCP agent so a poisoned
+  self-file or broken config can never wedge the daemon. Self-file revert via the existing
+  Cockpit revision endpoints.
+- Local skills: `DELTA_SKILLS=local` reads a `skills/<name>/SKILL.md` folder (use-only,
+  progressive disclosure — only name and description enter the prompt). `off` hides skills
+  entirely; `mcp` (default) is unchanged.
+- `GET /v1/status`: a secret-free model / effort / profile / budget read for edge tooling.
+
+### Changed
+- The two run tiers are renamed `chat` → `safe` and `work` → `trusted` to name the capability
+  axis, not an activity. The old names remain as aliases, so existing `DELTA_PROFILE=work`
+  deployments resolve unchanged; the canonical name in telemetry and `/v1/status` is the new one.
+- A committed self-file (`remember`) write on a budget-failed turn is now surfaced in the
+  failure result instead of silently swallowed (error-as-value).
+
 ## [0.2.6] — 2026-07-30
 
 A default deployment that describes itself. Two telemetry blind spots are closed, so a
