@@ -35,6 +35,36 @@ export type OutboxRow = {
   next_attempt_at: number;
 };
 
+export type ScheduleOrigin = {
+  conversationId: string;
+  actorId: string;
+  chatId: string;
+};
+
+export type ScheduleSpec =
+  | { kind: "once"; runAt: string }
+  | { kind: "interval"; intervalMs: number };
+
+export type ScheduleView = {
+  id: string;
+  state: string;
+  specKind: string;
+  nextRunAt: string | null;
+  prompt: string;
+};
+
+type ScheduleRow = {
+  id: string;
+  conversation_id: string;
+  actor_id: string;
+  chat_id: string;
+  prompt: string;
+  spec_kind: string;
+  interval_ms: number | null;
+  state: string;
+  next_run_at: number | null;
+};
+
 const MAX_SEND_ATTEMPTS = 5;
 
 export class Store {
@@ -85,6 +115,22 @@ export class Store {
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS schedules (
+        id              TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        actor_id        TEXT NOT NULL,
+        chat_id         TEXT NOT NULL,
+        prompt          TEXT NOT NULL,
+        spec_kind       TEXT NOT NULL,
+        spec_json       TEXT NOT NULL,
+        interval_ms     INTEGER,
+        state           TEXT NOT NULL,
+        next_run_at     INTEGER,
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS schedules_due ON schedules(state, next_run_at);
     `);
     // Migrate older tables in place (add columns absent on a pre-existing DB).
     for (const alter of [
@@ -262,5 +308,137 @@ export class Store {
         `INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
       )
       .run(key, String(value));
+  }
+
+  // --- schedules --------------------------------------------------------
+
+  createSchedule(
+    origin: ScheduleOrigin,
+    prompt: string,
+    spec: ScheduleSpec,
+    now = Date.now(),
+  ): ScheduleView {
+    const id = crypto.randomUUID();
+    const nextRunAt = spec.kind === "once" ? Date.parse(spec.runAt) : now + spec.intervalMs;
+    this.db
+      .query(
+        `INSERT INTO schedules
+           (id, conversation_id, actor_id, chat_id, prompt, spec_kind, spec_json,
+            interval_ms, state, next_run_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
+      )
+      .run(
+        id,
+        origin.conversationId,
+        origin.actorId,
+        origin.chatId,
+        prompt,
+        spec.kind,
+        JSON.stringify(spec),
+        spec.kind === "interval" ? spec.intervalMs : null,
+        nextRunAt,
+        now,
+        now,
+      );
+    return {
+      id,
+      state: "active",
+      specKind: spec.kind,
+      nextRunAt: new Date(nextRunAt).toISOString(),
+      prompt,
+    };
+  }
+
+  listSchedules(origin: ScheduleOrigin): ScheduleView[] {
+    const rows = this.db
+      .query(
+        `SELECT id, state, spec_kind, next_run_at, prompt FROM schedules
+         WHERE conversation_id = ? AND actor_id = ? AND chat_id = ?
+         ORDER BY created_at ASC, rowid ASC`,
+      )
+      .all(origin.conversationId, origin.actorId, origin.chatId) as Array<{
+      id: string;
+      state: string;
+      spec_kind: string;
+      next_run_at: number | null;
+      prompt: string;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      state: row.state,
+      specKind: row.spec_kind,
+      nextRunAt: row.next_run_at === null ? null : new Date(row.next_run_at).toISOString(),
+      prompt: row.prompt,
+    }));
+  }
+
+  /** Idempotently cancel an owned schedule; false hides absent and cross-origin ids alike. */
+  cancelSchedule(id: string, origin: ScheduleOrigin): boolean {
+    const owned = this.db
+      .query(
+        `SELECT 1 FROM schedules
+         WHERE id = ? AND conversation_id = ? AND actor_id = ? AND chat_id = ?`,
+      )
+      .get(id, origin.conversationId, origin.actorId, origin.chatId);
+    if (!owned) return false;
+    this.db
+      .query(
+        `UPDATE schedules SET state = 'cancelled', next_run_at = NULL, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(Date.now(), id);
+    return true;
+  }
+
+  /** Atomically admit each due occurrence and advance its durable clock. */
+  admitDue(now = Date.now()): number {
+    let admitted = 0;
+    const tx = this.db.transaction(() => {
+      const rows = this.db
+        .query(
+          `SELECT id, conversation_id, actor_id, chat_id, prompt, spec_kind,
+                  interval_ms, state, next_run_at
+           FROM schedules
+           WHERE state = 'active' AND next_run_at <= ?
+           ORDER BY next_run_at ASC, rowid ASC`,
+        )
+        .all(now) as ScheduleRow[];
+      for (const row of rows) {
+        const scheduled = row.next_run_at;
+        if (scheduled === null) continue;
+        const inserted = this.db
+          .query(
+            `INSERT OR IGNORE INTO inbox
+               (event_id, conversation_id, actor_id, chat_id, text, attachments, received_at)
+             VALUES (?, ?, ?, ?, ?, NULL, ?)`,
+          )
+          .run(
+            `schedule:${row.id}:${scheduled}`,
+            row.conversation_id,
+            row.actor_id,
+            row.chat_id,
+            `[Scheduled wake at ${new Date(scheduled).toISOString()}]\n${row.prompt}`,
+            now,
+          );
+        admitted += inserted.changes;
+
+        if (row.spec_kind === "interval" && row.interval_ms) {
+          const steps = Math.floor(Math.max(0, now - scheduled) / row.interval_ms) + 1;
+          const next = scheduled + steps * row.interval_ms;
+          this.db
+            .query(`UPDATE schedules SET next_run_at = ?, updated_at = ? WHERE id = ?`)
+            .run(next, now, row.id);
+        } else {
+          this.db
+            .query(
+              `UPDATE schedules
+               SET state = 'completed', next_run_at = NULL, updated_at = ? WHERE id = ?`,
+            )
+            .run(now, row.id);
+        }
+      }
+    });
+    tx();
+    return admitted;
   }
 }

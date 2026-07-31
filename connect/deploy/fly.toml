@@ -13,6 +13,7 @@ primary_region = "iad"
   # private network - only the connector (same machine) talks to it.
   DELTA_BIND = "127.0.0.1"
   DELTA_BASE_URL = "http://127.0.0.1:8321"
+  DELTA_CONTROL_URL = "http://127.0.0.1:8322"
   # all durable state on the volume
   DELTA_DB = "/data/delta.db"
   DELTA_WORKSPACE = "/data/bundle"
@@ -29,6 +30,7 @@ primary_region = "iad"
   DELTA_PROFILE = "chat"
   DELTA_ALLOW_SELF_WRITE = "1"
   DELTA_REFLECT = "1"
+  DELTA_INSPECT_WRITE = "1"
   # only Nic may talk to the bot
   ALLOWED_TELEGRAM_USER_IDS = "5499639944"
 
@@ -41,4 +43,5 @@ primary_region = "iad"
   memory = "512mb"
 
 # Secrets set out-of-band (never in this file):
-#   flyctl secrets set OPENROUTER_API_KEY=... TELEGRAM_BOT_TOKEN=...
+#   flyctl secrets set OPENROUTER_API_KEY=... TELEGRAM_BOT_TOKEN=... \
+#     DELTA_CONTROL_TOKEN=... DELTA_INSPECT_TOKEN=...

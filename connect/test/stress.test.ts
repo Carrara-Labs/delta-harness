@@ -48,6 +48,12 @@ const noopSup: AgentSupervisor = {
     return "x";
   },
   async maybeSuspend() {},
+  async restart() {
+    return { ok: true };
+  },
+  async shutdown() {
+    return { ok: true };
+  },
 };
 
 const evt = (id: string, text: string): Inbound => ({

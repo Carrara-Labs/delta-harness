@@ -1,6 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { parseUpdate } from "../src/telegram";
+import {
+  markdownToHtml,
+  parseUpdate,
+  resolveDocumentPath,
+  TelegramCodec,
+  telegramChunks,
+} from "../src/telegram";
 
 // The ingress parses UNTRUSTED Telegram JSON. Every shape below must be handled
 // without throwing: a valid event, a skippable-but-valid update (advance past
@@ -12,6 +21,142 @@ const gated = { allowed: new Set<string>(["7"]) };
 const msg = (over: Record<string, unknown> = {}) => ({
   update_id: 10,
   message: { text: "hi", chat: { id: 100, type: "private" }, from: { id: 7 }, ...over },
+});
+
+const originalFetch = globalThis.fetch;
+const tempPaths: string[] = [];
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  for (const path of tempPaths.splice(0)) rmSync(path, { recursive: true, force: true });
+});
+
+describe("Telegram Markdown HTML", () => {
+  test("escapes raw HTML and converts the documented block/inline subset", () => {
+    const source = [
+      "# <Title>",
+      "> **quoted**",
+      "- one",
+      "2. two",
+      "`<x>&` [site](https://example.com/a?x=1&y=2) ![gone](https://x.test/i.png)",
+      "[unsafe](javascript:alert) **unclosed",
+      "```js",
+      "if (a < b && c > d) {}",
+      "```",
+    ].join("\n");
+    expect(markdownToHtml(source)).toBe(
+      [
+        "<b>&lt;Title&gt;</b>",
+        "<blockquote><b>quoted</b></blockquote>",
+        "• one",
+        "• two",
+        '<code>&lt;x&gt;&amp;</code> <a href="https://example.com/a?x=1&amp;y=2">site</a> ',
+        "unsafe **unclosed",
+        "<pre><code>if (a &lt; b &amp;&amp; c &gt; d) {}</code></pre>",
+      ].join("\n"),
+    );
+  });
+
+  test("malformed constructs stay literal and quote-bearing URLs are canonicalized", () => {
+    expect(markdownToHtml("<b>forged</b> & **open `code [x](bad)")).toBe(
+      "&lt;b&gt;forged&lt;/b&gt; &amp; **open `code x",
+    );
+    const html = markdownToHtml('[quoted](https://example.com/"x)');
+    expect(html).toBe('<a href="https://example.com/%22x">quoted</a>');
+    expect(html).not.toContain('href="javascript:');
+    expect(markdownToHtml("")).toBe("");
+    expect(markdownToHtml("Привет 🌍 _мир_")).toBe("Привет 🌍 <i>мир</i>");
+  });
+
+  test("3900-source chunks balance fenced code and render with closed tags", () => {
+    const source = `before\n\`\`\`\n${"x".repeat(7900)}\n\`\`\`\nafter`;
+    const chunks = telegramChunks(source);
+    expect(chunks.length).toBeGreaterThan(2);
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(3908);
+      const html = markdownToHtml(chunk);
+      expect((html.match(/<pre><code>/g) ?? []).length).toBe(
+        (html.match(/<\/code><\/pre>/g) ?? []).length,
+      );
+    }
+    expect(telegramChunks("z".repeat(4096)).map((part) => part.length)).toEqual([3900, 196]);
+  });
+
+  test("specific parse-entities 400 retries once as plain text", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    globalThis.fetch = (async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return bodies.length === 1
+        ? Response.json(
+            { ok: false, description: "Bad Request: can't parse entities: broken" },
+            { status: 400 },
+          )
+        : Response.json({ ok: true });
+    }) as typeof fetch;
+    const result = await new TelegramCodec("token").send("7", "**hello**");
+    expect(result.ok).toBe(true);
+    expect(bodies).toEqual([
+      { chat_id: "7", text: "<b>hello</b>", parse_mode: "HTML" },
+      { chat_id: "7", text: "**hello**" },
+    ]);
+  });
+
+  test("other Telegram failures keep retry classification and retry_after", async () => {
+    globalThis.fetch = (async () =>
+      Response.json(
+        { ok: false, description: "slow down", parameters: { retry_after: 3 } },
+        { status: 429 },
+      )) as unknown as typeof fetch;
+    expect(await new TelegramCodec("token").send("7", "hello")).toEqual({
+      ok: false,
+      retryable: true,
+      error: "slow down",
+      retryAfterMs: 3000,
+    });
+  });
+});
+
+describe("outbound document confinement", () => {
+  test("accepts regular files and in-root symlinks; rejects every escape/non-file", () => {
+    const root = mkdtempSync(join(tmpdir(), "dc-doc-"));
+    tempPaths.push(root);
+    const workspace = join(root, "workspace");
+    mkdirSync(join(workspace, "nested"), { recursive: true });
+    writeFileSync(join(workspace, "nested", "ok.txt"), "ok");
+    writeFileSync(join(root, "outside.txt"), "no");
+    symlinkSync(join(workspace, "nested", "ok.txt"), join(workspace, "inside-link"));
+    symlinkSync(join(root, "outside.txt"), join(workspace, "outside-link"));
+
+    expect(resolveDocumentPath(workspace, "nested/ok.txt").ok).toBe(true);
+    expect(resolveDocumentPath(workspace, "inside-link").ok).toBe(true);
+    for (const bad of [
+      join(workspace, "nested", "ok.txt"),
+      "../outside.txt",
+      "outside-link",
+      "nested",
+      "missing.txt",
+    ]) {
+      expect(resolveDocumentPath(workspace, bad).ok).toBe(false);
+    }
+  });
+
+  test("sendDocument uses multipart without setting its content-type", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dc-doc-send-"));
+    tempPaths.push(root);
+    writeFileSync(join(root, "report.txt"), "report");
+    let seen = false;
+    globalThis.fetch = (async (url, init) => {
+      seen = true;
+      expect(String(url)).toContain("/sendDocument");
+      expect(init?.headers).toBeUndefined();
+      expect(init?.body).toBeInstanceOf(FormData);
+      const form = init?.body as FormData;
+      expect(form.get("chat_id")).toBe("7");
+      expect(form.get("document")).toBeInstanceOf(Blob);
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    expect((await new TelegramCodec("token", root).sendDocument("7", "report.txt")).ok).toBe(true);
+    expect(seen).toBe(true);
+  });
 });
 
 describe("parseUpdate (untrusted input)", () => {

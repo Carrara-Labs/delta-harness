@@ -1,3 +1,7 @@
+import { realpathSync, statSync } from "node:fs";
+import { isAbsolute, relative, resolve, sep } from "node:path";
+
+import { chunkText } from "./core";
 import type { Store } from "./store";
 import type {
   AttachmentRef,
@@ -17,35 +21,223 @@ import type {
 
 const API = (token: string, method: string) => `https://api.telegram.org/bot${token}/${method}`;
 
+const escapeHtml = (text: string) =>
+  text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+
+function inlineToHtml(source: string): string {
+  let out = "";
+  for (let i = 0; i < source.length; ) {
+    if (source[i] === "`") {
+      const end = source.indexOf("`", i + 1);
+      if (end > i + 1) {
+        out += `<code>${escapeHtml(source.slice(i + 1, end))}</code>`;
+        i = end + 1;
+        continue;
+      }
+    }
+
+    const image = source.startsWith("![", i);
+    if (image || source[i] === "[") {
+      const labelStart = i + (image ? 2 : 1);
+      const labelEnd = source.indexOf("](", labelStart);
+      const urlEnd = labelEnd < 0 ? -1 : source.indexOf(")", labelEnd + 2);
+      if (labelEnd >= labelStart && urlEnd >= 0) {
+        if (!image) {
+          const label = escapeHtml(source.slice(labelStart, labelEnd));
+          const rawUrl = source.slice(labelEnd + 2, urlEnd);
+          try {
+            const url = new URL(rawUrl);
+            out +=
+              url.protocol === "http:" || url.protocol === "https:"
+                ? `<a href="${escapeHtml(url.toString())}">${label}</a>`
+                : label;
+          } catch {
+            out += label;
+          }
+        }
+        i = urlEnd + 1;
+        continue;
+      }
+    }
+
+    const bold = source.startsWith("**", i) ? "**" : source.startsWith("__", i) ? "__" : null;
+    if (bold) {
+      const end = source.indexOf(bold, i + 2);
+      if (end > i + 2) {
+        out += `<b>${escapeHtml(source.slice(i + 2, end))}</b>`;
+        i = end + 2;
+        continue;
+      }
+    }
+
+    const italic = source[i] === "*" || source[i] === "_" ? source[i] : null;
+    if (italic) {
+      const end = source.indexOf(italic, i + 1);
+      if (end > i + 1) {
+        out += `<i>${escapeHtml(source.slice(i + 1, end))}</i>`;
+        i = end + 1;
+        continue;
+      }
+    }
+
+    out += escapeHtml(source[i] as string);
+    i++;
+  }
+  return out;
+}
+
+function headingBody(line: string): string | null {
+  let hashes = 0;
+  while (hashes < line.length && hashes < 6 && line[hashes] === "#") hashes++;
+  return hashes > 0 && line[hashes] === " " ? line.slice(hashes + 1) : null;
+}
+
+function listBody(line: string): string | null {
+  if (["- ", "* ", "+ "].some((prefix) => line.startsWith(prefix))) return line.slice(2);
+  let digits = 0;
+  while (digits < line.length && line.charCodeAt(digits) >= 48 && line.charCodeAt(digits) <= 57)
+    digits++;
+  return digits > 0 && line.slice(digits, digits + 2) === ". " ? line.slice(digits + 2) : null;
+}
+
+/** A small, total Markdown subset rendered only to Telegram-supported HTML. */
+export function markdownToHtml(source: string): string {
+  const lines = source.split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] as string;
+    if (line.trimStart().startsWith("```")) {
+      let close = i + 1;
+      while (close < lines.length && lines[close]?.trim() !== "```") close++;
+      if (close < lines.length) {
+        out.push(`<pre><code>${escapeHtml(lines.slice(i + 1, close).join("\n"))}</code></pre>`);
+        i = close;
+        continue;
+      }
+      out.push(escapeHtml(lines.slice(i).join("\n")));
+      break;
+    }
+    const heading = headingBody(line);
+    const list = listBody(line);
+    if (heading !== null) out.push(`<b>${inlineToHtml(heading)}</b>`);
+    else if (line === ">" || line.startsWith("> "))
+      out.push(`<blockquote>${inlineToHtml(line.slice(line === ">" ? 1 : 2))}</blockquote>`);
+    else if (list !== null) out.push(`• ${inlineToHtml(list)}`);
+    else out.push(inlineToHtml(line));
+  }
+  return out.join("\n");
+}
+
+/** Split Markdown source before rendering, balancing fenced code across chunks. */
+export function telegramChunks(source: string): string[] {
+  const chunks = chunkText(source, 3900);
+  let open = false;
+  return chunks.map((chunk) => {
+    let balanced = open ? `\`\`\`\n${chunk}` : chunk;
+    for (const line of chunk.split("\n")) {
+      const trimmed = line.trim();
+      if (!open && line.trimStart().startsWith("```")) open = true;
+      else if (open && trimmed === "```") open = false;
+    }
+    if (open) balanced += "\n```";
+    return balanced;
+  });
+}
+
+type ResolvedPath = { ok: true; path: string } | { ok: false; error: string };
+
+/** Resolve a late-bound document claim without permitting traversal or symlink escape. */
+export function resolveDocumentPath(workspace: string | undefined, input: string): ResolvedPath {
+  try {
+    if (!workspace || !input || isAbsolute(input))
+      return { ok: false, error: "document path must be workspace-relative" };
+    const root = realpathSync(workspace);
+    const target = realpathSync(resolve(root, input));
+    const rel = relative(root, target);
+    if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`))
+      return { ok: false, error: "document path escapes the workspace" };
+    if (!statSync(target).isFile()) return { ok: false, error: "document path is not a file" };
+    return { ok: true, path: target };
+  } catch (error) {
+    return { ok: false, error: `document unavailable: ${String(error)}` };
+  }
+}
+
+type Decoded = { result: OutboundResult; parseEntities: boolean };
+
+async function decodeTelegramResponse(response: Response): Promise<Decoded> {
+  const data = (await response.json().catch(() => ({}))) as {
+    ok?: boolean;
+    description?: string;
+    parameters?: { retry_after?: number };
+  };
+  if (data.ok) return { result: { ok: true, retryable: false }, parseEntities: false };
+  const retryAfterMs =
+    typeof data.parameters?.retry_after === "number"
+      ? data.parameters.retry_after * 1000
+      : undefined;
+  return {
+    result: {
+      ok: false,
+      retryable: response.status === 429 || response.status >= 500,
+      error: data.description,
+      ...(retryAfterMs ? { retryAfterMs } : {}),
+    },
+    parseEntities:
+      response.status === 400 &&
+      typeof data.description === "string" &&
+      data.description.toLowerCase().includes("can't parse entities"),
+  };
+}
+
 export class TelegramCodec implements ChannelCodec {
   readonly name = "telegram";
-  constructor(private readonly token: string) {}
+  constructor(
+    private readonly token: string,
+    private readonly workspace?: string,
+  ) {}
+
+  chunk(text: string): string[] {
+    return telegramChunks(text);
+  }
 
   async send(chatId: string, text: string): Promise<OutboundResult> {
     try {
-      const res = await fetch(API(this.token, "sendMessage"), {
+      const send = (body: Record<string, unknown>) =>
+        fetch(API(this.token, "sendMessage"), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(15000),
+        });
+      const first = await decodeTelegramResponse(
+        await send({ chat_id: chatId, text: markdownToHtml(text), parse_mode: "HTML" }),
+      );
+      if (!first.parseEntities) return first.result;
+      return (await decodeTelegramResponse(await send({ chat_id: chatId, text }))).result;
+    } catch (e) {
+      return { ok: false, retryable: true, error: String(e) };
+    }
+  }
+
+  async sendDocument(chatId: string, relativePath: string): Promise<OutboundResult> {
+    const resolved = resolveDocumentPath(this.workspace, relativePath);
+    if (!resolved.ok) return { ok: false, retryable: false, error: resolved.error };
+    let form: FormData;
+    try {
+      form = new FormData();
+      form.append("chat_id", chatId);
+      form.append("document", Bun.file(resolved.path));
+    } catch (e) {
+      return { ok: false, retryable: false, error: String(e) };
+    }
+    try {
+      const response = await fetch(API(this.token, "sendDocument"), {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ chat_id: chatId, text }),
-        signal: AbortSignal.timeout(15000),
+        body: form,
+        signal: AbortSignal.timeout(60000),
       });
-      const data = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        description?: string;
-        parameters?: { retry_after?: number };
-      };
-      if (data.ok) return { ok: true, retryable: false };
-      const retryable = res.status === 429 || res.status >= 500;
-      const retryAfterMs =
-        typeof data.parameters?.retry_after === "number"
-          ? data.parameters.retry_after * 1000
-          : undefined;
-      return {
-        ok: false,
-        retryable,
-        error: data.description,
-        ...(retryAfterMs ? { retryAfterMs } : {}),
-      };
+      return (await decodeTelegramResponse(response)).result;
     } catch (e) {
       return { ok: false, retryable: true, error: String(e) };
     }

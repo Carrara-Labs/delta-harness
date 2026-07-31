@@ -1,5 +1,12 @@
 import type { InboxRow, Store } from "./store";
-import type { AgentClient, AgentSupervisor, AttachmentRef, ChannelCodec } from "./types";
+import type {
+  AgentClient,
+  AgentSupervisor,
+  AttachmentRef,
+  ChannelCodec,
+  OperationResult,
+  OutboundResult,
+} from "./types";
 
 // The dispatch loop. Drains the durable inbox oldest-first, one at a time
 // (serial per process = ordered, no session fork). The per-turn durable writes
@@ -32,19 +39,117 @@ export function chunkText(text: string, max = 4000): string[] {
 }
 
 const HELP = [
-  "I'm Ferni, your Delta agent. Just talk to me normally - ask a question, hand me a task,",
+  "I'm your Delta agent. Just talk to me normally - ask a question, hand me a task,",
   "or think out loud. A few built-in commands:",
   "",
   "/new - start a fresh thread (clears our previous context)",
+  "/model - which model and effort I'm running",
+  "/status - my version, profile, model, budget, and MCP servers",
+  "/restart - restart the daemon (operator only)",
+  "/safemode - restart with optional features disabled (operator only)",
+  "/revert <id> - restore a self-file revision (operator only)",
   "/help - this message",
   "/id - your Telegram id",
 ].join("\n");
 
+/** Format the daemon's secret-free /v1/status into a short chat reply. */
+function formatStatus(st: Record<string, unknown>, modelOnly: boolean): string {
+  const m =
+    typeof st.model === "object" && st.model !== null && !Array.isArray(st.model)
+      ? (st.model as Record<string, unknown>)
+      : {};
+  const model = typeof m.model === "string" && m.model ? m.model : null;
+  const effort =
+    typeof m.reasoning_effort === "string" && m.reasoning_effort ? m.reasoning_effort : null;
+  const cascade = Array.isArray(m.models)
+    ? m.models.filter((value): value is string => typeof value === "string" && Boolean(value))
+    : [];
+  if (modelOnly) {
+    const lines = [`Model: ${model ?? "unknown"}`];
+    if (effort) lines.push(`Effort: ${effort}`);
+    if (cascade.length > 1) lines.push(`Failover: ${cascade.join(" → ")}`);
+    return lines.join("\n");
+  }
+  const lines: string[] = [];
+  if (typeof st.version === "string" || typeof st.version === "number")
+    lines.push(`Version: ${st.version}`);
+  if (typeof st.profile === "string" && st.profile) lines.push(`Profile: ${st.profile}`);
+  if (model) lines.push(`Model: ${model}${effort ? ` (effort ${effort})` : ""}`);
+  const budget =
+    typeof st.budget === "object" && st.budget !== null && !Array.isArray(st.budget)
+      ? (st.budget as Record<string, unknown>)
+      : null;
+  if (budget) {
+    const fields = [
+      ["steps", budget.maxSteps],
+      ["tokens", budget.maxTokens],
+      ["cost USD", budget.maxCostUsd],
+    ]
+      .filter(
+        (entry) =>
+          typeof entry[1] === "string" ||
+          (typeof entry[1] === "number" && Number.isFinite(entry[1])),
+      )
+      .map(([label, value]) => `${label}: ${String(value)}`);
+    if (fields.length) lines.push(`Budget/run: ${fields.join(" · ")}`);
+  }
+  if (Array.isArray(st.mcp_servers)) {
+    const servers = st.mcp_servers.flatMap((value) => {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) return [];
+      const server = value as Record<string, unknown>;
+      const name = typeof server.name === "string" ? server.name : "";
+      const transport = typeof server.transport === "string" ? server.transport : "";
+      return name || transport
+        ? [`${name}${name && transport ? " (" : ""}${transport}${name && transport ? ")" : ""}`]
+        : [];
+    });
+    lines.push(`MCP servers: ${servers.length ? servers.join(", ") : "none"}`);
+  }
+  return lines.length ? lines.join("\n") : "Status is unavailable.";
+}
+
 const NEW_THREAD =
   "Fresh thread started. I've cleared our previous context - your next message begins a new conversation.";
 
+const DOCUMENT_SENTINEL = "\0delta-document:";
+const OPERATOR_DENIED = "That operator command is not authorized.";
+
+export type ActiveOrigin = {
+  conversationId: string;
+  actorId: string;
+  chatId: string;
+};
+
+export function operatorAuthorized(
+  eventId: string,
+  actorId: string,
+  allowed: ReadonlySet<string>,
+): boolean {
+  return (
+    allowed.size > 0 &&
+    eventId.startsWith("tg:") &&
+    actorId.startsWith("tg:") &&
+    allowed.has(actorId.slice(3))
+  );
+}
+
+export function extractDocumentMarker(text: string): { text: string; path?: string } {
+  const match = text.match(/(?:^|\n)\[\[send: ([^\r\n]{1,1024})\]\]$/);
+  if (!match) return { text };
+  return { text: text.slice(0, match.index).trimEnd(), path: match[1] as string };
+}
+
+function operatorCommand(text: string): { name: string; args: string[] } | null {
+  const parts = text.split(/\s+/);
+  const name = parts[0] ?? "";
+  return name === "/restart" || name === "/safemode" || name === "/revert"
+    ? { name, args: parts.slice(1) }
+    : null;
+}
+
 export class Connector {
   private running = false;
+  private origin: ActiveOrigin | null = null;
 
   constructor(
     private readonly store: Store,
@@ -52,7 +157,28 @@ export class Connector {
     private readonly agent: AgentClient,
     private readonly sup: AgentSupervisor,
     private readonly log: (m: string) => void = () => {},
+    private readonly allowed: ReadonlySet<string> = new Set(),
   ) {}
+
+  get activeOrigin(): Readonly<ActiveOrigin> | null {
+    return this.origin;
+  }
+
+  private chunks(text: string): string[] {
+    return this.codec.chunk?.(text) ?? chunkText(text);
+  }
+
+  private async localReply(row: InboxRow, text: string, resetSession = false): Promise<void> {
+    this.store.commitTurn({
+      eventId: row.event_id,
+      conversationId: row.conversation_id,
+      chatId: row.chat_id,
+      userId: row.actor_id,
+      resetSession,
+      replyChunks: this.chunks(text),
+    });
+    await this.flushOutbox();
+  }
 
   /** Process at most one inbox event. Returns false when the inbox is empty. */
   async runOnce(): Promise<boolean> {
@@ -62,6 +188,82 @@ export class Connector {
       return false;
     }
     const text = row.text.trim();
+
+    // Async command intercepts: a single status read, still no agent turn spent.
+    if (text === "/model" || text === "/status") {
+      try {
+        await this.sup.ensureAwake();
+      } catch {
+        // Status remains an error value below.
+      }
+      let st: Record<string, unknown> | null = null;
+      try {
+        st = this.agent.status ? await this.agent.status() : null;
+      } catch {
+        // Third-party AgentClient implementations still degrade like DeltaAgent.
+      }
+      const reply = st
+        ? formatStatus(st, text === "/model")
+        : "I couldn't read my status just now - try again in a moment.";
+      await this.localReply(row, reply);
+      return true;
+    }
+
+    const operator = operatorCommand(text);
+    if (operator) {
+      if (!operatorAuthorized(row.event_id, row.actor_id, this.allowed)) {
+        await this.localReply(row, OPERATOR_DENIED);
+        return true;
+      }
+      if ((operator.name === "/restart" || operator.name === "/safemode") && operator.args.length) {
+        await this.localReply(row, `Usage: ${operator.name}`);
+        return true;
+      }
+      if (operator.name === "/revert") {
+        const raw = operator.args.length === 1 ? operator.args[0] : undefined;
+        const id = raw && /^[1-9]\d*$/.test(raw) ? Number(raw) : 0;
+        if (!Number.isSafeInteger(id) || id < 1) {
+          await this.localReply(row, "Usage: /revert <positive revision id>");
+          return true;
+        }
+        try {
+          await this.sup.ensureAwake();
+        } catch {
+          // The inspect request below returns the useful bounded error.
+        }
+        let result: OperationResult;
+        try {
+          result = this.agent.revertSelf
+            ? await this.agent.revertSelf(id)
+            : { ok: false, error: "revert is unavailable" };
+        } catch (error) {
+          result = { ok: false, error: String(error) };
+        }
+        await this.localReply(
+          row,
+          result.ok
+            ? (result.note ?? "Reverted; the change takes effect on the next run.")
+            : `Revert failed: ${result.error ?? "unknown error"}`,
+        );
+        return true;
+      }
+      let result: OperationResult;
+      try {
+        result = await this.sup.restart(operator.name === "/safemode");
+      } catch (error) {
+        result = { ok: false, error: String(error) };
+      }
+      await this.localReply(
+        row,
+        result.ok
+          ? (result.note ??
+              (operator.name === "/safemode"
+                ? "Daemon started in safe mode."
+                : "Daemon restarted."))
+          : `Restart failed: ${result.error ?? "unknown error"}`,
+      );
+      return true;
+    }
 
     // Local intercepts: answered without spending an agent turn. `/new` also
     // clears the thread so the next message starts fresh (same commit).
@@ -74,15 +276,7 @@ export class Connector {
           ? HELP
           : null;
     if (canned !== null) {
-      this.store.commitTurn({
-        eventId: row.event_id,
-        conversationId: row.conversation_id,
-        chatId: row.chat_id,
-        userId: row.actor_id,
-        resetSession: isNew,
-        replyChunks: chunkText(canned),
-      });
-      await this.flushOutbox();
+      await this.localReply(row, canned, isNew);
       return true;
     }
 
@@ -95,17 +289,31 @@ export class Connector {
       await this.codec.typing?.(row.chat_id);
       const session = this.store.getSession(row.conversation_id);
       const input = await this.prepareInput(row, text);
-      const out = await this.agent.run(input, {
-        previousResponseId: session?.prev_response_id ?? undefined,
-        userId: row.actor_id,
-      });
+      this.origin = {
+        conversationId: row.conversation_id,
+        actorId: row.actor_id,
+        chatId: row.chat_id,
+      };
+      let out: Awaited<ReturnType<AgentClient["run"]>>;
+      try {
+        out = await this.agent.run(input, {
+          previousResponseId: session?.prev_response_id ?? undefined,
+          userId: row.actor_id,
+        });
+      } finally {
+        this.origin = null;
+      }
       responseId = out.responseId;
-      replyChunks = chunkText(out.outputText.trim() || "(I finished, but produced no text.)");
+      const marked = extractDocumentMarker(out.outputText.trim());
+      const reply = marked.text || (marked.path ? "" : "(I finished, but produced no text.)");
+      replyChunks = reply ? this.chunks(reply) : [];
+      if (marked.path) replyChunks.push(`${DOCUMENT_SENTINEL}${marked.path}`);
     } catch (e) {
+      this.origin = null;
       this.log(`turn failed for ${row.event_id}: ${String(e)}`);
-      replyChunks = [
+      replyChunks = this.chunks(
         "Something went wrong on my end and I could not finish that. Try again in a moment.",
-      ];
+      );
     }
 
     // One atomic commit: session + reply chunks + inbox-done.
@@ -167,7 +375,16 @@ export class Connector {
     while (row) {
       // Strict order: if the head is still backing off, wait - never skip to a later chunk.
       if (row.next_attempt_at > Date.now()) break;
-      const r = await this.codec.send(row.chat_id, row.text);
+      let r: OutboundResult;
+      try {
+        r = row.text.startsWith(DOCUMENT_SENTINEL)
+          ? this.codec.sendDocument
+            ? await this.codec.sendDocument(row.chat_id, row.text.slice(DOCUMENT_SENTINEL.length))
+            : { ok: false, retryable: false, error: "document send unsupported" }
+          : await this.codec.send(row.chat_id, row.text);
+      } catch (error) {
+        r = { ok: false, retryable: true, error: String(error) };
+      }
       if (r.ok) {
         this.store.markOutboxSent(row.dedup_key);
       } else if (r.retryable) {

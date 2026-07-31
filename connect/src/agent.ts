@@ -1,4 +1,4 @@
-import type { AgentClient, DownloadedFile } from "./types";
+import type { AgentClient, DownloadedFile, OperationResult } from "./types";
 
 // One turn against the Delta engine seam. Sync request/reply: input +
 // previous_response_id + metadata.user_id -> output_text. The engine threads
@@ -8,6 +8,7 @@ export class DeltaAgent implements AgentClient {
   constructor(
     private readonly baseUrl: string,
     private readonly controlToken?: string,
+    private readonly inspectToken?: string,
   ) {}
 
   async run(
@@ -66,5 +67,52 @@ export class DeltaAgent implements AgentClient {
       throw new Error(`file upload ${res.status}: ${JSON.stringify(data).slice(0, 200)}`);
     }
     return data.files.map((f) => ({ path: f.path ?? "", mime: f.mime ?? "" }));
+  }
+
+  /** Secret-free status for the /model and /status commands (GET /v1/status, 0.2.7).
+   *  Null on any failure — a status read never fails a turn. */
+  async status(): Promise<Record<string, unknown> | null> {
+    try {
+      const headers: Record<string, string> = {};
+      if (this.controlToken) headers.authorization = `Bearer ${this.controlToken}`;
+      const res = await fetch(`${this.baseUrl}/v1/status`, {
+        headers,
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as unknown;
+      return typeof data === "object" && data !== null && !Array.isArray(data)
+        ? (data as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Inspect-authenticated self-file revert. Never reuse the control/seam token. */
+  async revertSelf(id: number): Promise<OperationResult> {
+    if (!this.inspectToken)
+      return { ok: false, error: "revert unavailable: inspect token missing" };
+    try {
+      const url = new URL("/v1/dev/self/revert", this.baseUrl);
+      url.searchParams.set("id", String(id));
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.inspectToken}` },
+        signal: AbortSignal.timeout(10000),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        note?: unknown;
+        error?: { message?: unknown };
+      };
+      const message = String(
+        res.ok ? (data.note ?? "reverted") : (data.error?.message ?? res.status),
+      )
+        .slice(0, 300)
+        .trim();
+      return res.ok ? { ok: true, note: message } : { ok: false, error: message };
+    } catch (error) {
+      return { ok: false, error: String(error).slice(0, 300) };
+    }
   }
 }

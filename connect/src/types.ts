@@ -36,13 +36,19 @@ export type OutboundResult = {
   retryAfterMs?: number;
 };
 
+/** A bounded operation result. Supervisory and inspect failures stay values. */
+export type OperationResult = { ok: boolean; error?: string; note?: string };
+
 /** Bytes fetched for an attachment, ready to hand to the daemon file seam. */
 export type DownloadedFile = { bytes: Uint8Array; name: string; mime: string };
 
 /** Per-channel, pure transport. Small on purpose. */
 export interface ChannelCodec {
   name: string;
+  /** Channel-aware source chunking (Telegram balances fenced code blocks). */
+  chunk?(text: string): string[];
   send(chatId: string, text: string): Promise<OutboundResult>;
+  sendDocument?(chatId: string, relativePath: string): Promise<OutboundResult>;
   typing?(chatId: string): Promise<void>;
   /** Fetch an attachment's bytes. Returns null on any failure (error-as-value). */
   download?(ref: AttachmentRef): Promise<DownloadedFile | null>;
@@ -60,6 +66,10 @@ export interface AgentSupervisor {
   ensureAwake(): Promise<string>;
   /** Suspend if idle. No-op for an always-on local daemon. */
   maybeSuspend(): Promise<void>;
+  /** Restart into the ordinary or engine-provided safe-mode environment. */
+  restart(safeMode: boolean): Promise<OperationResult>;
+  /** Reap an owned child; a no-op for externally managed daemons. */
+  shutdown(): Promise<OperationResult>;
 }
 
 /** Runs one turn against the Delta engine seam. */
@@ -70,4 +80,8 @@ export interface AgentClient {
   ): Promise<{ responseId: string; outputText: string }>;
   /** Upload files to the daemon workspace (POST /v1/files). Returns their saved paths. */
   uploadFiles?(files: DownloadedFile[]): Promise<Array<{ path: string; mime: string }>>;
+  /** Read the agent's secret-free status (GET /v1/status): version, profile, model, budget. */
+  status?(): Promise<Record<string, unknown> | null>;
+  /** Revert the self-file through the separately inspect-authenticated endpoint. */
+  revertSelf?(id: number): Promise<OperationResult>;
 }
