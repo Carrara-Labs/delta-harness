@@ -7,6 +7,7 @@ import { hostname } from "node:os";
 import { resolve } from "node:path";
 import { BrokerCredential } from "./broker";
 import type { McpServerConfig } from "./mcp";
+import { getProfile } from "./profiles";
 import {
   KNOWN_EFFORTS,
   normalizeEffort,
@@ -328,6 +329,8 @@ export function devConfigView(
     ...(cfg.agentId ? { agent_id: cfg.agentId } : {}),
     port: cfg.port,
     profile: cfg.profile,
+    // Effective run budget (profile + any DELTA_MAX_* / envelope overrides) — caps, not secrets.
+    budget: getProfile(undefined, cfg.profile).budget,
     namespace: cfg.memoryNamespace,
     model: {
       model: cfg.provider.models[0] ?? null,

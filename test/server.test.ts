@@ -43,6 +43,36 @@ describe("GET /healthz", () => {
   });
 });
 
+describe("GET /v1/status", () => {
+  const cfg = {
+    version: HARNESS_VERSION,
+    agent_id: "test-agent",
+    profile: "trusted",
+    budget: { maxSteps: 100, maxTokens: 2_000_000, maxCostUsd: 5 },
+    model: { model: "claude-opus-5", models: ["claude-opus-5"], reasoning_effort: "low" },
+    mcp_servers: [{ name: "aperture", transport: "http" }],
+    secrets_present: { MODEL_API_KEY: true }, // must NOT appear in /v1/status
+  };
+  const s = createServer(new Queue(deps), deps.events, 0, { config: cfg });
+  const b = `http://localhost:${s.port}`;
+  afterAll(() => s.stop());
+
+  test("returns model/effort/profile/budget/mcp for edge tooling, never secrets", async () => {
+    const res = await fetch(`${b}/v1/status`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.version).toBe(HARNESS_VERSION);
+    expect(body.agent_id).toBe("test-agent");
+    expect(body.profile).toBe("trusted");
+    expect((body.model as { model: string }).model).toBe("claude-opus-5");
+    expect((body.model as { reasoning_effort: string }).reasoning_effort).toBe("low");
+    expect((body.budget as { maxCostUsd: number }).maxCostUsd).toBe(5);
+    expect(body.mcp_servers).toEqual([{ name: "aperture", transport: "http" }]);
+    // the curated subset never carries the secrets_present map (or any un-picked field)
+    expect(body.secrets_present).toBeUndefined();
+  });
+});
+
 describe("POST /v1/responses", () => {
   test("runs a real turn through the queue in a driver-compatible shape", async () => {
     const res = await fetch(`${base}/v1/responses`, {

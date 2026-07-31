@@ -350,6 +350,22 @@ export function createServer(
       if (pathname.startsWith("/v1/") && !authed(request))
         return json({ error: { message: "unauthorized" } }, 401);
 
+      // GET /v1/status (0.2.7) — a data-free read of the running agent's identity, model,
+      // effort, profile, budget caps and MCP servers, for edge tooling (Delta Connect's
+      // /model, /status). Sourced from the same allowlisted boot-config view as the Cockpit,
+      // so it can never leak a key; gated by the seam token like every /v1/* route.
+      if (method === "GET" && pathname === "/v1/status") {
+        const c = (opts?.config ?? {}) as Record<string, unknown>;
+        return json({
+          version: c.version,
+          ...(c.agent_id ? { agent_id: c.agent_id } : {}),
+          profile: c.profile,
+          model: c.model,
+          ...(c.budget ? { budget: c.budget } : {}),
+          mcp_servers: c.mcp_servers ?? [],
+        });
+      }
+
       // Inbound attachments (Sprint 8): batch multipart → workspace inbox. The
       // claim-check: bytes land on disk; callers get PATHS to reference in the
       // next turn — file bytes never enter a prompt. Same trust model as
