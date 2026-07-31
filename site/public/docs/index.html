@@ -2206,6 +2206,7 @@ MODEL_HEADERS={&quot;originator&quot;:&quot;codex_cli_rs&quot;}
 <div class="code-block"><div class="code-toolbar"><span>dotenv</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-dotenv">DELTA_CONTROL_URL=https://control.example
 DELTA_CONTROL_TOKEN=machine-token
 </code></pre></div>
+<p>For a chat-fronted agent, <strong>Delta Connect 0.3.0</strong> implements this control-plane surface itself: a loopback scheduler that stores schedules durably and fires each due one as a turn delivered back to the originating chat. Point <code>DELTA_CONTROL_URL</code> at the local Connect gateway and scheduling turns on with no external control plane.</p>
 <p>Schedules support:</p>
 <ul>
 <li>one-time ISO timestamps</li>

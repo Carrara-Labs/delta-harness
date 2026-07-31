@@ -174,6 +174,31 @@ export default function Connect() {
                     "Built-in commands",
                     "/help lists what it can do; /id returns your Telegram id for the allowlist. Both answer instantly, without spending an agent turn.",
                   ],
+                  [
+                    "/model · /status · new",
+                    "See what it's running",
+                    "/model shows the model and reasoning effort; /status shows its tier and budget. Read straight from the engine, never a secret.",
+                  ],
+                  [
+                    "schedule · new",
+                    "Do things on a timer",
+                    "Ask it to remind you or check on something later; it schedules the work and delivers the result to your chat when it fires. One-off or recurring.",
+                  ],
+                  [
+                    "formatted replies · new",
+                    "Reads nicely",
+                    "Bold, code blocks, links, and quotes render properly in Telegram instead of a wall of raw Markdown.",
+                  ],
+                  [
+                    "send you a file · new",
+                    "Hands back documents",
+                    "The agent can write a report or export and send it to you as a real file, not just pasted text.",
+                  ],
+                  [
+                    "/restart · /safemode · new",
+                    "Recover it, in chat",
+                    "Operator-only commands to bounce the agent or boot it clean if it ever gets stuck - no SSH, no wedged state.",
+                  ],
                 ] as const
               ).map(([tag, h, p]) => (
                 <div className="hiw-dbeat" key={h}>

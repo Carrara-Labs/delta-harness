@@ -919,6 +919,8 @@ DELTA_CONTROL_URL=https://control.example
 DELTA_CONTROL_TOKEN=machine-token
 ```
 
+For a chat-fronted agent, **Delta Connect 0.3.0** implements this control-plane surface itself: a loopback scheduler that stores schedules durably and fires each due one as a turn delivered back to the originating chat. Point `DELTA_CONTROL_URL` at the local Connect gateway and scheduling turns on with no external control plane.
+
 Schedules support:
 
 - one-time ISO timestamps
