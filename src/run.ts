@@ -721,6 +721,21 @@ export async function executeRun(
           4_000,
         ),
       });
+    // Budget self-awareness (0.2.7): a coarse "near the cap, wrap up" nudge once any axis crosses
+    // ~85%. Ephemeral (rebuilt each turn, never persisted) and QUALITATIVE — not a raw counter,
+    // which is gameable and no rival ships one — so it only ever rides the last stretch of a run.
+    // Reuses the same billed/step/cost figures as the budget guard above.
+    const budgetFrac = Math.max(
+      b.maxSteps > 0 ? stepCount / b.maxSteps : 0,
+      b.maxTokens > 0 ? billed / b.maxTokens : 0,
+      b.maxCostUsd > 0 ? usage.costUsd / b.maxCostUsd : 0,
+    );
+    if (budgetFrac >= 0.85)
+      ephemeral.push({
+        role: "user",
+        content:
+          "# Budget\nYou are near this run's budget limit. Wrap up now: finish what is already in flight, deliver your best answer with what you have, and do not start new lines of work.",
+      });
     const specs = toolSpecs(tools);
     const nonHistory: ChatMsg[] = [{ role: "system", content: system }, ...ephemeral];
 
