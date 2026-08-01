@@ -153,6 +153,9 @@ const NEW_THREAD =
   "Fresh thread started. I've cleared our previous context - your next message begins a new conversation.";
 
 const DOCUMENT_SENTINEL = "\0delta-document:";
+// The intake button rides the outbox as its own chunk, exactly like a document send, so it is
+// delivered in order, at-least-once, and survives a restart. The payload is a session id.
+const INTAKE_SENTINEL = "\0delta-intake:";
 const OPERATOR_DENIED = "That operator command is not authorized.";
 
 export type ActiveOrigin = {
@@ -172,6 +175,32 @@ export function operatorAuthorized(
     actorId.startsWith("tg:") &&
     allowed.has(actorId.slice(3))
   );
+}
+
+/**
+ * Pull a secret request out of an agent reply: `[[secret-request: NAME | why it is needed]]`,
+ * the same terminal-marker family as `[[send: path]]`.
+ *
+ * The NAME is charset-validated here and the purpose is discarded for display — only the
+ * operator's configured destination is ever shown on the form. A model can therefore ask for
+ * a credential, but it cannot author a single character of the page a human types it into.
+ * At most ONE request per reply: a flood of buttons is a social-engineering surface, and one
+ * credential at a time is the honest flow anyway.
+ */
+export function extractSecretRequest(text: string): {
+  text: string;
+  name?: string;
+  purpose?: string;
+} {
+  const match = text.match(
+    /(?:^|\n)\[\[secret-request:\s*([A-Z][A-Z0-9_]{0,63})\s*(?:\|\s*([^\r\n\]]{0,200}))?\]\]\s*$/,
+  );
+  if (!match) return { text };
+  return {
+    text: text.slice(0, match.index).trimEnd(),
+    name: match[1] as string,
+    purpose: (match[2] ?? "").trim(),
+  };
 }
 
 export function extractDocumentMarker(text: string): { text: string; path?: string } {
@@ -266,7 +295,44 @@ export class Connector {
     private readonly sup: AgentSupervisor,
     private readonly log: (m: string) => void = () => {},
     private readonly allowed: ReadonlySet<string> = new Set(),
+    /** Secure secret intake (0.4.0). Absent → the feature is entirely off: markers are stripped
+     *  and no button is ever offered. */
+    private readonly intake?: {
+      mint: (req: {
+        name: string;
+        purpose: string;
+        chatId: string;
+        conversationId: string;
+        telegramUserId: string;
+      }) => Promise<{ sessionId: string; destination: string } | { error: string }>;
+      url: (sessionId: string) => string;
+    },
   ) {}
+
+  /** Turn a `[[secret-request: NAME | why]]` marker into a durable outbox chunk carrying an
+   *  intake session. Returns the chunk, or a plain-text line explaining why no button appeared —
+   *  a silent drop would leave the agent waiting for a credential that can never arrive. */
+  private async intakeChunk(
+    name: string,
+    purpose: string,
+    chatId: string,
+    conversationId: string,
+    actorId: string,
+  ): Promise<string> {
+    if (!this.intake) return "";
+    const minted = await this.intake.mint({
+      name,
+      purpose,
+      chatId,
+      conversationId,
+      telegramUserId: actorId.startsWith("tg:") ? actorId.slice(3) : actorId,
+    });
+    if ("error" in minted) {
+      this.log(`intake offer refused for ${name}: ${minted.error}`);
+      return `I can't request ${name} right now (${minted.error}).`;
+    }
+    return `${INTAKE_SENTINEL}${minted.sessionId}\u0000${name}`;
+  }
 
   /** Resolve the conversation a schedule_self call binds to. The harness (≥0.2.8.1) asserts the run's
    *  owner as `userId` (x-delta-user), so we bind to THAT user's active task — correct even with
@@ -619,9 +685,21 @@ export class Connector {
       if (st.status === "done") {
         responseId = st.responseId;
         const marked = extractDocumentMarker((st.outputText ?? "").trim());
-        const reply = marked.text || (marked.path ? "" : "(I finished, but produced no text.)");
+        const asked = extractSecretRequest(marked.text);
+        const reply =
+          asked.text || (marked.path || asked.name ? "" : "(I finished, but produced no text.)");
         replyChunks = reply ? this.chunks(reply) : [];
         if (marked.path) replyChunks.push(`${DOCUMENT_SENTINEL}${marked.path}`);
+        if (asked.name) {
+          const chunk = await this.intakeChunk(
+            asked.name,
+            asked.purpose ?? "",
+            task.chat_id,
+            task.conversation_id,
+            task.actor_id,
+          );
+          if (chunk) replyChunks.push(chunk);
+        }
       } else if (st.status === "cancelled") {
         replyChunks = this.chunks("Stopped.");
       } else {
@@ -661,9 +739,21 @@ export class Connector {
       });
       responseId = out.responseId;
       const marked = extractDocumentMarker(out.outputText.trim());
-      const reply = marked.text || (marked.path ? "" : "(I finished, but produced no text.)");
+      const asked = extractSecretRequest(marked.text);
+      const reply =
+        asked.text || (marked.path || asked.name ? "" : "(I finished, but produced no text.)");
       replyChunks = reply ? this.chunks(reply) : [];
       if (marked.path) replyChunks.push(`${DOCUMENT_SENTINEL}${marked.path}`);
+      if (asked.name) {
+        const chunk = await this.intakeChunk(
+          asked.name,
+          asked.purpose ?? "",
+          row.chat_id,
+          row.conversation_id,
+          row.actor_id,
+        );
+        if (chunk) replyChunks.push(chunk);
+      }
     } catch (e) {
       this.log(`turn failed for ${row.event_id}: ${String(e)}`);
       replyChunks = this.chunks(
@@ -729,11 +819,27 @@ export class Connector {
       if (row.next_attempt_at > Date.now()) break;
       let r: OutboundResult;
       try {
-        r = row.text.startsWith(DOCUMENT_SENTINEL)
-          ? this.codec.sendDocument
+        if (row.text.startsWith(DOCUMENT_SENTINEL)) {
+          r = this.codec.sendDocument
             ? await this.codec.sendDocument(row.chat_id, row.text.slice(DOCUMENT_SENTINEL.length))
-            : { ok: false, retryable: false, error: "document send unsupported" }
-          : await this.codec.send(row.chat_id, row.text);
+            : { ok: false, retryable: false, error: "document send unsupported" };
+        } else if (row.text.startsWith(INTAKE_SENTINEL)) {
+          // A resend reuses the SAME session id, so an at-least-once delivery can never mint a
+          // second session or invalidate the link the user already has open.
+          const [sessionId = "", name = "a credential"] = row.text
+            .slice(INTAKE_SENTINEL.length)
+            .split("\u0000");
+          r = this.codec.sendIntakeButton
+            ? await this.codec.sendIntakeButton(
+                row.chat_id,
+                `Tap below to provide ${name} securely. It opens inside Telegram, is sent straight to me over an encrypted connection, and is never stored as a chat message.`,
+                `Provide ${name}`,
+                this.intake ? this.intake.url(sessionId) : "",
+              )
+            : { ok: false, retryable: false, error: "intake button unsupported" };
+        } else {
+          r = await this.codec.send(row.chat_id, row.text);
+        }
       } catch (error) {
         r = { ok: false, retryable: true, error: String(error) };
       }

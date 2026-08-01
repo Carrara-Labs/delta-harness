@@ -195,6 +195,11 @@ export default function Connect() {
                     "The agent can write a report or export and send it to you as a real file, not just pasted text.",
                   ],
                   [
+                    "secure secret intake · new",
+                    "Takes a credential safely",
+                    "When the agent needs an API key, it offers a button that opens a form inside Telegram. The value goes straight to the agent over an encrypted connection and is stored encrypted - never as a chat message, and the agent itself can never read it back.",
+                  ],
+                  [
                     "/restart · /safemode · /revert",
                     "Recover it, in chat",
                     "Operator-only commands to bounce the agent, boot it clean if it gets stuck, or roll back a note it wrote to its own memory - tap /revert to pick a revision. No SSH, no wedged state.",

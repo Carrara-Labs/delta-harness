@@ -50,6 +50,20 @@ export type TaskRow = {
   created_at: number;
 };
 
+export type IntakeSessionRow = {
+  id: string;
+  name: string;
+  purpose: string;
+  destination: string;
+  telegram_user_id: string;
+  chat_id: string;
+  conversation_id: string;
+  state: string;
+  expires_at: number;
+  created_at: number;
+  used_at: number | null;
+};
+
 export type ScheduleOrigin = {
   conversationId: string;
   actorId: string;
@@ -175,6 +189,32 @@ export class Store {
         updated_at      INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS schedules_due ON schedules(state, next_run_at);
+
+      -- Secure secret intake (0.4.0). A session IS the capability: unguessable, short-lived,
+      -- single-use, bound to one Telegram user and one credential name. The VALUE is never
+      -- stored here (or anywhere in Connect) — it goes straight to the harness vault.
+      CREATE TABLE IF NOT EXISTS intake_sessions (
+        id               TEXT PRIMARY KEY,
+        name             TEXT NOT NULL,
+        purpose          TEXT NOT NULL DEFAULT '',
+        destination      TEXT NOT NULL DEFAULT '',
+        telegram_user_id TEXT NOT NULL,
+        chat_id          TEXT NOT NULL,
+        conversation_id  TEXT NOT NULL,
+        state            TEXT NOT NULL DEFAULT 'pending',
+        expires_at       INTEGER NOT NULL,
+        created_at       INTEGER NOT NULL,
+        used_at          INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS intake_expiry ON intake_sessions(expires_at);
+
+      -- One Telegram authorization (a validated initData blob) may authorize exactly one
+      -- session. Telegram signs its own fields, not our session id, so without this a single
+      -- fresh blob could be replayed against every live session for that user.
+      CREATE TABLE IF NOT EXISTS intake_auth_used (
+        digest     TEXT PRIMARY KEY,
+        expires_at INTEGER NOT NULL
+      );
     `);
     // Migrate older tables in place (add columns absent on a pre-existing DB).
     for (const alter of [
@@ -730,5 +770,90 @@ export class Store {
     });
     tx();
     return admitted;
+  }
+
+  // ── Secure secret intake (0.4.0) ────────────────────────────────────────────────
+  // Every state move is a single conditional UPDATE, so concurrency is settled by SQLite
+  // rather than by read-then-write logic in the handler.
+
+  /** Mint a session. Returns its id — the capability the button URL carries. */
+  createIntakeSession(input: {
+    id: string;
+    name: string;
+    purpose: string;
+    destination: string;
+    telegramUserId: string;
+    chatId: string;
+    conversationId: string;
+    ttlMs: number;
+    now?: number;
+  }): string {
+    const now = input.now ?? Date.now();
+    this.db
+      .query(
+        `INSERT INTO intake_sessions
+           (id, name, purpose, destination, telegram_user_id, chat_id, conversation_id,
+            state, expires_at, created_at, used_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, NULL)`,
+      )
+      .run(
+        input.id,
+        input.name,
+        input.purpose,
+        input.destination,
+        input.telegramUserId,
+        input.chatId,
+        input.conversationId,
+        now + input.ttlMs,
+        now,
+      );
+    return input.id;
+  }
+
+  intakeSession(id: string): IntakeSessionRow | null {
+    return (this.db.query(`SELECT * FROM intake_sessions WHERE id = ?`).get(id) ??
+      null) as IntakeSessionRow | null;
+  }
+
+  /** Claim a live session for submission: pending → submitting. False = someone else has it,
+   *  it is spent, or it has expired. This is what makes a double-POST safe. */
+  claimIntakeSession(id: string, now = Date.now()): boolean {
+    return (
+      this.db
+        .query(
+          `UPDATE intake_sessions SET state = 'submitting'
+           WHERE id = ? AND state = 'pending' AND used_at IS NULL AND expires_at > ?`,
+        )
+        .run(id, now).changes > 0
+    );
+  }
+
+  /** The value landed: mark the session spent for good. */
+  finishIntakeSession(id: string, now = Date.now()): void {
+    this.db
+      .query(`UPDATE intake_sessions SET state = 'used', used_at = ? WHERE id = ?`)
+      .run(now, id);
+  }
+
+  /** The write did NOT land: hand the session back so the user can retry with the same link. */
+  releaseIntakeSession(id: string): void {
+    this.db
+      .query(`UPDATE intake_sessions SET state = 'pending' WHERE id = ? AND state = 'submitting'`)
+      .run(id);
+  }
+
+  /** Consume a Telegram authorization exactly once, process-wide. False = already used. */
+  consumeIntakeAuth(digest: string, expiresAt: number): boolean {
+    return (
+      this.db
+        .query(`INSERT OR IGNORE INTO intake_auth_used (digest, expires_at) VALUES (?, ?)`)
+        .run(digest, expiresAt).changes > 0
+    );
+  }
+
+  /** Drop expired sessions and spent authorizations. Cheap; called on mint. */
+  sweepIntake(now = Date.now()): void {
+    this.db.query(`DELETE FROM intake_sessions WHERE expires_at < ?`).run(now);
+    this.db.query(`DELETE FROM intake_auth_used WHERE expires_at < ?`).run(now);
   }
 }

@@ -4,6 +4,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 this package follows [Semantic Versioning](https://semver.org/). It versions
 independently of the Delta harness engine.
 
+## [0.4.0] — 2026-08-01
+
+Secure secret intake. A credential can be handed to an agent **in the chat** without the value
+ever crossing Telegram's message transport. Requires Harness 0.2.10 (the secret vault). Entirely
+opt-in: with no public URL configured, Connect runs exactly as 0.3.2.
+
+### Added
+- **Secure intake, rendered inside Telegram.** The agent (or an operator) offers a `web_app`
+  button; tapping it opens a form served by Connect over TLS, and the form POSTs the value
+  **directly back to Connect** — deliberately not `sendData()`, which would route it through
+  Telegram's servers as a service message. Connect writes it straight to the harness vault and
+  never stores it. The narrow, honest guarantee: the value never crosses the bot-message
+  transport and never appears in Connect's chat records.
+- **`[[secret-request: NAME | why]]`**, the agent's way to ask for a credential — the same
+  terminal-marker family as `[[send: path]]`. The name is charset-validated and the request is
+  refused unless the harness reports that name in `vault.declared`, so an injected agent cannot
+  invent a credential name and talk a human into providing one nothing is configured to use.
+  Nothing model-authored is rendered into the form.
+- **A single public route pair** (`GET`/`POST /intake/:session`) on its own listener; every other
+  path is an empty 404. Requests are authenticated with the Mini App's `initData`
+  (HMAC-SHA256 keyed by `HMAC(bot_token, "WebAppData")`), with strict field, hash, and
+  `auth_date` freshness checks, and the submitting user must match both the session and the
+  allowlist.
+- **Single-use by construction.** A session is claimed with an atomic `pending → submitting →
+  used` transition, so concurrent submissions cannot both write; a failed vault write releases it
+  for a retry. The Telegram authorization itself is consumed globally, so one valid `initData`
+  cannot be replayed against a second live session.
+- **A self-contained form page**: no third-party script in the origin that holds the credential
+  (the launch data is parsed from the URL fragment), a strict CSP, `no-store`, `no-referrer`, a
+  password field with autocomplete off, and the input cleared the moment the request settles.
+
+### Security notes
+- Intake refuses to start unless `ALLOWED_TELEGRAM_USER_IDS` is non-empty, `CONNECT_PUBLIC_URL`
+  is `https`, and a control token is configured. "Anyone with the link" is not an authorization
+  rule for a credential drop box, even where the chat surface tolerates an open allowlist.
+- Vault writes are loopback-only and refuse redirects, so a misconfigured `DELTA_BASE_URL` can
+  never ship a credential to a remote host.
+- Intake creates; it never replaces. Rotating or deleting a credential is an operator act on the
+  harness's inspect-gated surface.
+
 ## [0.3.2] — 2026-08-01
 
 Long turns no longer time out. A research or multi-step turn used to run over the daemon's

@@ -82,6 +82,40 @@ cd connect && bun start
 Message your bot: `/id` (grab your id, add it to the allowlist), then chat normally. The round
 trip is: Telegram -> long-poll -> durable inbox -> agent turn -> durable outbox -> reply.
 
+## 2b. Secure secret intake (0.4.0, optional)
+
+Lets a human hand the agent a credential **in the chat** without the value ever crossing
+Telegram's message transport. Needs Harness 0.2.10 with its vault enabled
+(`DELTA_VAULT_KEY_FILE`).
+
+```sh
+CONNECT_PUBLIC_URL=https://<your-app>.fly.dev   # the public origin, https only
+CONNECT_PUBLIC_PORT=8323                        # a port distinct from the daemon's
+ALLOWED_TELEGRAM_USER_IDS=5499639944            # MUST be non-empty for intake
+```
+
+Intake refuses to start unless all three hold and a control token is set. An empty allowlist
+would mean "anyone with the link may submit a credential", which is not a defensible rule even
+where the chat surface tolerates an open allowlist in development.
+
+On Fly, add an `[http_service]` pointing at `CONNECT_PUBLIC_PORT` with `force_https = true`, and
+register the same origin as the Mini App URL in @BotFather. The daemon seam stays loopback-bound;
+this listener is the only public surface, and it serves exactly two routes.
+
+How it flows: the agent ends a reply with `[[secret-request: EXA_API_KEY | web search]]` (or an
+operator sends the request), Connect attaches a button, tapping it opens a form inside Telegram,
+and the value is POSTed straight to Connect and written to the vault. The request is refused
+unless the harness reports that name in `vault.declared` — the set of names your configuration
+actually wires a destination for — so an agent cannot invent a credential name and talk someone
+into providing it.
+
+Add a line to `POLICY.md` so the agent knows the convention:
+
+```md
+- To receive a credential, end your reply with `[[secret-request: NAME | why you need it]]`.
+  Never ask anyone to paste a secret as a chat message.
+```
+
 ## 3. Self-learning: what `DELTA_ALLOW_SELF_WRITE` does
 
 The `chat` profile deliberately withholds the `remember` self-write, because raw inbound chat is

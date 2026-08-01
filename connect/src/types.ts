@@ -49,6 +49,14 @@ export interface ChannelCodec {
   chunk?(text: string): string[];
   send(chatId: string, text: string): Promise<OutboundResult>;
   sendDocument?(chatId: string, relativePath: string): Promise<OutboundResult>;
+  /** Send a message with a channel-native button that opens `url` INSIDE the client — the
+   *  secure-intake door. Absent on a codec with no such affordance; intake then stays off. */
+  sendIntakeButton?(
+    chatId: string,
+    text: string,
+    label: string,
+    url: string,
+  ): Promise<OutboundResult>;
   typing?(chatId: string): Promise<void>;
   /** Fetch an attachment's bytes. Returns null on any failure (error-as-value). */
   download?(ref: AttachmentRef): Promise<DownloadedFile | null>;
@@ -95,6 +103,16 @@ export interface AgentClient {
   ): Promise<{ status: string; responseId?: string; outputText?: string; error?: string } | null>;
   /** Cancel a running task (best-effort). userId asserts the owning principal. */
   cancelTask?(id: string, userId: string): Promise<void>;
+  /** Write a credential to the harness vault (PUT /v1/secrets/:name, 0.2.10). Loopback-only,
+   *  create-only on the harness side: a 409 means the name already exists and is terminal. */
+  storeSecret?(
+    name: string,
+    value: string,
+    purpose: string,
+  ): Promise<{ ok: boolean; status: number; error?: string }>;
+  /** Whether the vault is usable and which credential names the config wires a destination
+   *  for — an intake offer is refused unless the vault is on and the name is declared. */
+  vaultState?(): Promise<{ enabled: boolean; declared: string[]; safeMode: boolean }>;
   /** Revert the self-file through the separately inspect-authenticated endpoint. */
   revertSelf?(id: number): Promise<OperationResult>;
   /** Self-file revision history (GET /v1/dev/self/revisions, inspect-gated) for the /revert

@@ -89,6 +89,67 @@ export class DeltaAgent implements AgentClient {
     }
   }
 
+  /** Write a credential to the harness vault (PUT /v1/secrets/:name, 0.2.10).
+   *
+   *  Hardened because this is the ONE call in Connect that carries a secret value:
+   *   - the base URL must be an explicit loopback HTTP origin, so a misconfigured
+   *     DELTA_BASE_URL can never ship a credential to a remote host;
+   *   - redirects are refused outright rather than followed with the body re-sent;
+   *   - nothing about the value is logged, echoed, or returned.
+   *  The harness side is create-only, so a 409 means "already stored" and is terminal. */
+  async storeSecret(
+    name: string,
+    value: string,
+    purpose: string,
+  ): Promise<{ ok: boolean; status: number; error?: string }> {
+    let target: URL;
+    try {
+      target = new URL(`/v1/secrets/${encodeURIComponent(name)}`, this.baseUrl);
+    } catch {
+      return { ok: false, status: 0, error: "bad base url" };
+    }
+    if (
+      target.protocol !== "http:" ||
+      !(
+        target.hostname === "127.0.0.1" ||
+        target.hostname === "localhost" ||
+        target.hostname === "[::1]"
+      )
+    ) {
+      return { ok: false, status: 0, error: "vault writes are loopback-only" };
+    }
+    if (!this.controlToken) return { ok: false, status: 0, error: "no control token" };
+    try {
+      const res = await fetch(target, {
+        method: "PUT",
+        redirect: "error", // never re-send a credential to a redirect target
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${this.controlToken}`,
+        },
+        body: JSON.stringify({ value, purpose }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (res.ok) return { ok: true, status: res.status };
+      const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+      return { ok: false, status: res.status, error: body.error?.message };
+    } catch (e) {
+      // Deliberately does not include the error string: a fetch failure can echo the request.
+      return { ok: false, status: 0, error: e instanceof Error ? e.name : "request failed" };
+    }
+  }
+
+  /** Vault names + whether the vault is usable at all, from /v1/status. */
+  async vaultState(): Promise<{ enabled: boolean; declared: string[]; safeMode: boolean }> {
+    const s = await this.status();
+    const vault = (s?.vault ?? {}) as { enabled?: unknown; declared?: unknown };
+    return {
+      enabled: vault.enabled === true,
+      declared: Array.isArray(vault.declared) ? (vault.declared as string[]) : [],
+      safeMode: s?.safe_mode === true,
+    };
+  }
+
   /** Inspect-authenticated self-file revert. Never reuse the control/seam token. */
   async revertSelf(id: number): Promise<OperationResult> {
     if (!this.inspectToken)

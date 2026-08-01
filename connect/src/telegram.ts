@@ -220,6 +220,36 @@ export class TelegramCodec implements ChannelCodec {
     }
   }
 
+  /** Send a message carrying a Telegram `web_app` button — the secure-intake door.
+   *
+   *  An inline `web_app` button opens the URL INSIDE the Telegram client. That matters: the
+   *  page is served by us over TLS and posts the credential straight back to us, so the value
+   *  never travels as a Telegram message. (`sendData` would do the opposite — route it through
+   *  Telegram's servers as a service message — which is exactly what this design avoids.) */
+  async sendIntakeButton(
+    chatId: string,
+    text: string,
+    label: string,
+    url: string,
+  ): Promise<OutboundResult> {
+    try {
+      const res = await fetch(API(this.token, "sendMessage"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: markdownToHtml(text),
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: [[{ text: label, web_app: { url } }]] },
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+      return (await decodeTelegramResponse(res)).result;
+    } catch (e) {
+      return { ok: false, retryable: true, error: String(e) };
+    }
+  }
+
   async sendDocument(chatId: string, relativePath: string): Promise<OutboundResult> {
     const resolved = resolveDocumentPath(this.workspace, relativePath);
     if (!resolved.ok) return { ok: false, retryable: false, error: resolved.error };

@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
+import { randomUUID } from "node:crypto";
 import { DeltaAgent } from "./agent";
 import { ScheduleControl } from "./control";
 import { Connector } from "./core";
+import { IntakeServer, NAME_RE, SESSION_TTL_MS } from "./intake";
 import { Store } from "./store";
 import { LocalKeepAliveSupervisor, ManagedProcessSupervisor } from "./supervisor";
 import { TelegramCodec, TelegramLongPoll } from "./telegram";
@@ -39,7 +41,84 @@ const sup = managedEntry
       log,
     })
   : new LocalKeepAliveSupervisor(baseUrl);
-const connector = new Connector(store, codec, agent, sup, log, allowed);
+// ── Secure secret intake (0.4.0) ───────────────────────────────────────────────────
+// Off unless BOTH a public URL and a port are configured, AND the allowlist is non-empty.
+// The chat surface tolerates an open allowlist in development; a credential drop box never
+// does — "anyone who has the link" is not a defensible authorization rule.
+const publicUrl = process.env.CONNECT_PUBLIC_URL || "";
+const publicPort = Number(process.env.CONNECT_PUBLIC_PORT);
+const intakeConfigured = Boolean(publicUrl) && Number.isInteger(publicPort) && publicPort > 0;
+if (intakeConfigured && allowed.size === 0)
+  log(
+    "intake DISABLED: ALLOWED_TELEGRAM_USER_IDS is empty, which would let any Telegram user submit a credential",
+  );
+if (intakeConfigured && !publicUrl.startsWith("https://"))
+  log(`intake DISABLED: CONNECT_PUBLIC_URL must be https (got ${publicUrl.split(":")[0]})`);
+const intakeOn =
+  intakeConfigured && allowed.size > 0 && publicUrl.startsWith("https://") && Boolean(controlToken);
+if (intakeConfigured && !controlToken)
+  log("intake DISABLED: DELTA_CONTROL_TOKEN is required to write the vault");
+
+const intakeServer = intakeOn
+  ? new IntakeServer({
+      store,
+      botToken: token,
+      publicUrl,
+      port: publicPort,
+      allowedUsers: allowed,
+      writeVault: (name, value, purpose) => agent.storeSecret(name, value, purpose),
+      log,
+      onStored: ({ name, chatId }) => {
+        // Confirm by NAME and nudge the agent so it can carry on with the task it was
+        // blocked on. The nudge is honest about what happened and carries no value.
+        void codec.send(chatId, `Saved ${name}. I can use it now, and I still can't read it.`);
+      },
+    })
+  : undefined;
+
+/** Mint an intake session, refusing anything the operator has not wired a destination for. */
+const mintIntake = async (req: {
+  name: string;
+  purpose: string;
+  chatId: string;
+  conversationId: string;
+  telegramUserId: string;
+}): Promise<{ sessionId: string; destination: string } | { error: string }> => {
+  if (!intakeServer) return { error: "secure intake is not configured on this agent" };
+  if (!NAME_RE.test(req.name)) return { error: "that is not a valid credential name" };
+  if (!allowed.has(req.telegramUserId))
+    return { error: "you are not allowed to provide credentials" };
+  const state = await agent.vaultState();
+  if (!state.enabled) return { error: "the vault is not enabled on this agent" };
+  if (state.safeMode) return { error: "the agent is in safe mode" };
+  // The operator-sanctioned request set. Without this an injected agent could invent a
+  // credential name and talk a human into pasting something nothing is configured to use.
+  if (!state.declared.includes(req.name))
+    return { error: `nothing on this agent is configured to use ${req.name}` };
+  store.sweepIntake();
+  const sessionId = randomUUID();
+  store.createIntakeSession({
+    id: sessionId,
+    name: req.name,
+    purpose: req.purpose,
+    destination: new URL(baseUrl).host,
+    telegramUserId: req.telegramUserId,
+    chatId: req.chatId,
+    conversationId: req.conversationId,
+    ttlMs: SESSION_TTL_MS,
+  });
+  return { sessionId, destination: req.name };
+};
+
+const connector = new Connector(
+  store,
+  codec,
+  agent,
+  sup,
+  log,
+  allowed,
+  intakeServer ? { mint: mintIntake, url: (id) => intakeServer.url(id) } : undefined,
+);
 const ingress = new TelegramLongPoll(token, store, { allowed });
 const control = controlUrl
   ? new ScheduleControl(
@@ -52,6 +131,7 @@ const control = controlUrl
   : undefined;
 
 control?.start();
+intakeServer?.start();
 if (sup instanceof ManagedProcessSupervisor) {
   const started = await sup.start();
   if (!started.ok) log(`managed daemon boot failed: ${started.error ?? "unknown error"}`);
@@ -69,6 +149,7 @@ const shutdown = async () => {
   ingress.stop();
   connector.stop();
   control?.stop();
+  intakeServer?.stop();
   await sup.shutdown();
   process.exit(0);
 };
