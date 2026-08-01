@@ -302,7 +302,12 @@ describe("spine", () => {
   test("0.2.8 safe mode: spine drops the agent name and states the neutral footing", async () => {
     const { builtinTools } = await import("../src/builtins");
     const pinned = [
-      ...builtinTools({ workspace: "/t", codeCli: ["c"], selfCmd: ["d"], subagentDepth: 0 }).values(),
+      ...builtinTools({
+        workspace: "/t",
+        codeCli: ["c"],
+        selfCmd: ["d"],
+        subagentDepth: 0,
+      }).values(),
     ];
     // Normal boot: the configured name rides the intro, no safe-mode note.
     const normal = buildSpine({ agentId: "Ferni", pinned, searchable: 0 });

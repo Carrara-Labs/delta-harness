@@ -3,6 +3,7 @@ import { linkSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { devConfigView, loadConfig, providerLabel } from "../src/config";
+import type { ProviderConfig } from "../src/provider";
 import { Queue } from "../src/queue";
 import { createServer, redactSecrets } from "../src/server";
 import type { ToolDef } from "../src/tools";
@@ -388,8 +389,15 @@ describe("devConfigView — allowlist, no secret values", () => {
 
   test("0.2.8: provider label, provider_chain, always-resolved effort, and safe_mode", () => {
     // Default (OpenRouter base, no effort set): effort resolves to "default", not omitted.
-    const base = devConfigView(loadConfig({ DELTA_WORKSPACE: mkdtempSync(join(tmpdir(), "d-")) }), []);
-    const bm = base.model as { provider: string; provider_chain: string[]; reasoning_effort: string };
+    const base = devConfigView(
+      loadConfig({ DELTA_WORKSPACE: mkdtempSync(join(tmpdir(), "d-")) }),
+      [],
+    );
+    const bm = base.model as {
+      provider: string;
+      provider_chain: string[];
+      reasoning_effort: string;
+    };
     expect(bm.provider).toBe("openrouter");
     expect(bm.provider_chain).toEqual(["openrouter"]);
     expect(bm.reasoning_effort).toBe("default"); // never blank — the /model complaint
@@ -418,20 +426,23 @@ describe("devConfigView — allowlist, no secret values", () => {
   });
 
   test("0.2.8: providerLabel maps each wire to the human-recognizable name", () => {
-    expect(providerLabel({ baseUrl: "https://openrouter.ai/api/v1", models: [], label: "primary" })).toBe(
+    const p = (extra: Partial<ProviderConfig> & { baseUrl: string }): ProviderConfig => ({
+      apiKey: "",
+      models: [],
+      ...extra,
+    });
+    expect(providerLabel(p({ baseUrl: "https://openrouter.ai/api/v1", label: "primary" }))).toBe(
       "openrouter",
     );
-    expect(
-      providerLabel({ baseUrl: "https://api.anthropic.com", models: [], api: "anthropic" }),
-    ).toBe("anthropic-native");
-    expect(
-      providerLabel({ baseUrl: "https://api.openai.com/v1", models: [], api: "responses" }),
-    ).toBe("openai-native");
-    // Unknown host falls back to the bare host, never a crash or empty string.
-    expect(providerLabel({ baseUrl: "https://gateway.example/api", models: [] })).toBe(
-      "gateway.example",
+    expect(providerLabel(p({ baseUrl: "https://api.anthropic.com", api: "anthropic" }))).toBe(
+      "anthropic-native",
     );
-    expect(providerLabel({ baseUrl: "not-a-url", models: [] })).toBe("custom");
+    expect(providerLabel(p({ baseUrl: "https://api.openai.com/v1", api: "responses" }))).toBe(
+      "openai-native",
+    );
+    // Unknown host falls back to the bare host, never a crash or empty string.
+    expect(providerLabel(p({ baseUrl: "https://gateway.example/api" }))).toBe("gateway.example");
+    expect(providerLabel(p({ baseUrl: "not-a-url" }))).toBe("custom");
   });
 });
 
