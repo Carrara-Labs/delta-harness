@@ -97,3 +97,45 @@ describe("the /secret and /secrets commands", () => {
       expect(isIntercept(t)).toBe(false);
   });
 });
+
+describe("capability-change note", () => {
+  test("a stored credential queues exactly one agent turn, and is idempotent per key", () => {
+    const path = join(tmpdir(), `connect-note-${randomUUID()}.sqlite`);
+    const store = new Store(path);
+    const note = {
+      conversationId: "tg:1",
+      actorId: "tg:1",
+      chatId: "1",
+      text: "[EXA_API_KEY is now available]",
+      key: "EXA_API_KEY:123",
+    };
+    expect(store.enqueueNote(note)).toBe(true);
+    // At-least-once delivery must not produce two turns for the same event.
+    expect(store.enqueueNote(note)).toBe(false);
+    const rows = store.db.query("SELECT text, intercept FROM inbox").all() as {
+      text: string;
+      intercept: number;
+    }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.text).toContain("EXA_API_KEY");
+    // It must be an ordinary agent turn, not a locally-intercepted command.
+    expect(rows[0]?.intercept).toBe(0);
+    rmSync(path, { force: true });
+  });
+
+  test("the note never carries a value, only the name", () => {
+    const path = join(tmpdir(), `connect-note2-${randomUUID()}.sqlite`);
+    const store = new Store(path);
+    store.enqueueNote({
+      conversationId: "c",
+      actorId: "a",
+      chatId: "1",
+      text: "[EXA_API_KEY is now available in your vault]",
+      key: "k",
+    });
+    const all = JSON.stringify(store.db.query("SELECT * FROM inbox").all());
+    expect(all).toContain("EXA_API_KEY");
+    expect(all).not.toContain("sk-");
+    rmSync(path, { force: true });
+  });
+});

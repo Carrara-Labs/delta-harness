@@ -851,6 +851,41 @@ export class Store {
     );
   }
 
+  /**
+   * Queue an internal note as an ordinary agent turn.
+   *
+   * A tool that failed for want of a credential leaves its error in the thread, and the model
+   * routes around it for the rest of the conversation — so a credential that arrives mid-thread
+   * looks like it "needs a restart" when the engine actually resolves it on the very next call.
+   * This tells the agent its capability changed. Deliberately an ordinary inbox row (the same
+   * path a scheduled wake takes), not a pretend system message: the harness seam accepts an
+   * input string, and claiming otherwise would be a lie about the trust level.
+   */
+  enqueueNote(input: {
+    conversationId: string;
+    actorId: string;
+    chatId: string;
+    text: string;
+    key: string;
+  }): boolean {
+    return (
+      this.db
+        .query(
+          `INSERT OR IGNORE INTO inbox
+             (event_id, conversation_id, actor_id, chat_id, text, attachments, received_at, intercept)
+           VALUES (?, ?, ?, ?, ?, NULL, ?, 0)`,
+        )
+        .run(
+          `note:${input.key}`,
+          input.conversationId,
+          input.actorId,
+          input.chatId,
+          input.text,
+          Date.now(),
+        ).changes > 0
+    );
+  }
+
   /** Give a consumed authorization back — ONLY on our own transient failure (the vault was
    *  unreachable), so the user can tap again instead of reopening the app. Replay protection is
    *  unaffected: the blob is released only in the window where nothing was written, and an

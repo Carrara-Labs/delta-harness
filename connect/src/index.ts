@@ -68,13 +68,23 @@ const intakeServer = intakeOn
       allowedUsers: allowed,
       writeVault: (name, value, purpose) => agent.storeSecret(name, value, purpose),
       log,
-      onStored: ({ name, chatId }) => {
+      onStored: ({ name, chatId, conversationId }) => {
         // Confirm by NAME only. Lead with the outcome — the person just handed over a
         // credential and wants to know it landed, not to read a caveat first.
         void codec.send(
           chatId,
           `Success ✅\nThe ${name} was successfully and securely saved - ready for safe use.`,
         );
+        // Then tell the AGENT, so it retries whatever it was blocked on. The engine resolves
+        // the credential on the next call with no restart, but a tool error already in the
+        // thread makes the model avoid that tool for the rest of the conversation.
+        store.enqueueNote({
+          conversationId,
+          actorId: `tg:${[...allowed][0] ?? ""}`,
+          chatId,
+          key: `${name}:${Date.now()}`,
+          text: `[${name} is now available in your vault and usable immediately - no restart needed. If a task was blocked on it, retry that step now and continue. Otherwise reply in one short line that it is ready.]`,
+        });
       },
     })
   : undefined;
