@@ -34,6 +34,14 @@ Bun (single-file `bun build --compile` binary, <10ms cold start) · TypeScript s
 runtime deps** until one earns its place (exact pins, committed lockfile) · SQLite WAL for local
 state · Biome · providers subscription-first with OpenRouter backup.
 
+## Release gate
+
+npm is a permanent public trail. **Deploy from source to a real agent and finish the
+human-in-the-loop test before publishing** — the deployment builds from this repo, not from npm,
+so the deploy → test → fix loop needs no release. A critical path you know is unverified blocks
+the release; it is not a footnote. Clean up an already-published mistake with `npm deprecate`,
+never `unpublish`.
+
 ## Reality checks
 
 `bun test` + `bash scripts/smoke.sh` against a running server before calling anything done.
