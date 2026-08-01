@@ -41,7 +41,8 @@ The security track (the vault + secure intake) shipped 2026-08-01. Next work is 
 
 ## Recently shipped (context)
 
-- **Harness 0.2.10 + Connect 0.4.0** (2026-08-01) — the security track. Encrypted secret vault
+- **Harness 0.2.10 + Connect 0.4.0** (2026-08-01) — the security track. Final combined battery
+  passed 16/16 on a fresh agent running BOTH published artifacts. Encrypted secret vault
   (values never reach model-readable state; `{{vault:NAME}}` resolved at egress; exact-value
   redaction) and in-chat secure intake (Telegram Mini App form POSTing straight to Connect,
   initData-authenticated, single-use). On npm + ghcr; site live.
