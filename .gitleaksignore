@@ -1,0 +1,9 @@
+# Findings gitleaks reports that are NOT credentials. Every entry here must be a fixture whose
+# only job is to look credential-shaped to the code under test. Never add a real secret's
+# fingerprint — rotate the secret instead.
+#
+# Both entries are the vault test suite's synthetic master key, committed in fa77b23 as a
+# high-entropy literal. HEAD builds the same fixture by joining ordinary words, but gitleaks
+# scans full history, so the original commit still matches.
+fa77b23034b26c78dfdad72d2537ea6888658974:test/vault-http.test.ts:generic-api-key:9
+fa77b23034b26c78dfdad72d2537ea6888658974:test/vault.test.ts:generic-api-key:15
