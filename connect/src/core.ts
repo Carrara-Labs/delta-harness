@@ -261,7 +261,8 @@ function formatRevisions(
 
 export class Connector {
   private running = false;
-  private origin: ActiveOrigin | null = null;
+  /** Poll cadence while any async task is in-flight (the daemon does the work; we just check). */
+  private readonly taskPollMs = 2500;
 
   constructor(
     private readonly store: Store,
@@ -273,7 +274,10 @@ export class Connector {
   ) {}
 
   get activeOrigin(): Readonly<ActiveOrigin> | null {
-    return this.origin;
+    // Derived from the durable tasks table (0.3.2): with async turns there is no single in-flight
+    // origin, so a schedule_self call binds to the most-recent active task's chat.
+    const t = this.store.mostRecentActiveTask();
+    return t ? { conversationId: t.conversation_id, actorId: t.actor_id, chatId: t.chat_id } : null;
   }
 
   private chunks(text: string): string[] {
@@ -419,8 +423,114 @@ export class Connector {
       return true;
     }
 
-    // Run the agent turn (the one non-durable step). A crash here leaves the
-    // event pending, so it re-runs on restart (at-least-once on the turn).
+    // Dispatch the agent turn. Delta's async surface (startTask/pollTask) runs it durably on the
+    // daemon's /v1/tasks queue and we track it to completion in pollTasks(), so the dispatch loop
+    // is never blocked and a long turn can neither time out nor freeze the bot (0.3.2). A
+    // third-party AgentClient without the async surface takes the synchronous fallback.
+    if (this.agent.startTask && this.agent.pollTask) return await this.startAgentTask(row, text);
+    return await this.runSyncTurn(row, text);
+  }
+
+  /** Start an async agent turn: a durable task on the daemon, tracked to completion in pollTasks. */
+  private async startAgentTask(row: InboxRow, text: string): Promise<boolean> {
+    const fail = async (note: string) => {
+      this.store.commitTurn({
+        eventId: row.event_id,
+        conversationId: row.conversation_id,
+        chatId: row.chat_id,
+        userId: row.actor_id,
+        replyChunks: this.chunks(note),
+      });
+      await this.flushOutbox();
+    };
+    try {
+      await this.sup.ensureAwake();
+      const session = this.store.getSession(row.conversation_id);
+      const input = await this.prepareInput(row, text);
+      const started = await this.agent.startTask?.(input, {
+        previousResponseId: session?.prev_response_id ?? undefined,
+        userId: row.actor_id,
+        idempotencyKey: row.event_id,
+      });
+      if (!started || "error" in started) {
+        this.log(`task start failed for ${row.event_id}: ${started ? started.error : "no client"}`);
+        await fail("I couldn't start that just now - try again in a moment.");
+        return true;
+      }
+      const claimed = this.store.startTask({
+        taskId: started.id,
+        eventId: row.event_id,
+        conversationId: row.conversation_id,
+        chatId: row.chat_id,
+        actorId: row.actor_id,
+        userId: row.actor_id,
+      });
+      if (!claimed) {
+        // Unreachable under the single serial loop (nextPending filters busy conversations); cancel
+        // the just-started daemon task defensively so it cannot run a duplicate.
+        this.log(`task not claimed (conversation busy) for ${row.event_id}`);
+        await this.agent.cancelTask?.(started.id, row.actor_id);
+        this.store.markInboxDone(row.event_id);
+        return true;
+      }
+      await this.codec.typing?.(row.chat_id); // first activity ping; pollTasks keeps it warm
+    } catch (e) {
+      this.log(`task dispatch error for ${row.event_id}: ${String(e)}`);
+      await fail("Something went wrong on my end. Try again in a moment.");
+    }
+    return true;
+  }
+
+  /** Poll every in-flight task to its authoritative terminal state (GET /v1/tasks/:id) and
+   *  finalize. The poll is the source of truth (the SSE is best-effort UX), so a restart, suspend,
+   *  or dropped stream reconciles cleanly. Returns true if any task reached a terminal state. */
+  async pollTasks(): Promise<boolean> {
+    const active = this.store.activeTasks();
+    if (!active.length) return false;
+    let finalized = false;
+    for (const task of active) {
+      const st = this.agent.pollTask ? await this.agent.pollTask(task.task_id, task.user_id) : null;
+      if (!st) continue; // transient poll failure: keep the task active, retry next tick
+      if (st.status === "queued" || st.status === "running") {
+        await this.codec.typing?.(task.chat_id); // keep the typing indicator alive while working
+        continue;
+      }
+      // Terminal: build the reply, finalize atomically (session + outbox + inbox + task), deliver.
+      finalized = true;
+      let replyChunks: string[];
+      let responseId: string | undefined;
+      if (st.status === "done") {
+        responseId = st.responseId;
+        const marked = extractDocumentMarker((st.outputText ?? "").trim());
+        const reply = marked.text || (marked.path ? "" : "(I finished, but produced no text.)");
+        replyChunks = reply ? this.chunks(reply) : [];
+        if (marked.path) replyChunks.push(`${DOCUMENT_SENTINEL}${marked.path}`);
+      } else if (st.status === "cancelled") {
+        replyChunks = this.chunks("Stopped.");
+      } else {
+        replyChunks = this.chunks(
+          `Something went wrong on my end and I could not finish that${st.error ? ` (${st.error})` : ""}. Try again in a moment.`,
+        );
+      }
+      this.store.finishTask({
+        taskId: task.task_id,
+        eventId: task.event_id,
+        conversationId: task.conversation_id,
+        chatId: task.chat_id,
+        userId: task.actor_id,
+        responseId,
+        replyChunks,
+      });
+    }
+    if (finalized) {
+      await this.flushOutbox();
+      await this.sup.maybeSuspend();
+    }
+    return finalized;
+  }
+
+  /** Synchronous turn — the fallback for a third-party AgentClient without the async surface. */
+  private async runSyncTurn(row: InboxRow, text: string): Promise<boolean> {
     let responseId: string | undefined;
     let replyChunks: string[];
     try {
@@ -428,34 +538,21 @@ export class Connector {
       await this.codec.typing?.(row.chat_id);
       const session = this.store.getSession(row.conversation_id);
       const input = await this.prepareInput(row, text);
-      this.origin = {
-        conversationId: row.conversation_id,
-        actorId: row.actor_id,
-        chatId: row.chat_id,
-      };
-      let out: Awaited<ReturnType<AgentClient["run"]>>;
-      try {
-        out = await this.agent.run(input, {
-          previousResponseId: session?.prev_response_id ?? undefined,
-          userId: row.actor_id,
-        });
-      } finally {
-        this.origin = null;
-      }
+      const out = await this.agent.run(input, {
+        previousResponseId: session?.prev_response_id ?? undefined,
+        userId: row.actor_id,
+      });
       responseId = out.responseId;
       const marked = extractDocumentMarker(out.outputText.trim());
       const reply = marked.text || (marked.path ? "" : "(I finished, but produced no text.)");
       replyChunks = reply ? this.chunks(reply) : [];
       if (marked.path) replyChunks.push(`${DOCUMENT_SENTINEL}${marked.path}`);
     } catch (e) {
-      this.origin = null;
       this.log(`turn failed for ${row.event_id}: ${String(e)}`);
       replyChunks = this.chunks(
         "Something went wrong on my end and I could not finish that. Try again in a moment.",
       );
     }
-
-    // One atomic commit: session + reply chunks + inbox-done.
     this.store.commitTurn({
       eventId: row.event_id,
       conversationId: row.conversation_id,
@@ -464,7 +561,6 @@ export class Connector {
       responseId,
       replyChunks,
     });
-
     await this.flushOutbox();
     await this.sup.maybeSuspend();
     return true;
@@ -543,8 +639,12 @@ export class Connector {
   async loop(intervalMs = 500): Promise<void> {
     this.running = true;
     while (this.running) {
-      const did = await this.runOnce();
-      if (!did) await Bun.sleep(intervalMs);
+      const polled = await this.pollTasks(); // finalize terminal tasks + keep typing alive
+      const did = await this.runOnce(); // dispatch new work / answer intercepts
+      await this.flushOutbox();
+      if (polled || did) continue; // made progress this tick — keep going
+      // Idle: while tasks are still in-flight, tick on the task-poll cadence; else the normal sleep.
+      await Bun.sleep(this.store.activeTasks().length ? this.taskPollMs : intervalMs);
     }
   }
 

@@ -149,7 +149,7 @@ describe("control endpoint gates and correlation", () => {
     ).toBe(404);
   });
 
-  test("Connector exposes the origin only while the agent turn is running", async () => {
+  test("Connector exposes the origin of an active async task, then null once it finalizes", async () => {
     const store = new Store(":memory:");
     let connector: Connector;
     const control = new ScheduleControl(
@@ -176,23 +176,20 @@ describe("control endpoint gates and correlation", () => {
         return { ok: true };
       },
     };
+    // Async agent (0.3.2): the origin for schedule_self binding comes from the durable active-task
+    // row, not a single in-flight window.
     connector = new Connector(
       store,
       codec,
       {
         async run() {
-          const response = await control.handle(
-            new Request("http://127.0.0.1:8322/api/agents/self/schedules", {
-              method: "POST",
-              headers: { authorization: "Bearer secret", "content-type": "application/json" },
-              body: JSON.stringify({
-                prompt: "wake",
-                spec: { kind: "interval", intervalMs: 60_000 },
-              }),
-            }),
-          );
-          expect(response.status).toBe(201);
-          return { responseId: "r", outputText: "scheduled" };
+          return { responseId: "r", outputText: "unused" };
+        },
+        async startTask() {
+          return { id: "task1" };
+        },
+        async pollTask() {
+          return { status: "done", responseId: "r", outputText: "scheduled" };
         },
       },
       supervisor,
@@ -204,7 +201,19 @@ describe("control endpoint gates and correlation", () => {
       chatId: origin.chatId,
       text: "schedule it",
     });
+    // Start the task: now a task is active, so the daemon's schedule_self resolves the origin.
     await connector.runOnce();
+    expect(connector.activeOrigin).toEqual(origin);
+    const response = await control.handle(
+      new Request("http://127.0.0.1:8322/api/agents/self/schedules", {
+        method: "POST",
+        headers: { authorization: "Bearer secret", "content-type": "application/json" },
+        body: JSON.stringify({ prompt: "wake", spec: { kind: "interval", intervalMs: 60_000 } }),
+      }),
+    );
+    expect(response.status).toBe(201);
+    // Finalize the task: the conversation frees and the origin is null again.
+    await connector.pollTasks();
     expect(connector.activeOrigin).toBeNull();
     expect(store.listSchedules(origin)).toHaveLength(1);
   });

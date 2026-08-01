@@ -116,6 +116,92 @@ export class DeltaAgent implements AgentClient {
     }
   }
 
+  /** Start an async turn on the daemon's durable /v1/tasks surface (0.3.2). Returns the run id
+   *  immediately (the turn runs in the background); the tracker polls it to completion, so a long
+   *  turn no longer holds an HTTP call open under a wall-clock timeout. idempotency_key = the inbox
+   *  event id, so a crash-then-redispatch re-attaches to the SAME daemon task instead of double-running. */
+  async startTask(
+    input: string,
+    opts: { previousResponseId?: string; userId: string; idempotencyKey: string },
+  ): Promise<{ id: string } | { error: string }> {
+    try {
+      // x-delta-user asserts the run's owner, so the ownership-gated status/cancel polls below
+      // (which the sync /v1/responses path never needed) match — same pattern Aperture QS uses.
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+        "x-delta-user": opts.userId,
+      };
+      if (this.controlToken) headers.authorization = `Bearer ${this.controlToken}`;
+      const res = await fetch(`${this.baseUrl}/v1/tasks`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          input,
+          previous_response_id: opts.previousResponseId,
+          idempotency_key: opts.idempotencyKey,
+          metadata: { user_id: opts.userId },
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) return { error: `task start ${res.status}` };
+      const data = (await res.json().catch(() => ({}))) as { id?: unknown };
+      return typeof data.id === "string" && data.id
+        ? { id: data.id }
+        : { error: "task start: no id" };
+    } catch (e) {
+      return { error: String(e).slice(0, 200) };
+    }
+  }
+
+  /** Poll a task's authoritative status (GET /v1/tasks/:id). Null on a transient failure so the
+   *  tracker keeps the task active and retries next tick. On a terminal status, result carries the
+   *  response id (for the thread head) and the full output_text. */
+  async pollTask(
+    id: string,
+    userId: string,
+  ): Promise<{ status: string; responseId?: string; outputText?: string; error?: string } | null> {
+    try {
+      const headers: Record<string, string> = { "x-delta-user": userId };
+      if (this.controlToken) headers.authorization = `Bearer ${this.controlToken}`;
+      const res = await fetch(`${this.baseUrl}/v1/tasks/${encodeURIComponent(id)}`, {
+        headers,
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) return null;
+      const data = (await res.json().catch(() => ({}))) as {
+        status?: unknown;
+        error?: unknown;
+        result?: { id?: unknown; output_text?: unknown };
+      };
+      return {
+        status: typeof data.status === "string" ? data.status : "unknown",
+        ...(typeof data.result?.id === "string" ? { responseId: data.result.id } : {}),
+        ...(typeof data.result?.output_text === "string"
+          ? { outputText: data.result.output_text }
+          : {}),
+        ...(data.error ? { error: String(data.error).slice(0, 300) } : {}),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Cancel a running task (DELETE /v1/tasks/:id). Best-effort; ends the orphaned-billing an
+   *  abandoned turn would otherwise incur. */
+  async cancelTask(id: string, userId: string): Promise<void> {
+    try {
+      const headers: Record<string, string> = { "x-delta-user": userId };
+      if (this.controlToken) headers.authorization = `Bearer ${this.controlToken}`;
+      await fetch(`${this.baseUrl}/v1/tasks/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers,
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch {
+      // best-effort
+    }
+  }
+
   /** Inspect-authenticated self-file revision history for the /revert picker (0.3.1).
    *  Reuses the existing GET /v1/dev/self/revisions endpoint; null on any failure. */
   async revisions(): Promise<{

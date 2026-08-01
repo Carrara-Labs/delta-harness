@@ -35,6 +35,18 @@ export type OutboxRow = {
   next_attempt_at: number;
 };
 
+export type TaskRow = {
+  task_id: string;
+  event_id: string;
+  conversation_id: string;
+  chat_id: string;
+  actor_id: string;
+  user_id: string;
+  status: string;
+  stream_message_id: string | null;
+  created_at: number;
+};
+
 export type ScheduleOrigin = {
   conversationId: string;
   actorId: string;
@@ -116,6 +128,25 @@ export class Store {
         value TEXT NOT NULL
       );
 
+      -- Async turns (0.3.2): one durable row per in-flight agent turn dispatched to the daemon's
+      -- /v1/tasks surface. The row outlives a single dispatch tick, so the tracker re-attaches
+      -- after a Connect restart. The partial unique index enforces AT MOST ONE active task per
+      -- conversation, so two turns can never race the same thread's previous_response_id.
+      CREATE TABLE IF NOT EXISTS tasks (
+        task_id         TEXT PRIMARY KEY,
+        event_id        TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        chat_id         TEXT NOT NULL,
+        actor_id        TEXT NOT NULL,
+        user_id         TEXT NOT NULL,
+        status          TEXT NOT NULL DEFAULT 'active',
+        stream_message_id TEXT,
+        created_at      INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS tasks_one_active
+        ON tasks(conversation_id) WHERE status = 'active';
+      CREATE INDEX IF NOT EXISTS tasks_active ON tasks(status, created_at);
+
       CREATE TABLE IF NOT EXISTS schedules (
         id              TEXT PRIMARY KEY,
         conversation_id TEXT NOT NULL,
@@ -170,12 +201,18 @@ export class Store {
     return r.changes > 0;
   }
 
+  /** The oldest pending message WHOSE CONVERSATION HAS NO ACTIVE TASK (0.3.2). A conversation with
+   *  an in-flight async turn is skipped, not blocked, so one long turn never stalls the global
+   *  inbox — other conversations keep flowing while it runs (codex must-fix: per-conversation
+   *  serialization without head-of-line blocking). Its own next message just waits, in order. */
   nextPending(): InboxRow | null {
     return (
       (this.db
         // rowid tiebreak: two updates in the same ms still drain in arrival order.
         .query(
-          `SELECT * FROM inbox WHERE status = 'pending' ORDER BY received_at ASC, rowid ASC LIMIT 1`,
+          `SELECT * FROM inbox WHERE status = 'pending'
+             AND conversation_id NOT IN (SELECT conversation_id FROM tasks WHERE status = 'active')
+           ORDER BY received_at ASC, rowid ASC LIMIT 1`,
         )
         .get() as InboxRow) ?? null
     );
@@ -183,6 +220,126 @@ export class Store {
 
   markInboxDone(eventId: string): void {
     this.db.query(`UPDATE inbox SET status = 'done' WHERE event_id = ?`).run(eventId);
+  }
+
+  // --- async tasks (0.3.2) ----------------------------------------------
+
+  /** Claim a message as an in-flight async turn: mark the inbox row dispatched and record the
+   *  durable task row, atomically. The task id was minted by the daemon (idempotency_key = the
+   *  event id), so a crash before this commit just re-dispatches to the SAME daemon task. Returns
+   *  false if the conversation already has an active task (the partial unique index) — the caller
+   *  cancels the just-started daemon task to avoid a duplicate run. */
+  startTask(args: {
+    taskId: string;
+    eventId: string;
+    conversationId: string;
+    chatId: string;
+    actorId: string;
+    userId: string;
+  }): boolean {
+    try {
+      const tx = this.db.transaction(() => {
+        this.db
+          .query(
+            `INSERT INTO tasks (task_id, event_id, conversation_id, chat_id, actor_id, user_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            args.taskId,
+            args.eventId,
+            args.conversationId,
+            args.chatId,
+            args.actorId,
+            args.userId,
+            Date.now(),
+          );
+        this.db
+          .query(`UPDATE inbox SET status = 'dispatched' WHERE event_id = ?`)
+          .run(args.eventId);
+      });
+      tx();
+      return true;
+    } catch {
+      return false; // unique-index conflict: a task is already active for this conversation
+    }
+  }
+
+  activeTasks(): TaskRow[] {
+    return this.db
+      .query(`SELECT * FROM tasks WHERE status = 'active' ORDER BY created_at ASC, rowid ASC`)
+      .all() as TaskRow[];
+  }
+
+  /** Resolve the origin of an active task by its daemon-asserted user_id — the async replacement
+   *  for the single in-flight `activeOrigin`, so schedule_self binds to the right chat even with
+   *  several conversations' tasks running at once. */
+  activeTaskByUser(userId: string): TaskRow | null {
+    return (
+      (this.db
+        .query(
+          `SELECT * FROM tasks WHERE status = 'active' AND user_id = ? ORDER BY created_at DESC LIMIT 1`,
+        )
+        .get(userId) as TaskRow) ?? null
+    );
+  }
+
+  /** The most-recently-started active task — the async replacement for the single in-flight
+   *  `activeOrigin` that binds a schedule_self call to a chat. Exact for a single-conversation
+   *  agent; a best-effort pick when several conversations run tasks at once (the daemon's
+   *  schedule_self POST carries no identity, so this is the leanest binding without a harness change). */
+  mostRecentActiveTask(): TaskRow | null {
+    return (
+      (this.db
+        .query(
+          `SELECT * FROM tasks WHERE status = 'active' ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+        )
+        .get() as TaskRow) ?? null
+    );
+  }
+
+  setTaskStreamMessage(taskId: string, messageId: string): void {
+    this.db
+      .query(`UPDATE tasks SET stream_message_id = ? WHERE task_id = ?`)
+      .run(messageId, taskId);
+  }
+
+  /** Finalize a terminal task: advance the session, enqueue the reply, mark the inbox done, and
+   *  mark the task done (freeing the conversation) — ALL in one transaction, so a crash never
+   *  leaves a half-delivered turn or a stuck conversation. Mirrors commitTurn plus the task close. */
+  finishTask(args: {
+    taskId: string;
+    eventId: string;
+    conversationId: string;
+    chatId: string;
+    userId: string;
+    responseId?: string;
+    replyChunks: string[];
+  }): void {
+    const now = Date.now();
+    const groupKey = `out:${args.eventId}`;
+    const tx = this.db.transaction(() => {
+      if (args.responseId) {
+        this.db
+          .query(
+            `INSERT INTO sessions (conversation_id, prev_response_id, user_id, updated_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(conversation_id) DO UPDATE SET
+               prev_response_id = excluded.prev_response_id, updated_at = excluded.updated_at`,
+          )
+          .run(args.conversationId, args.responseId, args.userId, now);
+      }
+      args.replyChunks.forEach((text, i) => {
+        this.db
+          .query(
+            `INSERT OR IGNORE INTO outbox (dedup_key, group_key, conversation_id, chat_id, text, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+          )
+          .run(`${groupKey}:${i}`, groupKey, args.conversationId, args.chatId, text, now + i);
+      });
+      this.db.query(`UPDATE inbox SET status = 'done' WHERE event_id = ?`).run(args.eventId);
+      this.db.query(`UPDATE tasks SET status = 'done' WHERE task_id = ?`).run(args.taskId);
+    });
+    tx();
   }
 
   // --- sessions ----------------------------------------------------------

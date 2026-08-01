@@ -82,6 +82,19 @@ export interface AgentClient {
   uploadFiles?(files: DownloadedFile[]): Promise<Array<{ path: string; mime: string }>>;
   /** Read the agent's secret-free status (GET /v1/status): version, profile, model, budget. */
   status?(): Promise<Record<string, unknown> | null>;
+  /** Start an async turn on the daemon's /v1/tasks surface (0.3.2); returns the run id at once. */
+  startTask?(
+    input: string,
+    opts: { previousResponseId?: string; userId: string; idempotencyKey: string },
+  ): Promise<{ id: string } | { error: string }>;
+  /** Poll a task's authoritative status; null on a transient failure (keep the task active).
+   *  userId asserts the owning principal so the ownership-gated status read matches. */
+  pollTask?(
+    id: string,
+    userId: string,
+  ): Promise<{ status: string; responseId?: string; outputText?: string; error?: string } | null>;
+  /** Cancel a running task (best-effort). userId asserts the owning principal. */
+  cancelTask?(id: string, userId: string): Promise<void>;
   /** Revert the self-file through the separately inspect-authenticated endpoint. */
   revertSelf?(id: number): Promise<OperationResult>;
   /** Self-file revision history (GET /v1/dev/self/revisions, inspect-gated) for the /revert

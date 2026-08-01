@@ -1,6 +1,6 @@
 {
   "name": "@carrara-labs/delta-connect",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Thin channel edge that plugs a Delta agent into chat channels. Telegram first. Zero runtime deps.",
   "type": "module",
   "license": "Apache-2.0",
