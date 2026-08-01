@@ -259,3 +259,31 @@ describe("parseUpdate (untrusted input)", () => {
     ).not.toThrow();
   });
 });
+
+describe("intra-word underscores (CommonMark)", () => {
+  test("a credential name survives intact", () => {
+    // Live bug: EXA_API_KEY rendered as EXA<i>API</i>KEY in the intake confirmation, so the
+    // one message whose job is to name the credential misnamed it.
+    expect(markdownToHtml("Saved EXA_API_KEY.")).toBe("Saved EXA_API_KEY.");
+    expect(markdownToHtml("provide AWS_SECRET_ACCESS_KEY now")).toBe(
+      "provide AWS_SECRET_ACCESS_KEY now",
+    );
+  });
+
+  test("ordinary snake_case identifiers are left alone", () => {
+    expect(markdownToHtml("call read_file then write_file")).toBe("call read_file then write_file");
+  });
+
+  test("real underscore emphasis still renders", () => {
+    expect(markdownToHtml("_italic_ here")).toBe("<i>italic</i> here");
+    expect(markdownToHtml("__bold__ here")).toBe("<b>bold</b> here");
+  });
+
+  test("asterisk emphasis is unaffected by the underscore rule", () => {
+    expect(markdownToHtml("*i* and **b**")).toBe("<i>i</i> and <b>b</b>");
+  });
+
+  test("emphasis and an identifier can coexist on one line", () => {
+    expect(markdownToHtml("_note_ about read_file")).toBe("<i>note</i> about read_file");
+  });
+});

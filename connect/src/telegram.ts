@@ -24,6 +24,21 @@ const API = (token: string, method: string) => `https://api.telegram.org/bot${to
 const escapeHtml = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
+/** CommonMark's intra-word rule: an underscore INSIDE a word is a literal underscore, never
+ *  emphasis. Without it every snake_case identifier is mangled — `EXA_API_KEY` renders as
+ *  EXA<i>API</i>KEY, which is exactly the shape a credential name takes. Asterisks carry no such
+ *  restriction, so `**bold**` and `*italic*` are unaffected. */
+const isWordChar = (c: string | undefined) => c !== undefined && /[\p{L}\p{N}]/u.test(c);
+
+/** Index of the next delimiter that may legally CLOSE emphasis, or -1. An underscore run
+ *  followed by a word character is inside a word, so it closes nothing. */
+function closingDelimiter(source: string, delim: string, from: number): number {
+  for (let end = source.indexOf(delim, from); end >= 0; end = source.indexOf(delim, end + 1)) {
+    if (delim[0] !== "_" || !isWordChar(source[end + delim.length])) return end;
+  }
+  return -1;
+}
+
 function inlineToHtml(source: string): string {
   let out = "";
   for (let i = 0; i < source.length; ) {
@@ -61,8 +76,8 @@ function inlineToHtml(source: string): string {
     }
 
     const bold = source.startsWith("**", i) ? "**" : source.startsWith("__", i) ? "__" : null;
-    if (bold) {
-      const end = source.indexOf(bold, i + 2);
+    if (bold && !(bold === "__" && isWordChar(source[i - 1]))) {
+      const end = closingDelimiter(source, bold, i + 2);
       if (end > i + 2) {
         out += `<b>${escapeHtml(source.slice(i + 2, end))}</b>`;
         i = end + 2;
@@ -70,9 +85,9 @@ function inlineToHtml(source: string): string {
       }
     }
 
-    const italic = source[i] === "*" || source[i] === "_" ? source[i] : null;
-    if (italic) {
-      const end = source.indexOf(italic, i + 1);
+    const italic = source[i] === "*" || source[i] === "_" ? (source[i] as string) : null;
+    if (italic && !(italic === "_" && isWordChar(source[i - 1]))) {
+      const end = closingDelimiter(source, italic, i + 1);
       if (end > i + 1) {
         out += `<i>${escapeHtml(source.slice(i + 1, end))}</i>`;
         i = end + 1;
