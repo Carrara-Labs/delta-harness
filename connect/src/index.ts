@@ -69,9 +69,12 @@ const intakeServer = intakeOn
       writeVault: (name, value, purpose) => agent.storeSecret(name, value, purpose),
       log,
       onStored: ({ name, chatId }) => {
-        // Confirm by NAME and nudge the agent so it can carry on with the task it was
-        // blocked on. The nudge is honest about what happened and carries no value.
-        void codec.send(chatId, `Saved ${name}. I can use it now, and I still can't read it.`);
+        // Confirm by NAME only. Lead with the outcome — the person just handed over a
+        // credential and wants to know it landed, not to read a caveat first.
+        void codec.send(
+          chatId,
+          `Success ✅\nThe ${name} was successfully and securely saved - ready for safe use.`,
+        );
       },
     })
   : undefined;
