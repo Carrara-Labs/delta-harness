@@ -16,7 +16,7 @@
 // and is never stored in Connect's chat records. The Telegram client still owns the
 // WebView and the keyboard, as it does for anything typed on a phone.
 
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Store } from "./store";
 
 const MAX_BODY_BYTES = 8_192;
@@ -28,20 +28,19 @@ export const SESSION_TTL_MS = 15 * 60_000;
 /** Names must be env-var shaped — the same rail the harness vault enforces. */
 export const NAME_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
 
-/** Hardened headers for every response this listener emits. The page holds a credential in
- *  an input box, so it gets a CSP that forbids ALL script/network origins (the page's own
- *  inline script is allowed by hash-free `unsafe-inline` only for style; the script is
- *  served inline and permitted explicitly), no referrer, no sniffing, no caching. */
-const PAGE_HEADERS = {
+/** Hardened headers for every response this listener emits. The page holds a credential in an
+ *  input box, so its CSP names a per-response NONCE rather than blanket `unsafe-inline`: if HTML
+ *  injection ever reached this page, injected script still would not run. Everything else is
+ *  denied outright — no external origin of any kind, no form posts, no framing except Telegram. */
+const pageHeaders = (nonce: string) => ({
   "content-type": "text/html; charset=utf-8",
   "cache-control": "no-store",
   "referrer-policy": "no-referrer",
   "x-content-type-options": "nosniff",
   "x-frame-options": "SAMEORIGIN",
   "permissions-policy": "geolocation=(), microphone=(), camera=(), payment=()",
-  "content-security-policy":
-    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors https://web.telegram.org https://telegram.org",
-} as const;
+  "content-security-policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors https://web.telegram.org https://telegram.org`,
+});
 
 const JSON_HEADERS = { "cache-control": "no-store", "referrer-policy": "no-referrer" };
 const json = (body: unknown, status = 200) =>
@@ -120,7 +119,12 @@ export function verifyInitData(
   // The digest identifies THIS Telegram authorization. Consuming it globally is what stops a
   // single valid initData blob from being replayed against a second live session (the blob
   // signs Telegram's own fields, not our session id — so session binding alone is not enough).
-  const digest = createHmac("sha256", secret).update(`consume:${initData}`).digest("hex");
+  //
+  // It MUST be derived from a canonical form. Keying on the raw string would be trivially
+  // bypassed: field order and hash case do not affect validity (the check string is sorted and
+  // the comparison is lowercased), so a reordered copy of the same authorization would look new.
+  // Telegram's own `hash` is exactly the per-authorization identity, so key on that.
+  const digest = createHmac("sha256", secret).update(`consume:${hash.toLowerCase()}`).digest("hex");
   return { ok: true, userId, digest };
 }
 
@@ -141,7 +145,7 @@ const esc = (s: string) =>
  * Nothing model-authored is interpolated: the agent supplies only a NAME (validated against
  * NAME_RE) and the destination shown is the operator's configured one.
  */
-export function intakePage(name: string, destination: string): string {
+export function intakePage(name: string, destination: string, nonce: string): string {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -171,7 +175,7 @@ export function intakePage(name: string, destination: string): string {
          spellcheck="false" placeholder="Paste the credential">
   <button id="b">Save securely</button>
   <div id="msg"></div>
-<script>
+<script nonce="${esc(nonce)}">
 (function () {
   var input = document.getElementById('v'), button = document.getElementById('b'), msg = document.getElementById('msg');
   // Telegram puts the signed launch data in the URL fragment; read it here rather than
@@ -272,14 +276,15 @@ export class IntakeServer {
         const session = store.intakeSession(sessionId);
 
         if (request.method === "GET") {
+          const nonce = randomBytes(16).toString("base64");
           if (!session || session.used_at || session.expires_at < Date.now())
             return new Response(deadPage("Ask your agent for a new link."), {
               status: 410,
-              headers: PAGE_HEADERS,
+              headers: pageHeaders(nonce),
             });
-          return new Response(intakePage(session.name, session.destination), {
+          return new Response(intakePage(session.name, session.destination, nonce), {
             status: 200,
-            headers: PAGE_HEADERS,
+            headers: pageHeaders(nonce),
           });
         }
 
@@ -331,8 +336,12 @@ export class IntakeServer {
         //    both write (the loser gets a clean rejection rather than a last-write-wins race).
         if (!store.consumeIntakeAuth(check.digest, session.expires_at + SESSION_TTL_MS))
           return json({ error: "this link is no longer valid" }, 403);
-        if (!store.claimIntakeSession(sessionId))
+        if (!store.claimIntakeSession(sessionId)) {
+          // Nothing was written, so give the authorization back rather than burning it on a
+          // session that turned out to be spent or expired.
+          store.releaseIntakeAuth(check.digest);
           return json({ error: "this link is no longer valid" }, 409);
+        }
 
         let wrote: Awaited<ReturnType<VaultWriter>>;
         try {
@@ -342,7 +351,10 @@ export class IntakeServer {
           // user can simply tap again rather than reopening the app for a fresh initData.
           store.releaseIntakeSession(sessionId);
           store.releaseIntakeAuth(check.digest);
-          log(`intake ${tag(sessionId)} vault write failed: ${String(e).slice(0, 120)}`);
+          // The error NAME only: an exception string can quote the request that produced it.
+          log(
+            `intake ${tag(sessionId)} vault write failed: ${e instanceof Error ? e.name : "error"}`,
+          );
           return json({ error: "could not reach the vault — try again" }, 502);
         }
         if (!wrote.ok) {

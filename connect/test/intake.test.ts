@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { intakePage, NAME_RE, SESSION_TTL_MS, verifyInitData } from "../src/intake";
 import { Store } from "../src/store";
 
+const NONCE = "test-nonce-value";
 const BOT_TOKEN = "123456:test-bot-token-value";
 const USER_ID = "5499639944";
 
@@ -201,7 +202,7 @@ describe("intake session lifecycle", () => {
 
 describe("the form page", () => {
   test("loads no third-party script (nothing else may run in the credential's origin)", () => {
-    const html = intakePage("EXA_API_KEY", "api.exa.ai");
+    const html = intakePage("EXA_API_KEY", "api.exa.ai", NONCE);
     expect(html).not.toContain("telegram-web-app.js");
     expect(html).not.toContain("<script src");
     expect(html).toContain("tgWebAppData"); // parsed from the fragment ourselves
@@ -211,20 +212,20 @@ describe("the form page", () => {
     // NAME_RE is the gate; escaping is the second line so the page can never become a sink.
     expect(NAME_RE.test("</script><img src=x onerror=alert(1)>")).toBe(false);
     expect(NAME_RE.test("EXA_API_KEY")).toBe(true);
-    const html = intakePage("EXA_API_KEY", '"><script>alert(1)</script>');
+    const html = intakePage("EXA_API_KEY", '"><script>alert(1)</script>', NONCE);
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;");
   });
 
   test("the input is a password field with autocomplete and spellcheck off", () => {
-    const html = intakePage("K", "d");
+    const html = intakePage("K", "d", NONCE);
     expect(html).toContain('type="password"');
     expect(html).toContain('autocomplete="off"');
     expect(html).toContain('spellcheck="false"');
   });
 
   test("it POSTs to its own path rather than using Telegram's sendData", () => {
-    const html = intakePage("K", "d");
+    const html = intakePage("K", "d", NONCE);
     expect(html).toContain("location.pathname");
     expect(html).not.toContain("sendData");
   });
@@ -242,5 +243,32 @@ describe("retry after a transient failure", () => {
     store.releaseIntakeAuth(digest);
     expect(store.consumeIntakeAuth(digest, Date.now() + 60_000)).toBe(true);
     rmSync(path, { force: true });
+  });
+});
+
+describe("codex-caught intake hardening", () => {
+  test("a reordered copy of the same authorization yields the SAME replay key", () => {
+    // The check string is sorted and the hash compared case-insensitively, so a reordered
+    // (or differently-cased) blob is still VALID. Keying replay defence on the raw string
+    // would therefore let the same authorization through twice.
+    const fields = freshFields();
+    const signed = signInitData(fields);
+    const params = new URLSearchParams(signed);
+    const hash = params.get("hash") as string;
+    // Rebuild with the parameters in a different order and the hash upper-cased.
+    const reordered = new URLSearchParams();
+    reordered.set("hash", hash.toUpperCase());
+    for (const [k, v] of [...params].reverse()) if (k !== "hash") reordered.set(k, v);
+
+    const a = verifyInitData(signed, BOT_TOKEN);
+    const b = verifyInitData(reordered.toString(), BOT_TOKEN);
+    expect(a.ok).toBe(true);
+    expect(b.ok).toBe(true); // still a valid authorization…
+    if (a.ok && b.ok) expect(a.digest).toBe(b.digest); // …and NOT a fresh one
+  });
+
+  test("the page's CSP names a nonce instead of allowing any inline script", () => {
+    const html = intakePage("EXA_API_KEY", "an agent's vault", "abc123nonce");
+    expect(html).toContain('<script nonce="abc123nonce">');
   });
 });
