@@ -1,6 +1,10 @@
 # Ferni - a self-learning Delta agent on Telegram, one always-on Fly machine.
-# No [http_service]: Telegram long-poll is outbound-only, so the machine needs no
-# public port or IP. It runs continuously (the connector must never miss a message).
+# It runs continuously (the connector must never miss a message).
+#
+# ONE public surface (0.4.0): the secure secret-intake listener below. Telegram long-poll is
+# still outbound-only; the daemon seam (8321) and the schedule control server (8322) remain
+# loopback-bound. Port 8323 serves exactly two routes, GET/POST /intake/:session, and returns
+# an empty 404 for anything else.
 app = "ferni-delta-connect"
 primary_region = "iad"
 
@@ -44,8 +48,19 @@ primary_region = "iad"
   # compact well below where Opus per-step latency + re-billed context get painful. 160k never fired
   # (heavy turns topped ~155k and re-sent it every step); 130k makes compaction actually kick in.
   DELTA_COMPACT_AT_TOKENS = "130000"
-  # only Nic may talk to the bot (also gates the operator /restart /safemode /revert commands)
+  # only Nic may talk to the bot (also gates the operator /restart /safemode /revert commands),
+  # and intake REFUSES to start unless this is non-empty
   ALLOWED_TELEGRAM_USER_IDS = "5499639944"
+  # secure secret intake (Connect 0.4.0 + Harness 0.2.10). DELTA_VAULT_KEY is a Fly secret.
+  CONNECT_PUBLIC_URL = "https://ferni-delta-connect.fly.dev"
+  CONNECT_PUBLIC_PORT = "8323"
+
+[http_service]
+  internal_port = 8323
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
 
 [mounts]
   source = "ferni_data"
