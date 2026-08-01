@@ -857,12 +857,16 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
   // gateway token, hash-matched server-side); a 60s CP ticker fires due schedules as wake
   // turns. Only registered when CP-wired: a bare dev binary boots without them.
   if (cfg.controlUrl && cfg.controlToken) {
-    const cp = (path: string, init: RequestInit): Promise<Response> =>
+    // `owner` asserts WHICH user this schedule call is for (x-delta-user), so the gateway binds the
+    // schedule to the right conversation even when several users' turns run concurrently — the async
+    // replacement for a single in-flight origin. Omitted for an unowned/dev run (gateway falls back).
+    const cp = (path: string, init: RequestInit, owner?: string | null): Promise<Response> =>
       fetch(`${cfg.controlUrl}${path}`, {
         ...init,
         headers: {
           authorization: `Bearer ${cfg.controlToken}`,
           "content-type": "application/json",
+          ...(owner ? { "x-delta-user": owner } : {}),
           ...(init.headers ?? {}),
         },
         signal: AbortSignal.timeout(15_000),
@@ -894,11 +898,12 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
         required: ["spec", "prompt"],
       },
       idempotent: false, // each call creates a distinct schedule
-      execute: async (args) => {
-        const res = await cp("/api/agents/self/schedules", {
-          method: "POST",
-          body: JSON.stringify({ spec: args.spec, prompt: args.prompt }),
-        });
+      execute: async (args, ctx) => {
+        const res = await cp(
+          "/api/agents/self/schedules",
+          { method: "POST", body: JSON.stringify({ spec: args.spec, prompt: args.prompt }) },
+          ctx.owner,
+        );
         const j = (await res.json().catch(() => ({}))) as Record<string, unknown>;
         if (!res.ok)
           return `[tool error] schedule_self ${res.status}: ${clip(String(j.error ?? ""), 300)}`;
@@ -912,8 +917,8 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
       description: "List your schedules (id, kind, state, next run, prompt).",
       parameters: { type: "object", properties: {} },
       idempotent: true,
-      execute: async () => {
-        const res = await cp("/api/agents/self/schedules", { method: "GET" });
+      execute: async (_args, ctx) => {
+        const res = await cp("/api/agents/self/schedules", { method: "GET" }, ctx.owner);
         if (!res.ok) return `[tool error] list_schedules ${res.status}`;
         const j = (await res.json().catch(() => ({}))) as {
           schedules?: Array<Record<string, unknown>>;
@@ -938,10 +943,12 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
         required: ["id"],
       },
       idempotent: true, // cancelling an already-cancelled id is a no-op
-      execute: async (args) => {
-        const res = await cp(`/api/agents/self/schedules/${encodeURIComponent(String(args.id))}`, {
-          method: "DELETE",
-        });
+      execute: async (args, ctx) => {
+        const res = await cp(
+          `/api/agents/self/schedules/${encodeURIComponent(String(args.id))}`,
+          { method: "DELETE" },
+          ctx.owner,
+        );
         if (res.status === 404) return `[tool error] no such schedule ${args.id}`;
         if (!res.ok) return `[tool error] cancel_schedule ${res.status}`;
         return `cancelled ${args.id}`;

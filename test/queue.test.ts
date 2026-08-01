@@ -65,6 +65,36 @@ describe("queue + run", () => {
     await queue.wait(a.id);
   });
 
+  test("idempotency_key: a re-dispatch after the run finished returns the SAME terminal run (no re-run)", async () => {
+    let calls = 0;
+    const deps = makeDeps(async () => {
+      calls++;
+      return textResult("filed");
+    });
+    const queue = new Queue(deps);
+    // First dispatch runs to completion (idempotency_terminal = the /v1/tasks exactly-once mode)...
+    const a = queue.enqueue({
+      input: "process task t1",
+      store: true,
+      idempotency_key: "k:t1",
+      idempotency_terminal: true,
+    });
+    await queue.wait(a.id);
+    // ...then a lost-ack retry re-POSTs the SAME key. It must re-attach to the finished run and
+    // return its stored result, NOT start a second run (Connect's async retry relies on this).
+    const b = queue.enqueue({
+      input: "process task t1",
+      store: true,
+      idempotency_key: "k:t1",
+      idempotency_terminal: true,
+    });
+    expect(b.id).toBe(a.id);
+    expect(b.status).toBe("done"); // the terminal run, returned as-is
+    const n = (deps.db.query("SELECT COUNT(*) AS n FROM runs").get() as { n: number }).n;
+    expect(n).toBe(1); // still exactly one run for the key
+    expect(calls).toBe(1); // the model was invoked once, not twice
+  });
+
   test("idempotency_key is scoped per owner — a shared key can't steal another tenant's run (S1)", async () => {
     const deps = makeDeps(async () => textResult("filed"));
     const queue = new Queue(deps);
@@ -121,6 +151,33 @@ describe("queue + run", () => {
     const b = queue.enqueue({ input: "t", store: true, idempotency_key: "k1" });
     expect(b.id).not.toBe(a.id); // key freed once the prior run finished
     await queue.wait(b.id);
+  });
+
+  test("idempotency_terminal keeps a store:false run durable so a retry re-attaches (codex P1)", async () => {
+    let calls = 0;
+    const deps = makeDeps(async () => {
+      calls++;
+      return textResult("filed");
+    });
+    const queue = new Queue(deps);
+    // store:false would normally purge at terminal and free the key — but idempotency_terminal needs
+    // the terminal run to persist, so it must NOT be purged, and a retry re-attaches (no second run).
+    const a = queue.enqueue({
+      input: "t",
+      store: false,
+      idempotency_key: "k:dur",
+      idempotency_terminal: true,
+    });
+    await queue.wait(a.id);
+    const b = queue.enqueue({
+      input: "t",
+      store: false,
+      idempotency_key: "k:dur",
+      idempotency_terminal: true,
+    });
+    expect(b.id).toBe(a.id); // re-attached to the terminal run
+    expect(b.status).toBe("done");
+    expect(calls).toBe(1); // ran once, not twice
   });
 
   test("idempotency_key + store:false compose: deduped while live, purged at terminal", async () => {

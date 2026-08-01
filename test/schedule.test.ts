@@ -6,11 +6,13 @@ import { builtinTools } from "../src/builtins";
 import type { ToolCtx } from "../src/tools";
 
 let lastAuth: string | null = null;
+const seenUsers: (string | null)[] = [];
 let lastBody: Record<string, unknown> = {};
 const srv = Bun.serve({
   port: 0,
   async fetch(req) {
     lastAuth = req.headers.get("authorization");
+    seenUsers.push(req.headers.get("x-delta-user"));
     const url = new URL(req.url);
     if (req.method === "POST" && url.pathname === "/api/agents/self/schedules") {
       lastBody = (await req.json()) as Record<string, unknown>;
@@ -80,6 +82,25 @@ describe("self-scheduling builtins", () => {
     expect(lastAuth).toBe("Bearer gw_secret_token"); // the VM self-auths with ITS token
     expect((lastBody.spec as Record<string, unknown>).kind).toBe("interval");
     expect(lastBody.prompt).toBe("check the deploy");
+  });
+
+  test("schedule/list/cancel assert the run's owner via x-delta-user (concurrent-safe binding)", async () => {
+    const tools = builtinTools(cfg);
+    const owned = { ...ctx, owner: "tg:42" } as ToolCtx;
+    seenUsers.length = 0;
+    await tools
+      .get("schedule_self")
+      ?.execute({ spec: { kind: "interval", intervalMs: 3_600_000 }, prompt: "p" }, owned);
+    await tools.get("list_schedules")?.execute({}, owned);
+    await tools.get("cancel_schedule")?.execute({ id: "sch_1" }, owned);
+    // POST, GET and DELETE all assert the owner.
+    expect(seenUsers).toEqual(["tg:42", "tg:42", "tg:42"]);
+    // An unowned/dev run sends no assertion (gateway falls back to its single-origin binding).
+    seenUsers.length = 0;
+    await tools
+      .get("schedule_self")
+      ?.execute({ spec: { kind: "interval", intervalMs: 3_600_000 }, prompt: "p" }, ctx);
+    expect(seenUsers).toEqual([null]);
   });
 
   test("a CP validation error surfaces as an agent-readable [tool error]", async () => {

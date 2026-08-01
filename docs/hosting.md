@@ -133,11 +133,16 @@ details — they do not change semantics without a major-version note. Each is p
 named guard test in [`test/contracts.test.ts`](../test/contracts.test.ts); if a change
 would break one, that test fails before it ever reaches you.
 
-1. **Idempotency keys are freed on terminal runs.** `POST /v1/tasks` with an
+1. **Idempotency keys are freed on terminal runs (by default).** `POST /v1/tasks` with an
    `idempotency_key` dedupes only against runs still `queued` or `running`. Once a run
    reaches a terminal state, the key is free and a later dispatch starts fresh. This is
    what makes a resume-is-the-dispatch pattern — re-POSTing the same key with a resume
-   preamble — safe rather than a silent no-op.
+   preamble — safe rather than a silent no-op. **Opt-in exception:** a request that sets
+   `idempotency_terminal: true` (with a durable run, i.e. not `store:false`) also dedupes
+   against its own *terminal* run, so a re-POST after a lost `202` re-attaches to the
+   accepted run instead of starting a second — exactly-once for a key that is unique per
+   intent. The default is unchanged; only a caller that sets the flag gets this behavior,
+   and the dedupe stays scoped to the run's owner.
 
 2. **`recover()` resumes mid-flight runs on daemon boot.** A run left `running` when the
    process stopped is picked up and continued from its last checkpointed turn when the

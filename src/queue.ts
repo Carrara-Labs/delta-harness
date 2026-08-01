@@ -100,23 +100,30 @@ export class Queue {
       sessionId = prev.session_id;
       dedupeOwner = prev.user_id; // …but a continuation inherits the existing session's owner
     }
-    // Dispatch idempotency (fire-and-forget callers): if a NON-terminal run WITH THE SAME OWNER
-    // already carries this key, return it instead of starting a second one. Scoping the dedupe to
-    // the run's owner is load-bearing for tenancy — an unscoped match would hand one tenant
-    // another tenant's live run (and, on the sync route, its streamed result) via a guessed/shared
-    // key (codex P0). `s.user_id IS ?` is SQLite's null-safe compare, so a null owner matches only
-    // null. Single-writer (bun) + this synchronous check-before-insert keep it race-safe.
+    // Dispatch idempotency (fire-and-forget callers): if a run WITH THE SAME OWNER already carries
+    // this key, return it instead of starting a second one. By default a NON-terminal match dedupes
+    // and a terminal run FREES the key (a stable key reused later runs fresh — the neutral-engine
+    // contract, unchanged). A caller whose key is unique per intent opts into `idempotency_terminal`
+    // (Connect's async turns do): a terminal run then ALSO dedupes, so a retry after losing the 202
+    // for a run the daemon durably accepted re-attaches instead of starting a SECOND run — which
+    // would duplicate billing and side effects and strand the first result (codex P1). Scoping the
+    // dedupe to the run's owner is load-bearing for tenancy — an unscoped match would hand one tenant
+    // another tenant's run (and, on the sync route, its streamed result) via a guessed/shared key
+    // (codex P0). `s.user_id IS ?` is SQLite's null-safe compare, so a null owner matches only null.
+    // Newest-first (global created_at, since seq is only session-local — codex P1) so a caller
+    // re-attaches to its latest run. Single-writer (bun) + synchronous check-before-insert = race-safe.
     if (req.idempotency_key) {
       const existing = db
         .query(
-          `SELECT r.id FROM runs r JOIN sessions s ON s.id = r.session_id
-           WHERE r.status IN ('queued','running')
-             AND json_extract(r.request, '$.idempotency_key') = ?
+          `SELECT r.id, r.status FROM runs r JOIN sessions s ON s.id = r.session_id
+           WHERE json_extract(r.request, '$.idempotency_key') = ?
              AND s.user_id IS ?
-           ORDER BY r.seq LIMIT 1`,
+           ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1`,
         )
-        .get(req.idempotency_key, dedupeOwner) as { id: string } | null;
-      if (existing) return getRun(db, existing.id) as RunRow;
+        .get(req.idempotency_key, dedupeOwner) as { id: string; status: string } | null;
+      const terminal = existing && ["done", "failed", "cancelled"].includes(existing.status);
+      if (existing && (!terminal || req.idempotency_terminal))
+        return getRun(db, existing.id) as RunRow;
     }
     const id = `resp_${rid()}`;
     db.transaction(() => {
@@ -357,8 +364,11 @@ export class Queue {
         // store:false → retain nothing. Purge AFTER settle (the resolved RunRow is already
         // in-memory, so deleting the row can't affect it) and INSTEAD of reflecting (reflection
         // would read the transcript we're erasing; an ephemeral turn does its learning via the
-        // review loop, not per-turn self-reflection).
-        if ((JSON.parse(run.request) as RunRequest).store === false) {
+        // review loop, not per-turn self-reflection). EXCEPTION: idempotency_terminal promises
+        // exactly-once for the key, which requires the terminal run to persist so a retry re-attaches
+        // instead of starting a second — so an ephemeral+idempotent-terminal turn is NOT purged.
+        const req = JSON.parse(run.request) as RunRequest;
+        if (req.store === false && !req.idempotency_terminal) {
           this.purgeEphemeral(run.session_id);
           // Spill + research artifacts are transcript-derived and, unlike scratch, are engine-owned
           // (not model-writable). For an ephemeral turn they must ALSO go for the zero-trace guarantee.

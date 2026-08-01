@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.9] — 2026-08-01
+
+Two additive affordances that let a fire-and-forget gateway (Delta Connect) run long chat turns
+correctly. Both are opt-in; with nothing new set, a deployment runs exactly as 0.2.8.
+
+### Added
+- **Opt-in exactly-once tasks.** A request may set `idempotency_terminal: true` (on a durable run)
+  so its `idempotency_key` also dedupes against its own *terminal* run, not only a live one. A
+  fire-and-forget caller that loses the `202` for a run the daemon durably accepted can re-POST the
+  same key and re-attach to that run instead of starting a second — no duplicate billing, no
+  stranded result. The dedupe stays scoped to the run's owner. The default (a terminal run frees
+  its key, so a stable key reused later runs fresh) is unchanged.
+- **Run identity on self-scheduling.** `schedule_self` / `list_schedules` / `cancel_schedule` now
+  assert the run's owner to the control plane via `x-delta-user`, so a gateway can bind a schedule
+  to the right conversation even when several users' turns run concurrently. An unowned/dev run
+  sends no assertion and the gateway falls back as before.
+
 ## [0.2.8] — 2026-08-01
 
 A legible command surface. A deployed agent can describe its own provider and effort in plain

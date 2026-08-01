@@ -179,6 +179,13 @@ export type RunRequest = {
    *  one — so a re-dispatch (a client retry, or a controller re-driving a slow-but-alive task) can't
    *  spawn a duplicate run. Distinct from the OpenAI `store` flag and from previous_response_id. */
   idempotency_key?: string;
+  /** Caller opt-in to exactly-once semantics: also dedupe against a TERMINAL run carrying this key,
+   *  not only a live one. A fire-and-forget caller whose key is unique per intent (Connect's async
+   *  turns) may retry after a lost 202; with this set, the re-POST re-attaches to the accepted run
+   *  even once it finished instead of starting a second (codex P1). Owner-scoped like all dedupe, so
+   *  it only affects the caller's own key. Default (unset) preserves the free-the-key-at-terminal
+   *  contract, so a stable key reused later still runs fresh. Requires a durable run (store !== false). */
+  idempotency_terminal?: boolean;
   metadata?: Record<string, unknown>;
 };
 
@@ -392,9 +399,18 @@ export async function executeRun(
     committedSelfWrite
       ? `${why}\n\n[note: a change to your self-file (DELTA.md) was saved during this turn and persists — it was not rolled back.]`
       : why;
+  // The run's owning principal (the session's seam-canonicalized user_id), so a tool calling back to
+  // the gateway can assert which user it acts for (schedule_self binds to the right conversation).
+  const runOwner =
+    (
+      db.query("SELECT user_id FROM sessions WHERE id = ?").get(run.session_id) as {
+        user_id: string | null;
+      } | null
+    )?.user_id ?? null;
   const ctx: ToolCtx = {
     workspace: resolve(deps.workspace),
     activate,
+    owner: runOwner,
     // `recall` reads THIS thread's history, active + compacted-out. Session bound here so a
     // tool can never search another session (W1 + the S0 ownership boundary at the seam).
     history: { search: (query, limit) => searchHistory(db, run.session_id, query, limit) },

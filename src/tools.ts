@@ -45,6 +45,11 @@ export type ToolCtx = {
   chatUtility?: (req: ChatRequest) => Promise<ModelResult>;
   /** Per-run bearer for act-as-user MCP calls (act-as-token passthrough, §E). */
   authToken?: string;
+  /** The run's owning principal (the seam-asserted user_id), or null for an unowned/dev run. Lets a
+   *  tool that calls back out to the gateway assert WHICH user it is acting for — e.g. schedule_self
+   *  POSTs this so the gateway binds the schedule to the right conversation even when several users'
+   *  turns run concurrently (the async replacement for a single in-flight origin). */
+  owner?: string | null;
   /** Whether the daemon's model reads images — shapes image-marker phrasing so a
    * non-vision model is told plainly it can't see the pixels. */
   vision?: boolean;
