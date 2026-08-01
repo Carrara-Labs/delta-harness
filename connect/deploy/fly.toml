@@ -22,8 +22,11 @@ primary_region = "iad"
   MODEL_BASE_URL = "https://api.anthropic.com/v1"
   MODEL_API = "anthropic"
   DELTA_MODEL_PRIMARY = "claude-opus-5"
-  DELTA_MODEL_PRICES = '{"claude-opus-5":{"in":5,"out":25,"cacheRead":0.5},"claude-opus-4-8":{"in":5,"out":25,"cacheRead":0.5}}'
+  DELTA_MODEL_PRICES = '{"claude-opus-5":{"in":5,"out":25,"cacheRead":0.5},"claude-opus-4-8":{"in":5,"out":25,"cacheRead":0.5},"claude-haiku-4-5-20251001":{"in":1,"out":5,"cacheRead":0.1}}'
   DELTA_PROVIDERS = '[{"label":"openrouter","baseUrl":"https://openrouter.ai/api/v1","models":["anthropic/claude-opus-5","anthropic/claude-opus-4.8"],"apiKeyEnv":"OPENROUTER_API_KEY"}]'
+  # cheap lane for compaction/reflection so they never burn Opus (served natively by the Anthropic
+  # primary; falls back to the main cascade on any failure).
+  DELTA_UTILITY_MODEL = "claude-haiku-4-5-20251001"
   # identity + the safe-learning trio
   DELTA_AGENT_ID = "ferni"
   DELTA_AGENT_NAME = "Ferni"
@@ -38,7 +41,9 @@ primary_region = "iad"
   DELTA_MAX_COST_USD = "15"
   DELTA_MAX_TOKENS = "3000000"
   DELTA_STEP_MAX_TOKENS = "16384"
-  DELTA_COMPACT_AT_TOKENS = "160000"
+  # compact well below where Opus per-step latency + re-billed context get painful. 160k never fired
+  # (heavy turns topped ~155k and re-sent it every step); 130k makes compaction actually kick in.
+  DELTA_COMPACT_AT_TOKENS = "130000"
   # only Nic may talk to the bot (also gates the operator /restart /safemode /revert commands)
   ALLOWED_TELEGRAM_USER_IDS = "5499639944"
 
