@@ -229,3 +229,18 @@ describe("the form page", () => {
     expect(html).not.toContain("sendData");
   });
 });
+
+describe("retry after a transient failure", () => {
+  test("a released authorization can be used again (but a spent one cannot)", () => {
+    const path = join(tmpdir(), `connect-retry-${randomUUID()}.sqlite`);
+    const store = new Store(path);
+    const digest = "e".repeat(64);
+    expect(store.consumeIntakeAuth(digest, Date.now() + 60_000)).toBe(true);
+    expect(store.consumeIntakeAuth(digest, Date.now() + 60_000)).toBe(false);
+    // Our own vault write failed and nothing was stored: hand the authorization back so the
+    // user can tap again instead of reopening the Mini App for a fresh initData.
+    store.releaseIntakeAuth(digest);
+    expect(store.consumeIntakeAuth(digest, Date.now() + 60_000)).toBe(true);
+    rmSync(path, { force: true });
+  });
+});

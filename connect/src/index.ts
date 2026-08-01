@@ -101,13 +101,13 @@ const mintIntake = async (req: {
     id: sessionId,
     name: req.name,
     purpose: req.purpose,
-    destination: new URL(baseUrl).host,
+    destination: `${agentName}'s vault`,
     telegramUserId: req.telegramUserId,
     chatId: req.chatId,
     conversationId: req.conversationId,
     ttlMs: SESSION_TTL_MS,
   });
-  return { sessionId, destination: req.name };
+  return { sessionId, destination: `${agentName}'s vault` };
 };
 
 const connector = new Connector(

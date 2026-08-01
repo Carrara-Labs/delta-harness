@@ -851,6 +851,14 @@ export class Store {
     );
   }
 
+  /** Give a consumed authorization back — ONLY on our own transient failure (the vault was
+   *  unreachable), so the user can tap again instead of reopening the app. Replay protection is
+   *  unaffected: the blob is released only in the window where nothing was written, and an
+   *  attacker would still need a live session id bound to that same user. */
+  releaseIntakeAuth(digest: string): void {
+    this.db.query(`DELETE FROM intake_auth_used WHERE digest = ?`).run(digest);
+  }
+
   /** Drop expired sessions and spent authorizations. Cheap; called on mint. */
   sweepIntake(now = Date.now()): void {
     this.db.query(`DELETE FROM intake_sessions WHERE expires_at < ?`).run(now);

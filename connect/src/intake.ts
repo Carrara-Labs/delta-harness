@@ -338,15 +338,21 @@ export class IntakeServer {
         try {
           wrote = await writeVault(session.name, value, session.purpose);
         } catch (e) {
-          store.releaseIntakeSession(sessionId); // the value never landed — let them retry
+          // Nothing landed: hand BOTH the session and the Telegram authorization back, so the
+          // user can simply tap again rather than reopening the app for a fresh initData.
+          store.releaseIntakeSession(sessionId);
+          store.releaseIntakeAuth(check.digest);
           log(`intake ${tag(sessionId)} vault write failed: ${String(e).slice(0, 120)}`);
           return json({ error: "could not reach the vault — try again" }, 502);
         }
         if (!wrote.ok) {
           // A 409 means the credential already exists: that is terminal, not retryable, and
-          // deliberately cannot be overwritten from here.
-          if (wrote.status !== 409) store.releaseIntakeSession(sessionId);
-          else store.finishIntakeSession(sessionId);
+          // deliberately cannot be overwritten from here. Anything else left nothing stored,
+          // so release the session AND the authorization for a clean retry.
+          if (wrote.status !== 409) {
+            store.releaseIntakeSession(sessionId);
+            store.releaseIntakeAuth(check.digest);
+          } else store.finishIntakeSession(sessionId);
           log(`intake ${tag(sessionId)} vault rejected (${wrote.status})`);
           return json(
             {
