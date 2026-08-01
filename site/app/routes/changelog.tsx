@@ -96,11 +96,27 @@ const kindLabel: Record<Kind, string> = {
 // exactly. Update this alongside the root CHANGELOG.md when a release ships.
 const releases: Release[] = [
   {
+    version: "0.2.9",
+    date: "August 1, 2026",
+    iso: "2026-08-01",
+    tagline: "Affordances for correct long chat turns.",
+    latest: true,
+    note: "Two additive, opt-in affordances that let a fire-and-forget gateway (Delta Connect) run long chat turns correctly under loss and concurrency. With nothing new set, a deployment runs exactly as 0.2.8.",
+    groups: [
+      {
+        kind: "added",
+        items: [
+          "**Opt-in exactly-once tasks.** A request may set `idempotency_terminal: true` (on a durable run) so its `idempotency_key` also dedupes against its own terminal run, not only a live one. A fire-and-forget caller that loses the `202` for a durably-accepted run can re-POST the same key and re-attach to that run instead of starting a second — no duplicate billing, no stranded result. Owner-scoped; the free-the-key default is unchanged.",
+          "**Run identity on self-scheduling.** `schedule_self` / `list_schedules` / `cancel_schedule` assert the run's owner to the control plane via `x-delta-user`, so a gateway can bind a schedule to the right conversation even when several users' turns run concurrently. An unowned run sends no assertion and the gateway falls back as before.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.2.8",
     date: "August 1, 2026",
     iso: "2026-08-01",
     tagline: "A legible command surface.",
-    latest: true,
     note: "A legible command surface. A deployed agent can describe its own provider and effort in plain terms, safe mode is observable and self-aware, and the provider cascade is queryable. All additive read-surface plus one honesty fix; with nothing new set, a deployment runs exactly as 0.2.7.",
     groups: [
       {
