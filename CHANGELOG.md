@@ -6,6 +6,28 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.8] — 2026-08-01
+
+A legible command surface. A deployed agent can describe its own provider and effort in plain
+terms, safe mode is observable and self-aware, and the provider cascade is queryable. All
+additive read-surface plus one honesty fix; with nothing new set, a deployment runs exactly as
+0.2.7.
+
+### Added
+- `/v1/status` names the provider: a friendly wire label (`anthropic-native`, `openai-native`,
+  `openrouter`, `codex-sign-in`) on the model view, plus `provider_chain` for the full failover
+  cascade.
+- Reasoning effort always resolves: the status `reasoning_effort` field is never omitted. An
+  unset effort reports `default` (the provider's own) instead of leaving the field blank.
+- `safe_mode` on `/v1/status`: an operator can confirm safe mode from an edge client instead of
+  reading the boot log.
+
+### Changed
+- Safe mode is now self-aware. The system spine drops the configured agent name in a safe-mode
+  boot (so the agent no longer presents as its configured persona) and states that persona,
+  policy, and the learned self-file are not loaded this run. The agent is honest about its
+  footing instead of inferring an identity from conversation history.
+
 ## [0.2.7] — 2026-07-31
 
 Agents that know their limits and can't wedge. The two run tiers are renamed to name what

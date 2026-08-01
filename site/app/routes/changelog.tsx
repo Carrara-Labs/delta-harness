@@ -96,11 +96,35 @@ const kindLabel: Record<Kind, string> = {
 // exactly. Update this alongside the root CHANGELOG.md when a release ships.
 const releases: Release[] = [
   {
+    version: "0.2.8",
+    date: "August 1, 2026",
+    iso: "2026-08-01",
+    tagline: "A legible command surface.",
+    latest: true,
+    note: "A legible command surface. A deployed agent can describe its own provider and effort in plain terms, safe mode is observable and self-aware, and the provider cascade is queryable. All additive read-surface plus one honesty fix; with nothing new set, a deployment runs exactly as 0.2.7.",
+    groups: [
+      {
+        kind: "added",
+        items: [
+          "**`/v1/status` names the provider.** A friendly wire label (`anthropic-native`, `openai-native`, `openrouter`, `codex-sign-in`) on the model view, plus `provider_chain` for the full failover cascade.",
+          "**Reasoning effort always resolves.** The status `reasoning_effort` field is never omitted; an unset effort reports `default` (the provider's own) instead of a blank line.",
+          "**`safe_mode` on `/v1/status`.** An operator can confirm safe mode from an edge client instead of reading the boot log.",
+        ],
+      },
+      {
+        kind: "changed",
+        items: [
+          "**Safe mode is self-aware.** The system spine drops the configured agent name in a safe-mode boot (so the agent no longer presents as its configured persona) and states that persona, policy, and the learned self-file are not loaded this run. The agent is honest about its footing instead of inferring an identity from conversation history.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.2.7",
     date: "July 31, 2026",
     iso: "2026-07-31",
     tagline: "Agents that know their limits and can't wedge.",
-    latest: true,
+    latest: false,
     note: "Agents that know their limits and can't wedge. The two run tiers are renamed to name what they are, the tool set becomes an operator knob, and a poisoned config is always recoverable. Default behavior is unchanged: with the new env vars unset, a deployment runs exactly as 0.2.6.",
     groups: [
       {

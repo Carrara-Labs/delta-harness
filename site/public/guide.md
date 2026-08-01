@@ -1927,7 +1927,9 @@ DELTA_SAFE_MODE=1
 
 The daemon starts neutral and unwedgeable: the `safe` tool floor, no MCP servers, no self-write, no reflection, and it skips the workspace prompt layers (`DELTA.md`, `POLICY.md`, `PROMPT_CONTEXT.md`) so a poisoned self-file cannot influence it. You can always reach the agent to diagnose it, revert the self-file from a prior revision through the Cockpit, then restart normally. Safe mode ignores `DELTA_ALLOWED_TOOLS` and the self-write flags, so it cannot be widened.
 
-**Read current model, tier, and budget (`GET /v1/status`).** A secret-free, seam-token-gated endpoint returns the running agent's version, tier, model, reasoning effort, budget ceilings, and MCP server names — no keys. It backs edge tooling such as a channel gateway's `/model` and `/status` commands.
+Since 0.2.8, safe mode is observable and self-aware. `GET /v1/status` reports `safe_mode: true`, so an edge client (a channel gateway's `/safemode` or `/status`) can confirm it without reading the boot log. The agent is also told: in a safe-mode boot the system spine drops the configured agent name and states that the persona, policy, and learned self-file are not loaded, so the agent does not present as its configured identity or role-play one from earlier conversation history. To demonstrate this cleanly, pair a safe-mode restart with a fresh conversation so no prior identity carries over.
+
+**Read current model, provider, tier, and budget (`GET /v1/status`).** A secret-free, seam-token-gated endpoint returns the running agent's version, tier, `safe_mode`, model, provider, reasoning effort, budget ceilings, and MCP server names — no keys. Since 0.2.8 the model view also names the `provider` in human terms (`anthropic-native`, `openai-native`, `openrouter`, `codex-sign-in`) with a `provider_chain` for the failover cascade, and `reasoning_effort` always resolves (an unset effort reports `default` rather than being omitted). It backs edge tooling such as a channel gateway's `/model`, `/provider`, and `/status` commands.
 
 ## Security model
 
