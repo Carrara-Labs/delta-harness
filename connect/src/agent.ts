@@ -139,6 +139,9 @@ export class DeltaAgent implements AgentClient {
           input,
           previous_response_id: opts.previousResponseId,
           idempotency_key: opts.idempotencyKey,
+          // Exactly-once per key: if the 202 is lost we re-POST the same key, and the daemon must
+          // re-attach to the accepted run even once terminal rather than start a second (0.2.8.1).
+          idempotency_terminal: true,
           metadata: { user_id: opts.userId },
         }),
         signal: AbortSignal.timeout(15000),

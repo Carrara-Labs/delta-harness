@@ -109,7 +109,10 @@ export class ScheduleControl {
     private readonly store: Store,
     private readonly url: string,
     private readonly token: string,
-    private readonly activeOrigin: () => ScheduleOrigin | null,
+    // Resolve the conversation a schedule call binds to, given the run owner the daemon asserts via
+    // x-delta-user (harness ≥0.2.8.1). Bind by that user so concurrent conversations don't cross;
+    // null when the origin is ambiguous → 409 (codex P0).
+    private readonly resolveOrigin: (userId: string | null) => ScheduleOrigin | null,
     private readonly log: (message: string) => void = () => {},
   ) {}
 
@@ -146,7 +149,8 @@ export class ScheduleControl {
     const collection = url.pathname === "/api/agents/self/schedules";
     const item = url.pathname.match(/^\/api\/agents\/self\/schedules\/([^/]+)$/);
     if (!collection && !item) return json({ error: "not found" }, 404);
-    const origin = this.activeOrigin();
+    const assertedUser = request.headers.get("x-delta-user")?.trim() || null;
+    const origin = this.resolveOrigin(assertedUser);
     if (!origin) return json({ error: "no active agent turn" }, 409);
 
     if (collection && request.method === "POST") {

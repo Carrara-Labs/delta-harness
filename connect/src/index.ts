@@ -42,7 +42,13 @@ const sup = managedEntry
 const connector = new Connector(store, codec, agent, sup, log, allowed);
 const ingress = new TelegramLongPoll(token, store, { allowed });
 const control = controlUrl
-  ? new ScheduleControl(store, controlUrl, controlToken ?? "", () => connector.activeOrigin, log)
+  ? new ScheduleControl(
+      store,
+      controlUrl,
+      controlToken ?? "",
+      (userId) => connector.resolveScheduleOrigin(userId),
+      log,
+    )
   : undefined;
 
 control?.start();

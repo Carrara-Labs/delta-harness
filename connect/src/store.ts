@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 
+import { isIntercept } from "./commands";
 import type { Inbound } from "./types";
 
 // The durable spine. Three tables carry the correctness boundaries:
@@ -44,6 +45,8 @@ export type TaskRow = {
   user_id: string;
   status: string;
   stream_message_id: string | null;
+  advance_head: number;
+  cancel_requested: number;
   created_at: number;
 };
 
@@ -98,6 +101,10 @@ export class Store {
         text            TEXT NOT NULL,
         attachments     TEXT,
         status          TEXT NOT NULL DEFAULT 'pending',
+        -- Classified ONCE at ingest with the precise isIntercept grammar (a local command vs an agent
+        -- turn), so dispatch is an indexed boolean lookup — no SQL grammar to drift, no false
+        -- positives, no whitespace holes, no bounded-scan burial of a /cancel (codex P1).
+        intercept       INTEGER NOT NULL DEFAULT 0,
         received_at     INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS inbox_pending ON inbox(status, received_at);
@@ -141,6 +148,12 @@ export class Store {
         user_id         TEXT NOT NULL,
         status          TEXT NOT NULL DEFAULT 'active',
         stream_message_id TEXT,
+        -- 0 once /new reset the thread while this turn was running: deliver its answer but do NOT
+        -- write it back as the thread head, so a slow turn can't resurrect the abandoned thread.
+        advance_head    INTEGER NOT NULL DEFAULT 1,
+        -- 1 once /cancel was requested: pollTasks re-issues the DELETE every tick until the run is
+        -- actually terminal, so the "Stopping that now." ack is never a lie on a dropped DELETE.
+        cancel_requested INTEGER NOT NULL DEFAULT 0,
         created_at      INTEGER NOT NULL
       );
       CREATE UNIQUE INDEX IF NOT EXISTS tasks_one_active
@@ -168,6 +181,9 @@ export class Store {
       "ALTER TABLE outbox ADD COLUMN group_key TEXT NOT NULL DEFAULT ''",
       "ALTER TABLE outbox ADD COLUMN next_attempt_at INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE inbox ADD COLUMN attachments TEXT",
+      "ALTER TABLE inbox ADD COLUMN intercept INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE tasks ADD COLUMN advance_head INTEGER NOT NULL DEFAULT 1",
+      "ALTER TABLE tasks ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0",
     ]) {
       try {
         this.db.exec(alter);
@@ -178,6 +194,14 @@ export class Store {
     // Backfill legacy rows so each is its OWN group (group_key = dedup_key), never
     // the shared empty group - otherwise one failure would dead-letter them all.
     this.db.exec(`UPDATE outbox SET group_key = dedup_key WHERE group_key = ''`);
+    // Backfill the intercept classification for any PENDING rows carried over from before the column
+    // existed, so a command queued across the upgrade is still recognised. Classify in JS with the
+    // real grammar (SQLite can't) — a handful of pending rows at most.
+    const pending = this.db
+      .query(`SELECT event_id, text FROM inbox WHERE status = 'pending'`)
+      .all() as { event_id: string; text: string }[];
+    const setIntercept = this.db.query(`UPDATE inbox SET intercept = ? WHERE event_id = ?`);
+    for (const row of pending) setIntercept.run(isIntercept(row.text) ? 1 : 0, row.event_id);
   }
 
   // --- inbox -------------------------------------------------------------
@@ -186,8 +210,8 @@ export class Store {
   insertInbox(e: Inbound): boolean {
     const r = this.db
       .query(
-        `INSERT OR IGNORE INTO inbox (event_id, conversation_id, actor_id, chat_id, text, attachments, received_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT OR IGNORE INTO inbox (event_id, conversation_id, actor_id, chat_id, text, attachments, intercept, received_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         e.eventId,
@@ -196,6 +220,7 @@ export class Store {
         e.chatId,
         e.text,
         e.attachments?.length ? JSON.stringify(e.attachments) : null,
+        isIntercept(e.text) ? 1 : 0, // classify once, at ingest (dispatch reads the column)
         Date.now(),
       );
     return r.changes > 0;
@@ -243,6 +268,30 @@ export class Store {
     this.db.query(`UPDATE inbox SET status = 'done' WHERE event_id = ?`).run(eventId);
   }
 
+  /** Drop not-yet-started agent-turn messages that arrived BEFORE a `/new` — the "fresh start"
+   *  semantics: a message queued but not begun before the reset doesn't later run in the new thread
+   *  (codex P1 ordering). Bounded to rows ordered before the `/new` event by (received_at, rowid) —
+   *  the same order dispatch uses — so a message that arrived AFTER `/new` in the same long-poll
+   *  batch is kept and runs in the fresh thread (codex P1). Only pending, non-intercept rows in this
+   *  conversation are dropped; the in-flight turn ('dispatched') and queued commands are untouched. */
+  dropPendingTurnsBefore(conversationId: string, newEventId: string): number {
+    return this.db
+      .query(
+        `UPDATE inbox SET status = 'dropped'
+         WHERE status = 'pending' AND intercept = 0 AND conversation_id = ?
+           AND (received_at, rowid) < (SELECT received_at, rowid FROM inbox WHERE event_id = ?)`,
+      )
+      .run(conversationId, newEventId).changes;
+  }
+
+  /** The inbox row for an event, whatever its status — used to reconstruct the input when a
+   *  placeholder task (a start whose 202 was lost) is re-POSTed to resolve its real daemon run. */
+  getInboxByEvent(eventId: string): InboxRow | null {
+    return (
+      (this.db.query(`SELECT * FROM inbox WHERE event_id = ?`).get(eventId) as InboxRow) ?? null
+    );
+  }
+
   // --- async tasks (0.3.2) ----------------------------------------------
 
   /** Claim a message as an in-flight async turn: mark the inbox row dispatched and record the
@@ -285,36 +334,87 @@ export class Store {
     }
   }
 
+  /** Promote a placeholder task (recorded when the daemon's 202 was lost) to the real daemon run id
+   *  once a re-POST resolved it — carrying over any cancel/detach intent the placeholder collected
+   *  while the id was unknown (codex P1). task_id is the PK, so this UPDATE re-keys the same row. */
+  resolvePlaceholderTask(placeholderId: string, realId: string): void {
+    this.db.query(`UPDATE tasks SET task_id = ? WHERE task_id = ?`).run(realId, placeholderId);
+  }
+
+  /** Count of ALL task rows regardless of status — used to assert the table doesn't accumulate
+   *  finalized rows (finishTask deletes them). */
+  allTasksCount(): number {
+    return (this.db.query(`SELECT COUNT(*) AS n FROM tasks`).get() as { n: number }).n;
+  }
+
   activeTasks(): TaskRow[] {
     return this.db
       .query(`SELECT * FROM tasks WHERE status = 'active' ORDER BY created_at ASC, rowid ASC`)
       .all() as TaskRow[];
   }
 
-  /** Resolve the origin of an active task by its daemon-asserted user_id — the async replacement
-   *  for the single in-flight `activeOrigin`, so schedule_self binds to the right chat even with
-   *  several conversations' tasks running at once. */
+  /** Resolve the origin of a schedule_self call by the daemon-asserted user — but ONLY when it is
+   *  unambiguous. The daemon asserts the user, not the conversation, so if that ONE user has active
+   *  tasks in several conversations at once (e.g. a DM and a group), binding to any of them could
+   *  hand one conversation's schedule to another (codex P0). Fail closed: return the task iff the
+   *  user has exactly one active task; otherwise null → the control server 409s the schedule rather
+   *  than misrouting it. A single-conversation user (the common case) always resolves. */
   activeTaskByUser(userId: string): TaskRow | null {
-    return (
-      (this.db
-        .query(
-          `SELECT * FROM tasks WHERE status = 'active' AND user_id = ? ORDER BY created_at DESC LIMIT 1`,
-        )
-        .get(userId) as TaskRow) ?? null
-    );
+    const rows = this.db
+      .query(`SELECT * FROM tasks WHERE status = 'active' AND user_id = ? LIMIT 2`)
+      .all(userId) as TaskRow[];
+    return rows.length === 1 ? (rows[0] as TaskRow) : null;
   }
 
-  /** The most-recently-started active task — the async replacement for the single in-flight
-   *  `activeOrigin` that binds a schedule_self call to a chat. Exact for a single-conversation
-   *  agent; a best-effort pick when several conversations run tasks at once (the daemon's
-   *  schedule_self POST carries no identity, so this is the leanest binding without a harness change). */
-  mostRecentActiveTask(): TaskRow | null {
+  /** The origin a `schedule_self` call binds to — but ONLY when it is unambiguous. The daemon's
+   *  schedule POST carries no run identity (just the shared gateway token), so with sync turns
+   *  there was exactly one in-flight turn and the binding was exact. Under async concurrency two
+   *  conversations can run at once, and a "most recent" guess would hand conversation A's schedule
+   *  to B (a cross-conversation leak — codex P0). So this returns the sole active task, or null when
+   *  0 or ≥2 are active; the control server then 409s an ambiguous schedule rather than misrouting
+   *  it. The exact fix (daemon asserts the run's user_id → resolve via activeTaskByUser) is a harness
+   *  follow-up; fail-closed is the correct, lean behaviour until then. Single-user agents (the common
+   *  case) always have exactly one active task, so scheduling keeps working for them. */
+  soleActiveOrigin(): TaskRow | null {
+    const rows = this.db
+      .query(`SELECT * FROM tasks WHERE status = 'active' LIMIT 2`)
+      .all() as TaskRow[];
+    return rows.length === 1 ? (rows[0] as TaskRow) : null;
+  }
+
+  /** /new reset the thread while a turn is running: keep delivering that turn's answer but stop it
+   *  from writing its response id back as the (now fresh) thread head — else the abandoned thread
+   *  resurrects when the slow turn lands (codex P1). */
+  detachActiveTaskHead(conversationId: string): void {
+    this.db
+      .query(`UPDATE tasks SET advance_head = 0 WHERE conversation_id = ? AND status = 'active'`)
+      .run(conversationId);
+  }
+
+  /** Record durable cancel intent so pollTasks keeps re-issuing the DELETE until the run is actually
+   *  terminal — the "Stopping that now." ack must not be a lie when the first DELETE is dropped. */
+  requestCancel(taskId: string): void {
+    this.db.query(`UPDATE tasks SET cancel_requested = 1 WHERE task_id = ?`).run(taskId);
+  }
+
+  /** The single oldest pending message that can be dispatched RIGHT NOW: a local command (intercept,
+   *  which flows even while its conversation has a turn in flight) OR an agent turn for a conversation
+   *  with no active task. One indexed, unbounded, oldest-first query — so per-conversation arrival
+   *  order is preserved, a command is never buried behind a flood or a deep backlog, and one busy
+   *  conversation's queue can't starve another (codex P1). `intercept` was classified at ingest with
+   *  the precise grammar, so there are no false positives to filter. */
+  nextDispatchable(): InboxRow | null {
     return (
       (this.db
         .query(
-          `SELECT * FROM tasks WHERE status = 'active' ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+          `SELECT i.* FROM inbox i
+           WHERE i.status = 'pending' AND (
+             i.intercept = 1
+             OR NOT EXISTS (SELECT 1 FROM tasks t WHERE t.conversation_id = i.conversation_id AND t.status = 'active')
+           )
+           ORDER BY i.received_at ASC, i.rowid ASC LIMIT 1`,
         )
-        .get() as TaskRow) ?? null
+        .get() as InboxRow) ?? null
     );
   }
 
@@ -339,7 +439,15 @@ export class Store {
     const now = Date.now();
     const groupKey = `out:${args.eventId}`;
     const tx = this.db.transaction(() => {
-      if (args.responseId) {
+      // advance_head=0 means /new reset the thread mid-turn: deliver the answer but leave the fresh
+      // thread head untouched (codex P1). Read it inside the tx so the check and the writes are atomic.
+      const detached =
+        (
+          this.db.query(`SELECT advance_head FROM tasks WHERE task_id = ?`).get(args.taskId) as
+            | { advance_head: number }
+            | undefined
+        )?.advance_head === 0;
+      if (args.responseId && !detached) {
         this.db
           .query(
             `INSERT INTO sessions (conversation_id, prev_response_id, user_id, updated_at)
@@ -358,7 +466,11 @@ export class Store {
           .run(`${groupKey}:${i}`, groupKey, args.conversationId, args.chatId, text, now + i);
       });
       this.db.query(`UPDATE inbox SET status = 'done' WHERE event_id = ?`).run(args.eventId);
-      this.db.query(`UPDATE tasks SET status = 'done' WHERE task_id = ?`).run(args.taskId);
+      // A finalized task has no further use (nothing reads a non-active task), so delete it rather
+      // than leaving a 'done' row to accumulate for the bot's lifetime (codex P2). The delete is in
+      // the same tx as the inbox-done + outbox writes, so re-attach after a crash is still exact:
+      // the row stays 'active' until this atomic finalize.
+      this.db.query(`DELETE FROM tasks WHERE task_id = ?`).run(args.taskId);
     });
     tx();
   }

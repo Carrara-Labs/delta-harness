@@ -4,6 +4,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 this package follows [Semantic Versioning](https://semver.org/). It versions
 independently of the Delta harness engine.
 
+## [0.3.2] — 2026-08-01
+
+Long turns no longer time out. A research or multi-step turn used to run over the daemon's
+synchronous seam, which held one HTTP request open for the whole turn and gave up at 180 seconds:
+a heavy turn then surfaced a generic failure while the agent kept working and billing. Turns now
+run on the async task surface, so a turn is bounded by the agent's own budget, not a wall clock.
+Pairs with Harness 0.2.9 (exactly-once task idempotency + schedule identity), which makes the
+retry, cancel, and scheduling paths correct under loss and concurrency.
+
+### Added
+
+- **`/cancel`.** Stops the in-flight turn for your conversation and ends the run on the daemon, so
+  an abandoned turn stops billing.
+
+### Changed
+
+- **Turns run asynchronously.** Each turn is a durable task (`POST /v1/tasks`, then poll for the
+  result) recorded in a local `tasks` table, so a Connect restart re-attaches to an in-flight turn
+  and delivers it rather than dropping it. The typing indicator stays alive for the whole turn.
+- **Per-conversation serialization, fair across conversations.** A second message waits behind that
+  conversation's active turn while other conversations run concurrently; one conversation's backlog
+  never starves another, and messages keep their arrival order. Local commands (`/status`,
+  `/cancel`, `/restart`, …) always flow — found instantly however deep the queue — even while that
+  conversation has a turn in flight.
+- **A lost dispatch can't orphan or duplicate a turn.** If the daemon accepts a turn but its
+  acknowledgement is lost, the turn is tracked as a durable placeholder and re-attached to the same
+  run (via the daemon's exactly-once idempotency) rather than restarted; a `/cancel` or `/new` in
+  that window still applies once it re-attaches.
+
 ## [0.3.1] — 2026-08-01
 
 A legible, tappable command surface. Needs Harness 0.2.8 for the provider label, resolved effort,

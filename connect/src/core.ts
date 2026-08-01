@@ -1,4 +1,5 @@
-import type { InboxRow, Store } from "./store";
+import { operatorCommand } from "./commands";
+import type { InboxRow, Store, TaskRow } from "./store";
 import type {
   AgentClient,
   AgentSupervisor,
@@ -179,38 +180,6 @@ export function extractDocumentMarker(text: string): { text: string; path?: stri
   return { text: text.slice(0, match.index).trimEnd(), path: match[1] as string };
 }
 
-/** A locally-handled command spends no agent turn and creates no task, so it is dispatched even
- *  while its conversation has a turn in-flight. Anything else is an agent turn (serialized). */
-function isIntercept(text: string): boolean {
-  const t = text.trim();
-  return (
-    t === "/model" ||
-    t === "/status" ||
-    t === "/provider" ||
-    t === "/new" ||
-    t === "/id" ||
-    t === "/help" ||
-    t === "/start" ||
-    t === "/cancel" ||
-    operatorCommand(t) !== null // /restart /safemode /revert /revert_<id>
-  );
-}
-
-function operatorCommand(text: string): { name: string; args: string[] } | null {
-  const parts = text.split(/\s+/);
-  const first = parts[0] ?? "";
-  // Telegram renders /revert_12 as a tappable command link; treat a bare tap as "/revert 12"
-  // (hyphens are invalid in a bot command, so the picker uses underscores). Trailing junk
-  // (/revert_12 garbage) must NOT silently restore — pass the junk through so the id-parse
-  // below rejects it with a usage message, matching "/revert 12 garbage" (codex P1).
-  const tap = first.match(/^\/revert_(\d+)$/);
-  if (tap)
-    return { name: "/revert", args: parts.length === 1 ? [tap[1] as string] : parts.slice(1) };
-  return first === "/restart" || first === "/safemode" || first === "/revert"
-    ? { name: first, args: parts.slice(1) }
-    : null;
-}
-
 /** A relative "2h ago" from a Date.now()-ms timestamp. */
 function ago(ts: number, now: number): string {
   const s = Math.max(0, Math.floor((now - ts) / 1000));
@@ -281,6 +250,14 @@ export class Connector {
   private running = false;
   /** Poll cadence while any async task is in-flight (the daemon does the work; we just check). */
   private readonly taskPollMs = 2500;
+  /** A start whose 202 was lost records a PLACEHOLDER task under this id prefix + the event id. It
+   *  makes the conversation durably busy (so nothing hot-loops or jumps its head), and pollTasks
+   *  re-POSTs to resolve it to the real daemon run — which, thanks to the harness's terminal-aware
+   *  idempotency, re-attaches to the accepted run instead of starting a second one (codex P1). */
+  private readonly PLACEHOLDER = "pending:";
+  /** Give up on an unresolved placeholder after this long — the daemon is unreachable, so surface a
+   *  clean failure rather than wedging the conversation forever. */
+  private readonly PLACEHOLDER_DEADLINE_MS = 60_000;
 
   constructor(
     private readonly store: Store,
@@ -291,11 +268,20 @@ export class Connector {
     private readonly allowed: ReadonlySet<string> = new Set(),
   ) {}
 
-  get activeOrigin(): Readonly<ActiveOrigin> | null {
-    // Derived from the durable tasks table (0.3.2): with async turns there is no single in-flight
-    // origin, so a schedule_self call binds to the most-recent active task's chat.
-    const t = this.store.mostRecentActiveTask();
+  /** Resolve the conversation a schedule_self call binds to. The harness (≥0.2.8.1) asserts the run's
+   *  owner as `userId` (x-delta-user), so we bind to THAT user's active task — correct even with
+   *  several conversations running at once (codex P0). Without an asserted identity (an older daemon)
+   *  we fall back to the sole-active-task binding: exact when one turn is in flight, null when 0 or ≥2
+   *  (a placeholder start counts as active, so an outstanding start makes it null too), so the control
+   *  server 409s an ambiguous schedule rather than misrouting it. */
+  resolveScheduleOrigin(userId: string | null): Readonly<ActiveOrigin> | null {
+    const t = userId ? this.store.activeTaskByUser(userId) : this.store.soleActiveOrigin();
     return t ? { conversationId: t.conversation_id, actorId: t.actor_id, chatId: t.chat_id } : null;
+  }
+
+  /** Back-compat accessor (no asserted identity) — the sole-active-task binding. */
+  get activeOrigin(): Readonly<ActiveOrigin> | null {
+    return this.resolveScheduleOrigin(null);
   }
 
   private chunks(text: string): string[] {
@@ -314,15 +300,12 @@ export class Connector {
     await this.flushOutbox();
   }
 
-  /** The next message to process: a local command flows even while its conversation has a task
-   *  in-flight (so /status, /cancel, /restart are never blocked behind a long turn), but a new
-   *  agent turn waits behind that conversation's active task (per-conversation serialization). */
+  /** The next message to process: the oldest pending command (which flows even while its conversation
+   *  has a turn in flight) or agent turn for a free conversation. One indexed, unbounded, oldest-first
+   *  query keyed on the ingest-time `intercept` classification — preserves arrival order, never buries
+   *  a command, never starves one conversation behind another (codex P1). */
   private nextDispatchable(): InboxRow | null {
-    for (const row of this.store.pendingBatch(32)) {
-      if (isIntercept(row.text) || !this.store.conversationHasActiveTask(row.conversation_id))
-        return row;
-    }
-    return null;
+    return this.store.nextDispatchable();
   }
 
   /** Process at most one inbox event. Returns false when nothing is dispatchable. */
@@ -339,6 +322,10 @@ export class Connector {
     if (text === "/cancel") {
       const task = this.store.activeTaskForConversation(row.conversation_id);
       if (task) {
+        // Record durable cancel intent FIRST, then attempt the DELETE. A dropped/500 DELETE is no
+        // longer swallowed into a false "stopped" (codex P1): pollTasks re-issues it every tick
+        // until the run is actually terminal, so the ack is always eventually true.
+        this.store.requestCancel(task.task_id);
         await this.agent.cancelTask?.(task.task_id, task.user_id);
         await this.localReply(row, "Stopping that now.");
       } else {
@@ -453,6 +440,14 @@ export class Connector {
     // Local intercepts: answered without spending an agent turn. `/new` also
     // clears the thread so the next message starts fresh (same commit).
     const isNew = text === "/new";
+    if (isNew) {
+      // A turn already running belongs to the OLD thread: let it finish and deliver, but stop it
+      // from writing its response id back as the fresh thread's head (codex P1). And drop messages
+      // that arrived before this reset but haven't started — "fresh start" forgets them rather than
+      // running them in the new thread (codex P1 ordering).
+      this.store.detachActiveTaskHead(row.conversation_id);
+      this.store.dropPendingTurnsBefore(row.conversation_id, row.event_id);
+    }
     const canned = isNew
       ? NEW_THREAD
       : text === "/id"
@@ -494,13 +489,19 @@ export class Connector {
         userId: row.actor_id,
         idempotencyKey: row.event_id,
       });
+      const taskId =
+        started && !("error" in started) ? started.id : `${this.PLACEHOLDER}${row.event_id}`;
       if (!started || "error" in started) {
+        // A failed start might be a dropped 202 for a turn the daemon DID durably accept, so DON'T
+        // finalize the event (that would orphan a billing run and lose its result — codex P1).
+        // Instead record a PLACEHOLDER task: the conversation is now durably busy (no hot-loop, no
+        // head-jump), and pollTasks re-POSTs to resolve the real run id — which, via the harness's
+        // terminal-aware idempotency, re-attaches to the accepted run rather than starting a second.
+        // Any /cancel or /new meanwhile marks the placeholder and carries over on resolution.
         this.log(`task start failed for ${row.event_id}: ${started ? started.error : "no client"}`);
-        await fail("I couldn't start that just now - try again in a moment.");
-        return true;
       }
       const claimed = this.store.startTask({
-        taskId: started.id,
+        taskId,
         eventId: row.event_id,
         conversationId: row.conversation_id,
         chatId: row.chat_id,
@@ -508,11 +509,12 @@ export class Connector {
         userId: row.actor_id,
       });
       if (!claimed) {
-        // Unreachable under the single serial loop (nextPending filters busy conversations); cancel
-        // the just-started daemon task defensively so it cannot run a duplicate.
+        // The conversation already has an active task (the partial unique index). Under the serial
+        // dispatch this only happens if a prior placeholder for this event is still resolving; cancel
+        // the just-started daemon run (if any) so it can't duplicate, and drop this dispatch.
         this.log(`task not claimed (conversation busy) for ${row.event_id}`);
-        await this.agent.cancelTask?.(started.id, row.actor_id);
-        this.store.markInboxDone(row.event_id);
+        if (started && !("error" in started))
+          await this.agent.cancelTask?.(started.id, row.actor_id);
         return true;
       }
       await this.codec.typing?.(row.chat_id); // first activity ping; pollTasks keeps it warm
@@ -523,20 +525,93 @@ export class Connector {
     return true;
   }
 
+  /** Re-POST a placeholder start (a start whose 202 was lost) to learn its real daemon run id. The
+   *  same idempotency_key makes the harness re-attach to the accepted run rather than start a second
+   *  (terminal-aware idempotency). On success the placeholder re-keys to the real id — carrying any
+   *  /cancel or /new intent it collected — and normal polling takes over. If the daemon stays
+   *  unreachable past the deadline, finalize with a clean failure so the conversation isn't wedged. */
+  private async resolvePlaceholder(task: TaskRow): Promise<boolean> {
+    const inbox = this.store.getInboxByEvent(task.event_id);
+    if (inbox) {
+      try {
+        await this.sup.ensureAwake();
+        const session = this.store.getSession(task.conversation_id);
+        const input = await this.prepareInput(inbox, inbox.text.trim());
+        const started = await this.agent.startTask?.(input, {
+          previousResponseId: session?.prev_response_id ?? undefined,
+          userId: task.user_id,
+          idempotencyKey: task.event_id,
+        });
+        if (started && !("error" in started)) {
+          this.store.resolvePlaceholderTask(task.task_id, started.id);
+          return true; // resolved to the real run — progress
+        }
+      } catch (e) {
+        this.log(`placeholder resolve error for ${task.event_id}: ${String(e)}`);
+      }
+    }
+    if (Date.now() - task.created_at > this.PLACEHOLDER_DEADLINE_MS) {
+      this.log(`giving up on unresolved start ${task.event_id} after deadline`);
+      this.store.finishTask({
+        taskId: task.task_id,
+        eventId: task.event_id,
+        conversationId: task.conversation_id,
+        chatId: task.chat_id,
+        userId: task.actor_id,
+        replyChunks: this.chunks("I couldn't start that just now - try again in a moment."),
+      });
+      await this.flushOutbox();
+      return true; // finalized — progress
+    }
+    return false; // still unresolved: NOT progress, so the loop sleeps a tick before retrying
+  }
+
   /** Poll every in-flight task to its authoritative terminal state (GET /v1/tasks/:id) and
    *  finalize. The poll is the source of truth (the SSE is best-effort UX), so a restart, suspend,
    *  or dropped stream reconciles cleanly. Returns true if any task reached a terminal state. */
   async pollTasks(): Promise<boolean> {
-    const active = this.store.activeTasks();
+    let active = this.store.activeTasks();
     if (!active.length) return false;
+    // First resolve any PLACEHOLDER starts (a start whose 202 was lost) to their real daemon run:
+    // re-POST with the same idempotency_key, which the harness re-attaches to the accepted run
+    // (terminal-aware idempotency) instead of starting a second. On success the task re-keys to the
+    // real id and is polled below; if still unresolved past the deadline, it's finalized as an error.
+    const placeholders = active.filter((t) => t.task_id.startsWith(this.PLACEHOLDER));
+    let placeholderProgress = false;
+    if (placeholders.length) {
+      // Resolve CONCURRENTLY so N placeholders don't stall the loop N × the POST timeout (codex P1).
+      const outcomes = await Promise.all(placeholders.map((p) => this.resolvePlaceholder(p)));
+      placeholderProgress = outcomes.some(Boolean); // a resolve or a deadline-finalize is progress
+      active = this.store.activeTasks();
+    }
+    const real = active.filter((t) => !t.task_id.startsWith(this.PLACEHOLDER));
+    // Return true only on REAL progress — merely retrying an unresolved placeholder is NOT progress,
+    // so the loop sleeps a tick instead of tight-spinning re-POSTs at a down daemon (codex P1).
+    if (!real.length) return placeholderProgress;
+    // Poll every in-flight task CONCURRENTLY: N sequential 10s GETs during a network stall would
+    // otherwise delay /cancel, /help, and typing pings by up to N × 10s (codex P1). A task carrying
+    // durable cancel intent gets its DELETE re-issued first, so a dropped cancel keeps retrying
+    // until the run is actually terminal (codex P1).
+    const polled = await Promise.all(
+      real.map(async (task) => {
+        if (task.cancel_requested) await this.agent.cancelTask?.(task.task_id, task.user_id);
+        const st = this.agent.pollTask
+          ? await this.agent.pollTask(task.task_id, task.user_id)
+          : null;
+        return { task, st };
+      }),
+    );
+    // Keep the typing indicator warm for every still-running task CONCURRENTLY: awaiting each
+    // typing() in turn would re-introduce the N × timeout freeze the concurrent poll just removed
+    // (a Telegram stall is ~5s per call — codex P1). Best-effort, so failures are swallowed.
+    const stillRunning = polled.filter(
+      (p) => p.st && (p.st.status === "queued" || p.st.status === "running"),
+    );
+    await Promise.allSettled(stillRunning.map((p) => this.codec.typing?.(p.task.chat_id)));
     let finalized = false;
-    for (const task of active) {
-      const st = this.agent.pollTask ? await this.agent.pollTask(task.task_id, task.user_id) : null;
+    for (const { task, st } of polled) {
       if (!st) continue; // transient poll failure: keep the task active, retry next tick
-      if (st.status === "queued" || st.status === "running") {
-        await this.codec.typing?.(task.chat_id); // keep the typing indicator alive while working
-        continue;
-      }
+      if (st.status === "queued" || st.status === "running") continue; // typing pinged above
       // Terminal: build the reply, finalize atomically (session + outbox + inbox + task), deliver.
       finalized = true;
       let replyChunks: string[];
@@ -568,7 +643,7 @@ export class Connector {
       await this.flushOutbox();
       await this.sup.maybeSuspend();
     }
-    return finalized;
+    return finalized || placeholderProgress;
   }
 
   /** Synchronous turn — the fallback for a third-party AgentClient without the async surface. */
