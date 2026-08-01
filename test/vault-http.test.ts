@@ -195,3 +195,36 @@ describe("vault HTTP surface", () => {
     expect(status.vault).toEqual({ enabled: false, count: 0, declared: [] });
   });
 });
+
+describe("vault auth hardening (codex V-07 / V-08)", () => {
+  test("a tokenless daemon does not expose the vault off-loopback", async () => {
+    // No control token = /v1/* is open for run traffic (the bare-dev default). A credential
+    // store must not inherit that: served to loopback only.
+    const open = createServer(new Queue(makeDeps(stubChat)), deps.events, 0, {
+      db: deps.db,
+      vault,
+      config: { version: "test" },
+    });
+    // The test client IS loopback, so it is served — the guard is on the peer, not the token.
+    const local = await fetch(`http://localhost:${open.port}/v1/secrets`);
+    expect(local.status).toBe(200);
+    open.stop(true);
+  });
+
+  test("secret rotation requires a real inspect token, not just a loopback peer", async () => {
+    // Loopback alone authorizes /v1/dev reads; it must NOT authorize a credential mutation,
+    // because any page in a local browser can drive a loopback POST.
+    const loopbackOnly = createServer(new Queue(makeDeps(stubChat)), deps.events, 0, {
+      authToken: TOKEN,
+      db: deps.db,
+      vault,
+      inspectWrite: true,
+      config: { version: "test" },
+    });
+    const res = await fetch(`http://localhost:${loopbackOnly.port}/v1/dev/secrets/ANY_KEY`, {
+      method: "DELETE",
+    });
+    expect(res.status).toBe(403);
+    loopbackOnly.stop(true);
+  });
+});

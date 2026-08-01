@@ -125,9 +125,11 @@ class HttpTransport implements Transport {
     // A backend that rejects a call often echoes the credential it saw. This error text
     // reaches a boot log and a tool result, so redact resolved values here — the one place
     // an injected secret can bounce straight back (defense-in-depth on the invariant).
+    // Redact BEFORE truncating: a value straddling the cut would leave an unmatchable
+    // fragment that no later pass can recognise.
     if (!res.ok)
       throw new Error(
-        `MCP HTTP ${res.status}: ${redactSecretValues((await res.text()).slice(0, 500))}`,
+        `MCP HTTP ${res.status}: ${redactSecretValues(await res.text()).slice(0, 500)}`,
       );
     // Match the response frame to THIS request's id — SSE bodies may carry
     // notifications/progress before the result (spec), and a buggy server may
@@ -370,7 +372,7 @@ export class McpConnection {
           // bypass the spill and make the full output unrecoverable (codex #7).
           return result.isError ? `[tool error] ${text}` : text || "(no content)";
         } catch (e) {
-          return `[tool error] ${String(e).slice(0, 2000)}`;
+          return `[tool error] ${redactSecretValues(String(e)).slice(0, 2000)}`;
         }
       },
     };

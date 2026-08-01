@@ -190,11 +190,14 @@ describe("exact-value redaction", () => {
     expect(out).not.toContain("zzz-not-a-known-shape-9999");
   });
 
-  test("short values are not registered (they would mangle ordinary prose)", () => {
+  test("the store refuses a value too short to be redactable (no storable-but-unscrubbed gap)", () => {
     const v = open(KEY) as Vault;
-    v.put("TINY", "abc");
+    // The redaction floor and the store's minimum are deliberately aligned: if a value could
+    // be stored but not registered, a reflection of it would reach the model unscrubbed.
+    expect(v.put("TINY", "abc")).toMatchObject({ ok: false, status: 400 });
+    expect(v.put("TINY", "abcdefgh")).toEqual({ ok: true });
     v.resolve("TINY");
-    expect(redactSecretValues("abc is a normal word start")).toBe("abc is a normal word start");
+    expect(redactSecretValues("value abcdefgh here")).toBe("value [vault:TINY] here");
   });
 
   test("regex metacharacters in a value are escaped, not interpreted", () => {
@@ -277,5 +280,29 @@ describe("redaction registry under pressure", () => {
     v.resolve("SHORT");
     v.resolve("LONG");
     expect(redactSecretValues("abc123456-with-more-tail")).toBe("[vault:LONG]");
+  });
+});
+
+describe("codex-caught hardening", () => {
+  test("ciphertext cannot be moved between names (the name is authenticated data)", () => {
+    const db = openDb(":memory:");
+    const v = Vault.open(db, KEY) as Vault;
+    v.put("STAGING_KEY", "staging-value-1234");
+    v.put("PROD_KEY", "prod-value-5678");
+    // Swap the stored blob: without name-binding this would silently resolve the staging
+    // credential under the production name and send it to the production destination.
+    const staging = db.query("SELECT value_enc FROM vault WHERE name='STAGING_KEY'").get() as {
+      value_enc: Uint8Array;
+    };
+    db.query("UPDATE vault SET value_enc = ? WHERE name = 'PROD_KEY'").run(staging.value_enc);
+    expect(() => v.resolve("PROD_KEY")).toThrow(MissingSecret);
+  });
+
+  test("a purpose containing the value is refused", () => {
+    const v = open(KEY) as Vault;
+    expect(v.put("K", "the-secret-value", "for the-secret-value backend")).toMatchObject({
+      ok: false,
+      status: 400,
+    });
   });
 });

@@ -26,6 +26,11 @@ export const VAULT_REF_RE = /\{\{vault:([A-Z][A-Z0-9_]{0,63})\}\}/g;
 /** A key shorter than this is a typo, not a key. Fail loudly rather than encrypt weakly. */
 const MIN_KEY_CHARS = 16;
 const MAX_VALUE_BYTES = 4096;
+/** A stored value must be at least as long as the redaction floor (scrub.ts MIN_REDACTABLE).
+ *  Otherwise a credential could be storable but too short to register for exact-value
+ *  redaction — a gap between "the vault holds it" and "a reflection of it is scrubbed".
+ *  Real credentials are far longer; anything shorter is a PIN, not an API key. */
+const MIN_VALUE_CHARS = 8;
 
 export type SecretMeta = { name: string; purpose: string; created_at: number; updated_at: number };
 
@@ -96,6 +101,12 @@ export class Vault {
     if (!VAULT_NAME_RE.test(name))
       return { ok: false, error: "name must match ^[A-Z][A-Z0-9_]{0,63}$", status: 400 };
     if (!value) return { ok: false, error: "value is empty", status: 400 };
+    if (value.length < MIN_VALUE_CHARS)
+      return {
+        ok: false,
+        error: `value must be at least ${MIN_VALUE_CHARS} characters`,
+        status: 400,
+      };
     if (Buffer.byteLength(value, "utf8") > MAX_VALUE_BYTES)
       return { ok: false, error: `value exceeds ${MAX_VALUE_BYTES} bytes`, status: 413 };
     // A control char in a credential is either a paste artifact or a header-injection attempt;
@@ -107,6 +118,10 @@ export class Vault {
         return { ok: false, error: "value contains control characters", status: 400 };
     }
     if (purpose.length > 200) purpose = purpose.slice(0, 200);
+    // The purpose is stored in the clear and shown to the model by `list_secrets`. Refuse one
+    // that contains the value — a paste into the wrong field must not become the leak.
+    if (purpose.includes(value))
+      return { ok: false, error: "purpose must not contain the value", status: 400 };
     if (!replace && this.has(name))
       return { ok: false, error: `${name} already exists`, status: 409 };
     const now = Date.now();
@@ -115,7 +130,7 @@ export class Vault {
         `INSERT INTO vault (name, purpose, value_enc, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
          ON CONFLICT (name) DO UPDATE SET purpose = excluded.purpose, value_enc = excluded.value_enc, updated_at = excluded.updated_at`,
       )
-      .run(name, purpose, this.seal(value), now, now);
+      .run(name, purpose, this.seal(name, value), now, now);
     return { ok: true };
   }
 
@@ -143,23 +158,28 @@ export class Vault {
     } | null;
     if (!row) return null;
     try {
-      return this.unseal(Buffer.from(row.value_enc));
+      return this.unseal(name, Buffer.from(row.value_enc));
     } catch {
       return null;
     }
   }
 
-  /** AES-256-GCM: 12B random iv ‖ 16B tag ‖ ciphertext. Fresh iv per write (never a counter). */
-  private seal(value: string): Buffer {
+  /** AES-256-GCM: 12B random iv ‖ 16B tag ‖ ciphertext. Fresh iv per write (never a counter).
+   *  The NAME is authenticated data, so a blob cannot be moved between rows: swapping the
+   *  ciphertext of `STAGING_KEY` into `PROD_KEY` fails the tag instead of silently sending
+   *  the wrong credential to the wrong destination. */
+  private seal(name: string, value: string): Buffer {
     const iv = randomBytes(12);
     const c = createCipheriv("aes-256-gcm", this.key, iv);
+    c.setAAD(Buffer.from(name, "utf8"));
     const enc = Buffer.concat([c.update(value, "utf8"), c.final()]);
     return Buffer.concat([iv, c.getAuthTag(), enc]);
   }
 
-  private unseal(blob: Buffer): string {
+  private unseal(name: string, blob: Buffer): string {
     if (blob.length < 29) throw new Error("malformed vault blob");
     const d = createDecipheriv("aes-256-gcm", this.key, blob.subarray(0, 12));
+    d.setAAD(Buffer.from(name, "utf8"));
     d.setAuthTag(blob.subarray(12, 28));
     return Buffer.concat([d.update(blob.subarray(28)), d.final()]).toString("utf8");
   }

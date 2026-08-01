@@ -31,7 +31,10 @@ const SECRET_TEXT: RegExp[] = [
 // (percent-encoded in a URL, JSON-escaped in a serialized payload). Same floor OpenClaw
 // uses, in ~30 lines instead of a module.
 const MIN_REDACTABLE = 6;
-const MAX_TRACKED = 256;
+// Dimensioned far above any plausible vault (a real agent has a handful of credentials, each
+// contributing at most three surface forms), so eviction is unreachable in practice; the LRU
+// order below is the backstop, and re-registration on every egress keeps live secrets freshest.
+const MAX_TRACKED = 4096;
 /** surface form → the NAME it belongs to (so the replacement stays diagnosable). */
 const registered = new Map<string, string>();
 let matcher: RegExp | null = null;

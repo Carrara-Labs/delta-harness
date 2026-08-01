@@ -357,6 +357,18 @@ export function createServer(
         // Creation deliberately lives on /v1/secrets instead: the gateway may ADD a
         // credential (that's the intake flow) but must not be able to swap or destroy one.
         if (isSecretOp) {
+          // Loopback peer identity is not sufficient authorization for a credential mutation:
+          // any page in a local browser can POST to 127.0.0.1. Require the inspect TOKEN
+          // itself, not merely the loopback fallback that read-introspection accepts (V-08).
+          if (!opts?.inspectToken)
+            return json(
+              {
+                error: {
+                  message: "rotating or deleting a secret requires DELTA_INSPECT_TOKEN",
+                },
+              },
+              403,
+            );
           if (!opts?.inspectWrite)
             return json(
               { error: { message: "set DELTA_INSPECT_WRITE=1 to rotate or delete a secret" } },
@@ -439,6 +451,19 @@ export function createServer(
       // higher-privilege inspect credential, so a prompt-injected intake flow cannot swap an
       // established credential for an attacker's.
       if (pathname === "/v1/secrets" || pathname.startsWith("/v1/secrets/")) {
+        // A bare dev binary leaves /v1/* open (no control token configured). That default is
+        // fine for run traffic and NOT fine for a credential store: without a token, serve the
+        // vault only to a loopback peer, never on a public or org-network bind (codex V-07).
+        if (!opts?.authToken && !isLoopback(server.requestIP(request)?.address))
+          return json(
+            {
+              error: {
+                message:
+                  "the vault requires DELTA_CONTROL_TOKEN when the daemon is reachable off-loopback",
+              },
+            },
+            403,
+          );
         if (!opts?.vault)
           return json(
             {
