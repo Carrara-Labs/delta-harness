@@ -37,10 +37,11 @@ import {
 } from "./provider";
 import { childTools, runResearch } from "./research";
 import { retrieveSkills } from "./retrieval";
-import { scrubText } from "./scrub";
+import { redactSecretValues, scrubText } from "./scrub";
 import { type Charter, currentSelf, loadSelf, parseCharterMarkdown, writeSelf } from "./self";
 import { buildSpine } from "./spine";
 import { capAndSpill, elide, type ToolCtx, type ToolDef, type Tools, toolSpecs } from "./tools";
+import type { Vault } from "./vault";
 import { NEUTRAL_VOCAB, type Vocab } from "./vocab";
 
 /** Hard cap on resident (pinned) tool schemas. Keeps any profile — even a mis-set all-pinned one —
@@ -120,6 +121,10 @@ export type Deps = {
   hydrateTools?: string[];
   /** Knowledge-base search tool for task-keyed relevance hydration (§E / G3a). */
   hydrateSearchTool?: string;
+  /** The Secret Vault (0.2.10) — present only when DELTA_VAULT_KEY is set and this isn't a
+   * safe-mode boot. Carried on deps so the server can serve the intake surface and MCP egress
+   * can dereference `{{vault:NAME}}`; NOTHING in the run loop reads a value. */
+  vault?: Vault;
   /** Boot snapshot of DELTA.md's parsed identity — used by reflection's success rubric.
    * The SPINE reads its own run-local snapshot each run (a self-edit takes effect next run). */
   charter?: Charter;
@@ -1359,6 +1364,11 @@ async function execCall(
     } catch (e) {
       result = `[tool error] ${String(e).slice(0, 2000)}`;
     }
+    // THE redaction choke point (0.2.10). Every tool result funnels through here, so redacting
+    // once — BEFORE breaker classification, capAndSpill (spill files land clean), the journal,
+    // the message row, and the telemetry snippet — covers every downstream sink in one line.
+    // Cleanup, not containment: no tool returns a vault value, this catches reflections.
+    result = redactSecretValues(result);
     // A4: record this call's outcome for the batch aggregation (below, after Promise.all). Classify
     // on the RAW pre-cap result — capAndSpill embeds this call's id in its spill-path notice, so an
     // oversized error would look different every call and never compare equal.

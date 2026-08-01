@@ -29,6 +29,7 @@ import { loadSelf } from "./self";
 import { createServer } from "./server";
 import { stripSkillRegistryTools } from "./skill-registry";
 import { elide, testTools } from "./tools";
+import { declaredNames, Vault } from "./vault";
 import { HARNESS_VERSION } from "./version";
 
 function selfCmd(): string[] {
@@ -39,6 +40,9 @@ function selfCmd(): string[] {
 
 function buildDeps(cfg: Config, dbPath: string): Deps {
   const db = openDb(dbPath);
+  // The vault opens on the daemon DB before any tool exists: null when DELTA_VAULT_KEY is
+  // unset or in safe mode, and every vault surface then simply isn't there (fail-safe).
+  const vault = Vault.open(db, cfg.vaultKey, cfg.safeMode);
   const tools = builtinTools({
     workspace: cfg.workspace,
     vision: cfg.vision,
@@ -49,6 +53,7 @@ function buildDeps(cfg: Config, dbPath: string): Deps {
     subagentDepth: cfg.subagentDepth,
     ...(cfg.controlUrl ? { controlUrl: cfg.controlUrl } : {}),
     ...(cfg.controlToken ? { controlToken: cfg.controlToken } : {}),
+    vault,
   });
   if (process.env.DELTA_TEST_TOOLS) for (const [n, t] of testTools()) tools.set(n, t);
   const chat = (req: Parameters<typeof chatVia>[1]) => chatVia(cfg.providers, req);
@@ -102,6 +107,7 @@ function buildDeps(cfg: Config, dbPath: string): Deps {
     selfMaxBytes: cfg.selfMaxTokens * 4,
     // Cockpit true-to-life per-call capture — dev-only (delta dev enables it).
     ...(process.env.DELTA_CAPTURE_CALLS === "1" ? { captureCalls: true } : {}),
+    ...(vault ? { vault } : {}),
   };
 }
 
@@ -320,7 +326,7 @@ if (!cfg.safeMode) {
 
   // Connect configured MCP servers (spec §D). Their tools fold into the registry
   // and appear in the tool directory. A failing server is logged, never fatal.
-  mcp = new McpRegistry(deps.tools);
+  mcp = new McpRegistry(deps.tools, deps.vault ?? null);
   for (const server of cfg.mcpServers) {
     const r = await mcp.add(server);
     console.log(
@@ -361,6 +367,25 @@ try {
     operatorFiles: [SELF_FILE, ...FIXED_OPERATOR_FILES],
     selfMaxBytes: cfg.selfMaxTokens * 4,
     config: devConfigView(cfg, [...deps.tools.keys()]),
+    // Vault: the live instance (status reads it per request, so a secret provided a minute
+    // ago is visible) plus the names config declares a destination for.
+    ...(deps.vault ? { vault: deps.vault } : {}),
+    vaultDeclared: declaredNames(cfg.mcpServers, cfg.exaKey ? [] : ["EXA_API_KEY"]),
+    // A backend whose credential was missing at boot never connected. When that credential
+    // arrives, reconnect exactly the servers that reference it — so handing an agent a key
+    // mid-conversation actually lights the backend up, with no restart.
+    onSecretStored: (name) => {
+      for (const server of cfg.mcpServers) {
+        if (!declaredNames([server]).includes(name)) continue;
+        void mcp?.add(server).then((r) => {
+          console.error(
+            r.ok
+              ? `mcp: ${server.name} reconnected with ${name} (${r.tools} tools)`
+              : `mcp: ${server.name} still failing after ${name} arrived — ${r.error}`,
+          );
+        });
+      }
+    },
     // `with { type: "text" }` makes this a string at runtime (and embeds it in the
     // compiled binary); bun-types still widens a `.html` import to HTMLBundle, so cast.
     cockpitHtml: cockpitHtml as unknown as string,

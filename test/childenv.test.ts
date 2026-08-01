@@ -72,3 +72,14 @@ describe("childEnv", () => {
     expect(env.OPENROUTER_API_KEY).toBe("key");
   });
 });
+
+describe("vault key isolation", () => {
+  test("the vault master key never reaches a model-directed child", () => {
+    const withVault = { ...source, DELTA_VAULT_KEY: "vault-master-key-must-not-travel" };
+    for (const kind of ["code", "subagent"] as const) {
+      const env = childEnv(kind, withVault);
+      expect(env.DELTA_VAULT_KEY).toBeUndefined();
+      expect(JSON.stringify(env)).not.toContain("vault-master-key-must-not-travel");
+    }
+  });
+});

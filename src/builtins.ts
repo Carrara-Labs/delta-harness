@@ -28,6 +28,7 @@ import type { Usage } from "./provider";
 import { currentSelf, looksLikeSpineEcho } from "./self";
 import { assertPublicUrl } from "./ssrf";
 import { elide, type TodoItem, type ToolCtx, type ToolDef, type Tools } from "./tools";
+import type { Vault } from "./vault";
 import { HARNESS_VERSION } from "./version";
 
 export type BuiltinConfig = {
@@ -48,7 +49,27 @@ export type BuiltinConfig = {
    * (Sprint 4). Both absent → the tools aren't registered (graceful-off for dev binaries). */
   controlUrl?: string;
   controlToken?: string;
+  /** The Secret Vault (0.2.10). Present → `list_secrets` is registered and a credential
+   * supplied at runtime can light up a builtin (e.g. EXA_API_KEY → web_search) without a
+   * redeploy. Absent (no DELTA_VAULT_KEY, or safe mode) → no vault surface at all. */
+  vault?: Vault | null;
 };
+
+/** Read a builtin's credential: the configured env value first (operator intent, unchanged
+ * behavior), else the vault. Resolved at CALL time, not boot, so a key provided mid-conversation
+ * works on the very next turn. Returns undefined when neither is configured. */
+function credentialFor(
+  name: string,
+  configured: string | undefined,
+  vault: Vault | null | undefined,
+): string | undefined {
+  if (configured) return configured;
+  try {
+    return vault?.has(name) ? vault.resolve(name) : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 // Truncation is centralized: run.ts caps EVERY tool result via capAndSpill (inline cap +
 // full output spilled to a re-readable file), so builtins return their result RAW — a
@@ -152,6 +173,7 @@ export type ChildEnvKind = "code" | "subagent";
 // Bun.spawn REPLACES the child env with what we pass (verified) — omitted vars are NOT
 // merged back from process.env, so default-deny here actually governs the child.
 export const CHILD_ENV_SECRET_DENYLIST = new Set([
+  "DELTA_VAULT_KEY", // the vault master key — belt-and-braces (the allowlist already omits it)
   "DELTA_MCP_REFRESH_TOKEN",
   "DELTA_MCP_REFRESH_FILE", // grants access to the rotating refresh credential
   "DELTA_BROKER_AUTH",
@@ -254,10 +276,14 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
     },
     idempotent: true,
     execute: async (args, ctx) => {
-      if (!cfg.exaKey) return "[tool error] web_search is not configured (no EXA_API_KEY)";
+      // Env key, else the vault — resolved per call, so a key handed to the agent at runtime
+      // works immediately. The value goes only to the hardcoded api.exa.ai; no model-chosen URL.
+      const exaKey = credentialFor("EXA_API_KEY", cfg.exaKey, cfg.vault);
+      if (!exaKey)
+        return "[tool error] web_search is not configured — no EXA_API_KEY in the environment or the vault";
       const res = await fetch("https://api.exa.ai/search", {
         method: "POST",
-        headers: { "x-api-key": cfg.exaKey, "content-type": "application/json" },
+        headers: { "x-api-key": exaKey, "content-type": "application/json" },
         body: JSON.stringify({
           query: String(args.query),
           numResults: Math.min(Number(args.num_results) || 5, 10),
@@ -652,6 +678,31 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
         : `[tool error] ${r.error}`;
     },
   });
+
+  // The vault's ENTIRE model-facing surface (0.2.10): names and purposes, never values.
+  // There is deliberately no `get_secret` — a tool that returns a value would make every
+  // other tool an exfiltration path, which is exactly the mistake to avoid. The agent asks
+  // its human for a credential; the edge runs the secure intake; egress code does the rest.
+  if (cfg.vault)
+    add({
+      name: "list_secrets",
+      readonly: true,
+      description:
+        "List the credentials available to you by NAME and purpose. Values are never readable by you or any tool — the engine injects them at the moment of use. If a task needs a credential that isn't here, ask your human to provide it.",
+      parameters: { type: "object", properties: {} },
+      idempotent: true,
+      execute: async () => {
+        const rows = cfg.vault?.list() ?? [];
+        if (rows.length === 0)
+          return "(no credentials configured — ask your human to provide one if a task needs it)";
+        return rows
+          .map(
+            (s) =>
+              `${s.name}${s.purpose ? ` — ${s.purpose}` : ""} (provided ${new Date(s.created_at).toISOString().slice(0, 10)})`,
+          )
+          .join("\n");
+      },
+    });
 
   add({
     name: "list_dir",

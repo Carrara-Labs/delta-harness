@@ -125,6 +125,17 @@ export type Config = {
   controlUrl?: string;
   /** Bearer for the CP schedule endpoints — this VM's own gateway token (hash-matched). */
   controlToken?: string;
+  /** Master key for the Secret Vault (0.2.10). `DELTA_VAULT_KEY_FILE` (preferred) points at a
+   * file holding the key; `DELTA_VAULT_KEY` carries it inline. Unset → no vault at all: the
+   * routes 503, `list_secrets` isn't registered, and a `{{vault:NAME}}` ref fails closed.
+   * Never a plaintext fallback — a vault that silently degrades is worse than none.
+   *
+   * Prefer the FILE form on a real deployment. An environment variable is copied into the
+   * process environment block, which is exactly what a same-UID process can snapshot
+   * (`/proc/<pid>/environ` on Linux) — and the `code` tool runs arbitrary code as that UID by
+   * design. The file form keeps the key out of that block entirely. Neither form defends
+   * against a full host compromise; the VM stays the boundary. */
+  vaultKey?: string;
   /** Local diagnostic-state retention (events + journal). The Exporter bounds `events` only
    * when telemetry is wired, and nothing bounds `journal` — so a telemetry-less daemon would
    * grow both without limit. A periodic sweep caps them by age AND row-count. See retention.ts. */
@@ -315,6 +326,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     // Self-scheduling (Sprint 4): the control plane owns the clock (this VM autosuspends).
     ...(env.DELTA_CONTROL_URL ? { controlUrl: env.DELTA_CONTROL_URL } : {}),
     ...(env.DELTA_CONTROL_TOKEN ? { controlToken: env.DELTA_CONTROL_TOKEN } : {}),
+    // The vault key never rides safe mode (safe mode drops every non-floor capability).
+    ...(!safeMode && vaultKey(env) ? { vaultKey: vaultKey(env) } : {}),
     // Local diagnostic-state retention (retention.ts): bound events + journal by age + count
     // regardless of telemetry. 7-day age, 50k-row cap, hourly sweep — all overridable.
     retentionMs: positiveInt(env.DELTA_RETENTION_MS, 7 * 24 * 3_600_000),
@@ -373,6 +386,7 @@ export function devConfigView(
       TELEMETRY_TOKEN: present(env.TELEMETRY_TOKEN),
       DELTA_BROKER_AUTH: present(env.DELTA_BROKER_AUTH),
       DELTA_MCP_REFRESH: present(env.DELTA_MCP_REFRESH_TOKEN, env.DELTA_MCP_REFRESH_FILE),
+      DELTA_VAULT_KEY: present(env.DELTA_VAULT_KEY),
     },
     tools: {
       mcp: toolNames.filter((n) => n.includes("__")).sort(),
@@ -411,6 +425,22 @@ function warnLegacyBundleEnv(env: Record<string, string | undefined>): void {
       console.error(
         `delta: ${name} is no longer used (the bundle is now DELTA.md + POLICY.md) — its value is IGNORED. Migrate it to ${to}.`,
       );
+}
+
+/** The vault master key: the FILE form wins (it keeps the key out of the process environment
+ * block a same-UID process can snapshot), falling back to the inline env var. A configured but
+ * unreadable/empty key file is a loud failure, not a silent downgrade to no-vault. */
+function vaultKey(env: Record<string, string | undefined>): string | undefined {
+  const path = env.DELTA_VAULT_KEY_FILE;
+  if (path) {
+    const contents = readIfExists(resolve(path))?.trim();
+    if (contents) return contents;
+    console.error(
+      `delta: DELTA_VAULT_KEY_FILE='${path}' is missing, unreadable, or empty — the vault will NOT start. Fix the path or unset it.`,
+    );
+    return undefined;
+  }
+  return env.DELTA_VAULT_KEY || undefined;
 }
 
 /** Read a file if it exists, else undefined — a runaway/unreadable file never crashes

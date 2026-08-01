@@ -96,11 +96,38 @@ const kindLabel: Record<Kind, string> = {
 // exactly. Update this alongside the root CHANGELOG.md when a release ships.
 const releases: Release[] = [
   {
+    version: "0.2.10",
+    date: "August 1, 2026",
+    iso: "2026-08-01",
+    tagline: "The secret vault.",
+    latest: true,
+    note: "An agent's third-party credentials can live encrypted in the daemon instead of the deployment environment, under one rule: a secret value never enters model-readable state. Fully opt-in; with no vault key set, a deployment runs exactly as 0.2.9.",
+    groups: [
+      {
+        kind: "added",
+        items: [
+          "**The vault.** `DELTA_VAULT_KEY_FILE` (or `DELTA_VAULT_KEY`) enables an AES-256-GCM store in the daemon database — outside the model-writable workspace, so the workspace-confined file tools cannot reach the ciphertext. With neither set there is no vault: the routes `503`, the tool is not registered, and a reference fails closed. Safe mode never carries one.",
+          "**A write-only seam.** `PUT /v1/secrets/:name` stores a credential; `GET /v1/secrets` lists names, purposes, and timestamps. No route returns a value. `PUT` is create-only (`409` on an existing name), so a gateway flow cannot silently replace an established credential; rotation and deletion are operator acts on `/v1/dev/secrets/:name` behind the inspect token.",
+          "**`{{vault:NAME}}` references** in MCP HTTP headers and stdio `env`, resolved in engine code at egress — per call for headers, at spawn for a child. Configuration holds the name, never a value. A backend that could not connect at boot for want of its credential reconnects when it arrives.",
+          "**`list_secrets`**, the model's entire view of the vault: names and purposes. There is deliberately no tool that returns a value.",
+          "**Runtime credentials for built-ins.** `web_search` falls back to a vaulted `EXA_API_KEY`, resolved per call, so handing an agent a search key enables the tool without a redeploy.",
+          "**Exact-value redaction.** A value is registered when resolved for egress, in raw, percent-encoded, and JSON-escaped form. A later reflection of it is replaced with `[vault:NAME]` before reaching the model, the transcript, a spill file, a research artifact, or telemetry.",
+          "**`/v1/status` reports the vault** live: `enabled`, `count`, and `declared` — the names the running configuration wires a destination for, so an edge can refuse a request for a credential nothing is configured to use.",
+        ],
+      },
+      {
+        kind: "changed",
+        items: [
+          "**stdio MCP servers no longer inherit the daemon environment.** A configured server child now receives process plumbing (`PATH`, `HOME`, `SHELL`, `TMPDIR`, `LANG`, `LC_*`, `TERM`) plus its own `env` object. Previously every stdio server received the daemon's full environment, including broker, control, telemetry, and provider credentials. A server that relied on an inherited variable must now declare it in its `env`.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.2.9",
     date: "August 1, 2026",
     iso: "2026-08-01",
     tagline: "Affordances for correct long chat turns.",
-    latest: true,
     note: "Two additive, opt-in affordances that let a fire-and-forget gateway (Delta Connect) run long chat turns correctly under loss and concurrency. With nothing new set, a deployment runs exactly as 0.2.8.",
     groups: [
       {

@@ -277,6 +277,19 @@ const MIGRATIONS: string[] = [
     updated_at INTEGER NOT NULL DEFAULT 0
   );
   `,
+  // The Secret Vault (0.2.10): third-party credentials, encrypted at rest (AES-256-GCM,
+  // key from DELTA_VAULT_KEY, never stored). Lives HERE — in the daemon DB, outside the
+  // model-writable workspace — so the confined file tools cannot reach even the ciphertext.
+  // Nothing reads a value except engine egress code (vault.ts).
+  `
+  CREATE TABLE vault (
+    name       TEXT PRIMARY KEY,
+    purpose    TEXT NOT NULL DEFAULT '',
+    value_enc  BLOB NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  `,
 ];
 
 export function openDb(path: string): Database {

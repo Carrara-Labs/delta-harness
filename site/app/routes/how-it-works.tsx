@@ -948,6 +948,11 @@ export default function HowItWorks() {
                   "Never crashes",
                   "A provider or tool failure returns a clean turn the agent can reason about. The daemon does not fall over.",
                 ],
+                [
+                  "vault",
+                  "Holds secrets it cannot read",
+                  "Credentials sit encrypted outside the workspace. The agent sees a name and a purpose; the engine injects the value at egress. No tool returns one, so no tool can leak one.",
+                ],
               ].map(([tag, h, p]) => (
                 <div className="hiw-dbeat" key={h}>
                   <span className="tag">{tag}</span>

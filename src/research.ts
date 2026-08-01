@@ -16,6 +16,7 @@
 
 import { mkdirSync, realpathSync, renameSync } from "node:fs";
 import type { ChatMsg, ChatRequest, ModelResult, Usage } from "./provider";
+import { redactSecretValues } from "./scrub";
 import { buildSpine } from "./spine";
 import { elide, type ToolCtx, type ToolDef, type Tools, toolSpecs } from "./tools";
 
@@ -197,7 +198,10 @@ async function researchOne(
             else {
               try {
                 const args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
-                out = elide(await def.execute(args, childCtx)); // in-memory only — no disk spill
+                // A research child runs its OWN tool loop, outside run.ts's execCall — so it
+                // needs the same redaction here, or a reflected credential would reach the
+                // child's context and then its findings artifact on disk.
+                out = redactSecretValues(elide(await def.execute(args, childCtx)));
               } catch (e) {
                 out = `[tool error] ${String(e).slice(0, 300)}`;
               }
@@ -239,11 +243,14 @@ async function writeArtifact(
   if (real !== realWs && !real.startsWith(`${realWs}/`))
     throw new Error("artifact dir escaped the workspace");
   const path = `${dir}/${index}-${safe(task)}.md`;
-  const enc = new TextEncoder().encode(`# ${task}\n\n${text}`);
+  // Belt-and-braces: the child's own prose could quote a value it saw. Nothing a research
+  // child produces reaches the workspace unredacted.
+  const doc = redactSecretValues(`# ${task}\n\n${text}`);
+  const enc = new TextEncoder().encode(doc);
   const body =
     enc.length > ARTIFACT_MAX_BYTES
       ? new TextDecoder().decode(enc.slice(0, ARTIFACT_MAX_BYTES))
-      : `# ${task}\n\n${text}`;
+      : doc;
   const tmp = `${path}.tmp`;
   await Bun.write(tmp, body);
   renameSync(tmp, path);

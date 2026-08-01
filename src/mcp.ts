@@ -7,7 +7,9 @@
 
 import { registerImage } from "./files";
 import type { RefreshingCredential } from "./mcp-refresh";
+import { redactSecretValues } from "./scrub";
 import type { ToolDef, Tools } from "./tools";
+import { expandRefs, type Vault } from "./vault";
 
 export type McpServerConfig =
   | {
@@ -66,6 +68,7 @@ class HttpTransport implements Transport {
     private url: string,
     private headers: Record<string, string>,
     private credential?: RefreshingCredential,
+    private vault?: Vault | null,
   ) {}
 
   private async buildHeaders(extra?: Record<string, string>): Promise<Record<string, string>> {
@@ -81,7 +84,14 @@ class HttpTransport implements Transport {
     // by a per-call header (act-as-user passthrough) applied after.
     if (this.credential) out.authorization = `Bearer ${await this.credential.get()}`;
     for (const src of [this.headers, extra]) {
-      if (src) for (const [k, v] of Object.entries(src)) out[k.toLowerCase()] = v;
+      if (src)
+        for (const [k, v] of Object.entries(src)) {
+          // Vault refs resolve HERE — at egress, per call — so a secret provided after boot
+          // lights the backend up with no restart, and the config itself only ever holds the
+          // NAME. The destination is this server's operator-configured URL; the model can
+          // neither write that config nor choose where a value goes.
+          out[k.toLowerCase()] = expandRefs(v, this.vault ?? null);
+        }
     }
     return out;
   }
@@ -112,7 +122,13 @@ class HttpTransport implements Transport {
     }
     const captured = res.headers.get("mcp-session-id");
     if (captured) this.sessionId = captured;
-    if (!res.ok) throw new Error(`MCP HTTP ${res.status}: ${(await res.text()).slice(0, 500)}`);
+    // A backend that rejects a call often echoes the credential it saw. This error text
+    // reaches a boot log and a tool result, so redact resolved values here — the one place
+    // an injected secret can bounce straight back (defense-in-depth on the invariant).
+    if (!res.ok)
+      throw new Error(
+        `MCP HTTP ${res.status}: ${redactSecretValues((await res.text()).slice(0, 500))}`,
+      );
     // Match the response frame to THIS request's id — SSE bodies may carry
     // notifications/progress before the result (spec), and a buggy server may
     // reorder. Never accept a mismatched or notification frame as our answer.
@@ -152,6 +168,12 @@ function parseRpc(text: string, id: number): JsonRpcResponse {
   throw new Error(`no MCP response frame for id ${id}: ${text.slice(0, 200)}`);
 }
 
+// An MCP server child gets process plumbing and its OWN configured env — never the
+// daemon's whole environment. Inheriting `process.env` handed every configured stdio
+// server the daemon's credentials (broker auth, control token, telemetry token, provider
+// keys — and now the vault key); the server only ever needs what its config declares.
+const SAFE_CHILD_ENV = /^(PATH|HOME|SHELL|TMPDIR|LANG|LC_.*|TERM)$/;
+
 class StdioTransport implements Transport {
   private id = 0;
   private proc: ReturnType<typeof Bun.spawn>;
@@ -161,12 +183,18 @@ class StdioTransport implements Transport {
     { resolve: (v: unknown) => void; reject: (e: Error) => void }
   >();
 
-  constructor(command: string[], env: Record<string, string>) {
+  constructor(command: string[], env: Record<string, string>, vault?: Vault | null) {
+    const childEnv: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env))
+      if (v !== undefined && SAFE_CHILD_ENV.test(k)) childEnv[k] = v;
+    // Configured env values may carry `{{vault:NAME}}` — resolved here, at spawn, into the
+    // child's own environment only.
+    for (const [k, v] of Object.entries(env)) childEnv[k] = expandRefs(v, vault ?? null);
     this.proc = Bun.spawn(command, {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "ignore",
-      env: { ...process.env, ...env } as Record<string, string>,
+      env: childEnv,
     });
     void this.readLoop();
   }
@@ -244,11 +272,14 @@ export class McpConnection {
   private transport: Transport;
   private toolDefs: ToolDef[] = [];
 
-  constructor(private config: McpServerConfig) {
+  constructor(
+    private config: McpServerConfig,
+    vault?: Vault | null,
+  ) {
     this.transport =
       config.transport === "http"
-        ? new HttpTransport(config.url, config.headers ?? {}, config.credential)
-        : new StdioTransport(config.command, config.env ?? {});
+        ? new HttpTransport(config.url, config.headers ?? {}, config.credential, vault)
+        : new StdioTransport(config.command, config.env ?? {}, vault);
   }
 
   get name(): string {
@@ -355,7 +386,10 @@ export class McpConnection {
 export class McpRegistry {
   private connections = new Map<string, McpConnection>();
 
-  constructor(private registry: Tools) {}
+  constructor(
+    private registry: Tools,
+    private vault?: Vault | null,
+  ) {}
 
   /** Connect a server and fold its tools in. Errors are returned, not thrown —
    * one bad server must never stop the daemon from starting. */
@@ -368,14 +402,14 @@ export class McpRegistry {
     // stops the daemon" contract stated at the call site (codex P1).
     let conn: McpConnection | undefined;
     try {
-      conn = new McpConnection(config);
+      conn = new McpConnection(config, this.vault);
       const defs = await conn.connect();
       this.connections.set(config.name, conn);
       for (const def of defs) this.registry.set(def.name, def);
       return { ok: true, tools: defs.length };
     } catch (e) {
       conn?.close(); // reap the child/socket if it was constructed — never tracked for removal
-      return { ok: false, tools: 0, error: String(e).slice(0, 500) };
+      return { ok: false, tools: 0, error: redactSecretValues(String(e)).slice(0, 500) };
     }
   }
 

@@ -174,10 +174,10 @@ describe("lease migration", () => {
   test("applies cleanly to the complete pre-lease schema", () => {
     const prior = openDb(path);
     // A true "version 9" schema predates the lease (index 9), `calls` capture (index 10),
-    // `self_revisions` (index 11) and `thread_state` (index 12) migrations — drop all four,
-    // then re-open replays them.
+    // `self_revisions` (index 11), `thread_state` (index 12) and `vault` (index 13)
+    // migrations — drop all five, then re-open replays them.
     prior.exec(
-      "DROP TABLE calls; DROP TABLE lease; DROP TABLE self_revisions; DROP TABLE thread_state; PRAGMA user_version = 9",
+      "DROP TABLE calls; DROP TABLE lease; DROP TABLE self_revisions; DROP TABLE thread_state; DROP TABLE vault; PRAGMA user_version = 9",
     );
     prior.close();
 
@@ -190,8 +190,9 @@ describe("lease migration", () => {
     expect(
       db.query("SELECT name FROM sqlite_master WHERE name = 'thread_state'").get(),
     ).toBeTruthy();
+    expect(db.query("SELECT name FROM sqlite_master WHERE name = 'vault'").get()).toBeTruthy();
     expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(
-      13,
+      14,
     );
     db.close();
   });

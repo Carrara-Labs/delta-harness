@@ -27,6 +27,7 @@ import { type Queue, SessionOwnershipError, UnknownPreviousResponse } from "./qu
 import type { RunRequest } from "./run";
 import { scrubText } from "./scrub";
 import { currentSelf, listRevisions, revertSelf, writeSelf } from "./self";
+import type { Vault } from "./vault";
 import { HARNESS_VERSION } from "./version";
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
@@ -109,6 +110,17 @@ export function createServer(
     /** DELTA_TRUST_REVIEW_METADATA=1 — honor body-supplied memory-widening authorization. Off by
      *  default: those fields are stripped from every body (S5a). */
     trustReviewMetadata?: boolean;
+    /** The Secret Vault (0.2.10). Absent → every /v1/secrets route 503s and status reports
+     *  `enabled: false`; the daemon otherwise runs exactly as before. */
+    vault?: Vault | null;
+    /** Names the running config declares a `{{vault:NAME}}` destination for (plus builtins) —
+     *  the operator-sanctioned request set an edge validates a secret request against. */
+    vaultDeclared?: string[];
+    /** Called after a secret lands, with its NAME (never its value). The daemon uses it to
+     *  reconnect any MCP backend whose config references that name — a server whose
+     *  credential was missing at boot never connected, so without this the credential would
+     *  only take effect on the next restart. Builtins need nothing: they resolve per call. */
+    onSecretStored?: (name: string) => void;
   },
 ) {
   // Gateway auth (codex S8 #1): flycast is network placement, NOT authentication —
@@ -203,10 +215,13 @@ export function createServer(
       // BEFORE the generic `/v1/` authToken gate, because they ride a different
       // credential; returning from this block means they never hit that gate.
       if (pathname.startsWith("/v1/dev/")) {
-        // Reads are GET; the one write is PUT /v1/dev/files (opt-in, below).
+        // Reads are GET; writes are opt-in and enumerated (below).
+        const isSecretOp =
+          (method === "POST" || method === "DELETE") && pathname.startsWith("/v1/dev/secrets/");
         const isWrite =
           (method === "PUT" && pathname === "/v1/dev/files") ||
-          (method === "POST" && pathname === "/v1/dev/self/revert");
+          (method === "POST" && pathname === "/v1/dev/self/revert") ||
+          isSecretOp;
         if (method !== "GET" && !isWrite)
           return json({ error: { message: "method not allowed" } }, 405);
         const gate = inspectAuthed(request, server);
@@ -337,6 +352,47 @@ export function createServer(
         const runDetail = pathname.match(/^\/v1\/dev\/runs\/([^/]+)$/);
         if (runDetail) return devRunDetail(db, runDetail[1] as string);
 
+        // Vault rotation + deletion (0.2.10). OPERATOR acts, so they ride the inspect
+        // credential — a strictly higher privilege than the seam token that drives runs.
+        // Creation deliberately lives on /v1/secrets instead: the gateway may ADD a
+        // credential (that's the intake flow) but must not be able to swap or destroy one.
+        if (isSecretOp) {
+          if (!opts?.inspectWrite)
+            return json(
+              { error: { message: "set DELTA_INSPECT_WRITE=1 to rotate or delete a secret" } },
+              403,
+            );
+          if (!opts?.vault) return json({ error: { message: "the vault is not enabled" } }, 503);
+          const name = decodeURIComponent(pathname.slice("/v1/dev/secrets/".length));
+          if (method === "DELETE") {
+            const gone = opts.vault.delete(name);
+            if (gone) events.emit("vault.delete", {}, { name });
+            return gone
+              ? json({ ok: true, name })
+              : json({ error: { message: "no such secret" } }, 404);
+          }
+          const raw = await readCappedBody(request, 8192);
+          if (!raw) return json({ error: { message: "body too large" } }, 413);
+          let body: { value?: unknown; purpose?: unknown };
+          try {
+            body = JSON.parse(new TextDecoder().decode(raw)) as typeof body;
+          } catch {
+            return json({ error: { message: "body must be JSON" } }, 400);
+          }
+          if (typeof body.value !== "string")
+            return json({ error: { message: "`value` must be a string" } }, 400);
+          const r = opts.vault.put(
+            name,
+            body.value,
+            typeof body.purpose === "string" ? body.purpose : "",
+            true, // operator rotation may replace
+          );
+          if (!r.ok) return json({ error: { message: r.error } }, r.status);
+          events.emit("vault.set", {}, { name });
+          opts.onSecretStored?.(name);
+          return json({ ok: true, name });
+        }
+
         if (pathname === "/v1/dev/runs")
           return devRunsList(db, {
             session: url.searchParams.get("session") ?? undefined,
@@ -364,7 +420,69 @@ export function createServer(
           model: c.model,
           ...(c.budget ? { budget: c.budget } : {}),
           mcp_servers: c.mcp_servers ?? [],
+          // Vault (0.2.10). Read LIVE, not from the boot config snapshot — a secret provided
+          // a minute ago must be visible here, and the edge gates its intake UX on `enabled`.
+          // `declared` = names the config actually has a destination wired for, so an edge can
+          // refuse a model-solicited credential nobody configured a use for.
+          vault: {
+            enabled: Boolean(opts?.vault),
+            count: opts?.vault?.list().length ?? 0,
+            declared: opts?.vaultDeclared ?? [],
+          },
         });
+      }
+
+      // ── The Secret Vault surface (0.2.10) ──────────────────────────────────────
+      // Write-only by design: values go IN (create-only), metadata comes OUT, and there is
+      // NO route that returns a value — not even to the authenticated gateway. A lost secret
+      // is re-provided, never recovered. Deleting/rotating is an operator act behind the
+      // higher-privilege inspect credential, so a prompt-injected intake flow cannot swap an
+      // established credential for an attacker's.
+      if (pathname === "/v1/secrets" || pathname.startsWith("/v1/secrets/")) {
+        if (!opts?.vault)
+          return json(
+            {
+              error: {
+                message:
+                  "the vault is not enabled on this daemon (set DELTA_VAULT_KEY; unavailable in safe mode)",
+              },
+            },
+            503,
+          );
+        const vault = opts.vault;
+        const name = pathname.startsWith("/v1/secrets/")
+          ? decodeURIComponent(pathname.slice("/v1/secrets/".length))
+          : "";
+
+        if (method === "GET" && !name) return json({ secrets: vault.list() });
+
+        if (method === "PUT" && name) {
+          const raw = await readCappedBody(request, 8192);
+          if (!raw) return json({ error: { message: "body too large" } }, 413);
+          let body: { value?: unknown; purpose?: unknown };
+          try {
+            body = JSON.parse(new TextDecoder().decode(raw)) as typeof body;
+          } catch {
+            return json({ error: { message: "body must be JSON" } }, 400);
+          }
+          if (typeof body.value !== "string")
+            return json({ error: { message: "`value` must be a string" } }, 400);
+          const r = vault.put(
+            name,
+            body.value,
+            typeof body.purpose === "string" ? body.purpose : "",
+            false, // create-only: rotation requires the operator route below
+          );
+          // Never echo the request back — an error body must carry the NAME and nothing else.
+          if (!r.ok) return json({ error: { message: r.error } }, r.status);
+          events.emit("vault.set", {}, { name });
+          opts.onSecretStored?.(name);
+          return json({ ok: true, name });
+        }
+
+        // Rotation and deletion are OPERATOR acts, not gateway acts: they live on
+        // `/v1/dev/secrets/:name` behind the inspect credential (see the dev block above).
+        return json({ error: { message: "not found" } }, 404);
       }
 
       // Inbound attachments (Sprint 8): batch multipart → workspace inbox. The

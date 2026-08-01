@@ -1976,11 +1976,55 @@ The built-in file tools are workspace-confined, and model-directed `code` and su
 
 - `read_file` can read workspace files, including a workspace `delta.env`
 - the delegated coding CLI has every filesystem and process capability available to the daemon's OS user; only the CLI's own sandbox can narrow it
-- stdio MCP servers are trusted local child processes and inherit the daemon environment plus their explicit `env` object
+- stdio MCP servers are trusted local child processes; since 0.2.10 they receive only process plumbing (`PATH`, `HOME`, `SHELL`, `TMPDIR`, `LANG`, `LC_*`, `TERM`) plus their own explicit `env` object, not the daemon's whole environment
 - HTTP MCP tools can perform whatever side effects their servers authorize
 - subagents share the workspace
 
 Run one agent under a dedicated OS identity or isolated VM. Keep provider, control, telemetry, and MCP credentials in the process environment or secret manager, not workspace files. Add a purpose-built sandbox if arbitrary generated code must be treated as hostile.
+
+### The secret vault
+
+Third-party credentials an agent needs at runtime (a search key, a client API key, an MCP backend bearer) can live in an encrypted vault instead of the deployment environment. One rule governs it: **a secret value never enters model-readable state.**
+
+Enable it with a key. Prefer the file form on a real deployment, because an environment variable is copied into the process environment block that any same-UID process can read:
+
+```dotenv
+DELTA_VAULT_KEY_FILE=/run/secrets/vault.key
+# or, for local development:
+DELTA_VAULT_KEY=<at least 16 characters>
+```
+
+Generate a key with `openssl rand -base64 32`. With neither set there is no vault at all: the routes answer `503`, the `list_secrets` tool is not registered, and a `{{vault:NAME}}` reference fails closed. There is deliberately no plaintext fallback, and safe mode never carries a vault.
+
+Provide a secret over the seam. Names match `^[A-Z][A-Z0-9_]{0,63}$`, values are capped at 4 KB:
+
+```bash
+curl -X PUT "$BASE/v1/secrets/EXA_API_KEY" \
+  -H "authorization: Bearer $DELTA_CONTROL_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"value":"<the credential>","purpose":"web search"}'
+```
+
+`PUT` is **create-only** and answers `409` if the name exists, so a compromised or prompt-injected gateway flow cannot silently swap an established credential. Rotation and deletion are operator acts on the inspect-gated surface (`POST` / `DELETE /v1/dev/secrets/:name`), which also requires `DELTA_INSPECT_WRITE=1`.
+
+`GET /v1/secrets` returns names, purposes, and timestamps. **There is no route that returns a value** — not even to the authenticated gateway. A lost secret is re-provided, never recovered.
+
+Reference a secret anywhere in your MCP configuration with `{{vault:NAME}}`:
+
+```dotenv
+DELTA_MCP_SERVERS='[{"name":"kb","transport":"http","url":"https://kb.example.com/mcp",
+  "headers":{"authorization":"Bearer {{vault:KB_TOKEN}}"}}]'
+```
+
+The reference is resolved in engine code at the moment of egress — per call for HTTP headers, at spawn for a stdio server's `env` — so the configuration itself only ever holds the name. Because resolution happens at call time, a credential provided mid-conversation takes effect immediately; a backend that could not connect at boot for want of its credential is reconnected automatically when that credential arrives. The built-in `web_search` behaves the same way: with no `EXA_API_KEY` in the environment it falls back to the vault, so handing an agent a search key lights the tool up without a redeploy.
+
+The model's entire view of the vault is one read-only tool, `list_secrets`, which returns names and purposes. There is deliberately no tool that returns a value; such a tool would turn every other tool into an exfiltration path. When a task needs a credential the agent does not have, it should ask its human for it by name.
+
+As defense in depth, a value is registered for exact-value redaction the moment it is resolved for egress, in its raw, percent-encoded, and JSON-escaped forms. Any later reflection of it — an MCP backend echoing its own authorization header inside an error body, for instance — is replaced with `[vault:NAME]` before it reaches the model, the transcript, a spill file, a research artifact, or telemetry.
+
+`GET /v1/status` reports `vault.enabled`, a live `vault.count`, and `vault.declared`: the names your configuration actually wires a destination for. An edge that offers a secret-entry interface should validate a request against `declared`, so an injected agent cannot invent a credential name and talk a human into providing it.
+
+Known limits, stated plainly. The ciphertext lives in the daemon database, outside the model-writable workspace, so the confined file tools cannot reach it; but the delegated `code` tool runs arbitrary code as the daemon's OS user by design, and on Linux a same-UID process can read another's environment. The vault raises the cost of extraction from `cat` to an active attack on process state, and it keeps values out of transcripts, logs, and configuration — it does not replace the VM as the execution boundary. A secret injected into a configured MCP server goes wherever that server's operator-set URL points; operator configuration is trusted input and is never model-writable.
 
 ### Protect stored state
 
@@ -2103,6 +2147,8 @@ The values below are the current public operating surface. Unless noted otherwis
 | `DELTA_CONTROL_URL` | unset | External control-plane base URL; enables scheduling tools with the token. |
 | `DELTA_INSPECT_TOKEN` | unset | Separate bearer for `/v1/dev/*`; otherwise loopback-only. |
 | `DELTA_INSPECT_WRITE` | off | `1` enables Cockpit edits and self-file revert. `delta dev` enables it. |
+| `DELTA_VAULT_KEY_FILE` | unset | Path to the secret-vault master key. Preferred over the inline form: it keeps the key out of the process environment block. |
+| `DELTA_VAULT_KEY` | unset | Secret-vault master key, inline (at least 16 characters). Either form enables the vault; neither means no vault at all. |
 | `DELTA_INSPECT` | on | `off` removes `/dev` and every `/v1/dev/*` route. |
 | `DELTA_CAPTURE_CALLS` | off | `1` stores normalized successful main-loop model request and response captures. `delta dev` enables it. |
 | `TELEMETRY_URL` | unset | NDJSON collector URL. |
