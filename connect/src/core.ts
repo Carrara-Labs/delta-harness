@@ -181,10 +181,13 @@ export function extractDocumentMarker(text: string): { text: string; path?: stri
 function operatorCommand(text: string): { name: string; args: string[] } | null {
   const parts = text.split(/\s+/);
   const first = parts[0] ?? "";
-  // Telegram renders /revert_12 as a tappable command link; treat it as "/revert 12"
-  // (hyphens are invalid in a bot command, so the picker uses underscores).
+  // Telegram renders /revert_12 as a tappable command link; treat a bare tap as "/revert 12"
+  // (hyphens are invalid in a bot command, so the picker uses underscores). Trailing junk
+  // (/revert_12 garbage) must NOT silently restore — pass the junk through so the id-parse
+  // below rejects it with a usage message, matching "/revert 12 garbage" (codex P1).
   const tap = first.match(/^\/revert_(\d+)$/);
-  if (tap) return { name: "/revert", args: [tap[1] as string] };
+  if (tap)
+    return { name: "/revert", args: parts.length === 1 ? [tap[1] as string] : parts.slice(1) };
   return first === "/restart" || first === "/safemode" || first === "/revert"
     ? { name: first, args: parts.slice(1) }
     : null;
@@ -209,19 +212,32 @@ function lineDelta(
   row: string,
   nextNewer: string,
 ): { added: number; removed: number; preview: string } {
-  const rowLines = row.split("\n");
-  const newLines = nextNewer.split("\n");
-  const rowSet = new Set(rowLines);
-  const newSet = new Set(newLines);
-  const addedLines = newLines.filter((l) => l.trim() && !rowSet.has(l));
-  const removed = rowLines.filter((l) => l.trim() && !newSet.has(l)).length;
-  const firstAdded = addedLines[0]?.trim();
+  // Multiset (not set) counts, so adding or dropping a DUPLICATE line still registers
+  // (codex P1: a plain set reports "no change" for "note" → "note\nnote").
+  const counts = (text: string): Map<string, number> => {
+    const m = new Map<string, number>();
+    for (const l of text.split("\n")) if (l.trim()) m.set(l, (m.get(l) ?? 0) + 1);
+    return m;
+  };
+  const rowC = counts(row);
+  const newC = counts(nextNewer);
+  let added = 0;
+  let firstAdded = "";
+  for (const [line, n] of newC) {
+    const delta = n - (rowC.get(line) ?? 0);
+    if (delta > 0) {
+      added += delta;
+      if (!firstAdded) firstAdded = line.trim(); // first newly-added line, in appearance order
+    }
+  }
+  let removed = 0;
+  for (const [line, n] of rowC) removed += Math.max(0, n - (newC.get(line) ?? 0));
   const preview = firstAdded
     ? firstAdded.slice(0, 60)
     : removed
       ? "(removed notes)"
       : "(no textual change)";
-  return { added: addedLines.length, removed, preview };
+  return { added, removed, preview };
 }
 
 /** Render the self-file revision history as a tappable picker (bare /revert, 0.3.1). */

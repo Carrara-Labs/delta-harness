@@ -307,6 +307,37 @@ describe("0.3.1 command surface (against 0.2.8 status)", () => {
     expect(codec.sent.at(-1)).toContain("reverted");
   });
 
+  test("/revert_12 with trailing junk does NOT restore — it shows usage (codex P1)", async () => {
+    const reverted: number[] = [];
+    const { store, codec, connector } = rig({
+      async revertSelf(id: number) {
+        reverted.push(id);
+        return { ok: true, note: "reverted" };
+      },
+    });
+    store.insertInbox(event("tg:1", "/revert_12 garbage"));
+    await drain(connector);
+    expect(reverted).toEqual([]); // never fired
+    expect(codec.sent.at(-1)).toContain("Usage: /revert");
+  });
+
+  test("revision picker counts a duplicated line as a real change (multiset diff, codex P1)", async () => {
+    const now = Date.now();
+    const { store, codec, connector } = rig({
+      async revisions() {
+        return {
+          current: "note\nnote\n", // a second "note" was appended since the snapshot
+          revisions: [{ id: 5, ts: now - 60_000, content: "note\n" }],
+        };
+      },
+    });
+    store.insertInbox(event("tg:1", "/revert"));
+    await drain(connector);
+    const reply = codec.sent.at(-1) ?? "";
+    expect(reply).toContain("+1/-0"); // NOT "+0/-0 (no textual change)"
+    expect(reply).not.toContain("no textual change");
+  });
+
   test("operator commands stay gated: a non-operator cannot list revisions", async () => {
     let listed = 0;
     const { store, codec, connector } = rig({
