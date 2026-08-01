@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { linkSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { devConfigView, loadConfig } from "../src/config";
+import { devConfigView, loadConfig, providerLabel } from "../src/config";
 import { Queue } from "../src/queue";
 import { createServer, redactSecrets } from "../src/server";
 import type { ToolDef } from "../src/tools";
@@ -384,6 +384,54 @@ describe("devConfigView — allowlist, no secret values", () => {
     // Only the bundle files that exist on disk — phantom vocab.json (not present) is
     // filtered, so the Cockpit never pins a ★ that 404s.
     expect(view.operator_files).toEqual(["DELTA.md", "POLICY.md"]);
+  });
+
+  test("0.2.8: provider label, provider_chain, always-resolved effort, and safe_mode", () => {
+    // Default (OpenRouter base, no effort set): effort resolves to "default", not omitted.
+    const base = devConfigView(loadConfig({ DELTA_WORKSPACE: mkdtempSync(join(tmpdir(), "d-")) }), []);
+    const bm = base.model as { provider: string; provider_chain: string[]; reasoning_effort: string };
+    expect(bm.provider).toBe("openrouter");
+    expect(bm.provider_chain).toEqual(["openrouter"]);
+    expect(bm.reasoning_effort).toBe("default"); // never blank — the /model complaint
+    expect(base.safe_mode).toBe(false);
+
+    // Native Anthropic wire + explicit effort surfaces both truthfully.
+    const anth = devConfigView(
+      loadConfig({
+        DELTA_WORKSPACE: mkdtempSync(join(tmpdir(), "d-")),
+        MODEL_API: "anthropic",
+        MODEL_BASE_URL: "https://api.anthropic.com",
+        DELTA_REASONING_EFFORT: "low",
+      }),
+      [],
+    );
+    const am = anth.model as { provider: string; reasoning_effort: string };
+    expect(am.provider).toBe("anthropic-native");
+    expect(am.reasoning_effort).toBe("low");
+
+    // Safe mode is observable from the view (so the edge can show it without the Fly log).
+    const safe = devConfigView(
+      loadConfig({ DELTA_WORKSPACE: mkdtempSync(join(tmpdir(), "d-")), DELTA_SAFE_MODE: "1" }),
+      [],
+    );
+    expect(safe.safe_mode).toBe(true);
+  });
+
+  test("0.2.8: providerLabel maps each wire to the human-recognizable name", () => {
+    expect(providerLabel({ baseUrl: "https://openrouter.ai/api/v1", models: [], label: "primary" })).toBe(
+      "openrouter",
+    );
+    expect(
+      providerLabel({ baseUrl: "https://api.anthropic.com", models: [], api: "anthropic" }),
+    ).toBe("anthropic-native");
+    expect(
+      providerLabel({ baseUrl: "https://api.openai.com/v1", models: [], api: "responses" }),
+    ).toBe("openai-native");
+    // Unknown host falls back to the bare host, never a crash or empty string.
+    expect(providerLabel({ baseUrl: "https://gateway.example/api", models: [] })).toBe(
+      "gateway.example",
+    );
+    expect(providerLabel({ baseUrl: "not-a-url", models: [] })).toBe("custom");
   });
 });
 

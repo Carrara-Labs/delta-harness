@@ -343,6 +343,9 @@ export function devConfigView(
     ...(cfg.agentId ? { agent_id: cfg.agentId } : {}),
     port: cfg.port,
     profile: cfg.profile,
+    // Safe mode (0.2.8): observable so an operator can confirm from the edge instead of the
+    // Fly log, and so the agent itself can be told (via the spine) that it is running neutral.
+    safe_mode: cfg.safeMode,
     // Effective run budget (profile + any DELTA_MAX_* / envelope overrides) — caps, not secrets.
     budget: getProfile(undefined, cfg.profile).budget,
     namespace: cfg.memoryNamespace,
@@ -354,7 +357,12 @@ export function devConfigView(
       // (e.g. https://user:key@host/…?sig=…); emit just protocol+host (codex P1).
       base_url: safeOrigin(cfg.provider.baseUrl),
       api: cfg.provider.api ?? "chat",
-      ...(cfg.reasoningEffort ? { reasoning_effort: cfg.reasoningEffort } : {}),
+      // Provider identity a human recognizes (0.2.8): the primary's wire label, the full
+      // failover chain, and the effort ALWAYS resolved — unset means the provider's own
+      // default, so we say "default" rather than omitting the field and looking blank.
+      provider: providerLabel(cfg.provider),
+      provider_chain: cfg.providers.map(providerLabel),
+      reasoning_effort: cfg.reasoningEffort ?? "default",
     },
     // Presence only — never the value (not even a first4/last4 slice).
     secrets_present: {
@@ -424,6 +432,22 @@ function safeOrigin(url: string): string {
   } catch {
     return "";
   }
+}
+
+/** The friendly provider label a human recognizes on a status surface (0.2.8): the wire
+ * identity, not the raw base_url. A broker credential is a ChatGPT/Codex subscription
+ * sign-in (checked first — it mints OpenAI tokens, so it outranks the api hint); otherwise
+ * derived from the wire api, then the host (OpenRouter by substring, else the bare host). */
+export function providerLabel(p: ProviderConfig): string {
+  if (p.credential instanceof BrokerCredential) return "codex-sign-in";
+  if (p.api === "anthropic") return "anthropic-native";
+  if (p.api === "responses") return "openai-native";
+  let host = "";
+  try {
+    host = new URL(p.baseUrl).host;
+  } catch {}
+  if (host.includes("openrouter")) return "openrouter";
+  return host || "custom";
 }
 
 function positiveInt(raw: string | undefined, fallback: number): number {

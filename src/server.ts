@@ -360,6 +360,7 @@ export function createServer(
           version: c.version,
           ...(c.agent_id ? { agent_id: c.agent_id } : {}),
           profile: c.profile,
+          safe_mode: c.safe_mode ?? false,
           model: c.model,
           ...(c.budget ? { budget: c.budget } : {}),
           mcp_servers: c.mcp_servers ?? [],

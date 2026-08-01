@@ -689,6 +689,7 @@ export async function executeRun(
       ...(!deps.safeMode && deps.contextStable ? { context: deps.contextStable } : {}),
       ...(self.text ? { self: self.text } : {}),
       ...(policyText ? { policy: policyText } : {}),
+      ...(deps.safeMode ? { safeMode: true } : {}),
     });
     // Ephemeral user-role blocks, appended after history and re-built each turn (never
     // persisted): the dynamic per-turn context, the caller's task instructions, and the

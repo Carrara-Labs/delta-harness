@@ -298,6 +298,23 @@ describe("spine", () => {
     // Per-turn instructions are NOT part of the spine anymore.
     expect(buildSpine(base)).not.toContain("This turn's instructions");
   });
+
+  test("0.2.8 safe mode: spine drops the agent name and states the neutral footing", async () => {
+    const { builtinTools } = await import("../src/builtins");
+    const pinned = [
+      ...builtinTools({ workspace: "/t", codeCli: ["c"], selfCmd: ["d"], subagentDepth: 0 }).values(),
+    ];
+    // Normal boot: the configured name rides the intro, no safe-mode note.
+    const normal = buildSpine({ agentId: "Ferni", pinned, searchable: 0 });
+    expect(normal).toContain("You are Delta (Ferni)");
+    expect(normal).not.toContain("SAFE MODE");
+    // Safe mode: the name is dropped (no identity leak) and the agent is told it's neutral.
+    const safe = buildSpine({ agentId: "Ferni", pinned, searchable: 0, safeMode: true });
+    expect(safe).not.toContain("Ferni"); // the persona name must not leak
+    expect(safe).toContain("You are Delta, an operator agent");
+    expect(safe).toContain("SAFE MODE");
+    expect(safe).toContain("do not adopt a persona");
+  });
 });
 
 describe("prompt caching (Anthropic prefix)", () => {
