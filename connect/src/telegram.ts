@@ -407,6 +407,7 @@ export class TelegramLongPoll implements IngressDriver {
   private async registerCommands(): Promise<void> {
     const commands = [
       { command: "new", description: "start a fresh thread" },
+      { command: "cancel", description: "stop what I'm currently working on" },
       { command: "model", description: "which model and effort I'm running" },
       { command: "provider", description: "which provider and my failover chain" },
       { command: "status", description: "version, profile, provider, model, budget" },

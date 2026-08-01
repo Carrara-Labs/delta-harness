@@ -42,6 +42,7 @@ const HELP = [
   "I'm your Delta agent. Just talk to me normally - ask a question, hand me a task, or think out loud. A few built-in commands:",
   "",
   "/new - start a fresh thread (clears our previous context)",
+  "/cancel - stop what I'm currently working on",
   "/model - which model and effort I'm running",
   "/provider - which provider I'm on and my failover chain",
   "/status - my version, profile, provider, model, budget, and MCP servers",
@@ -178,6 +179,23 @@ export function extractDocumentMarker(text: string): { text: string; path?: stri
   return { text: text.slice(0, match.index).trimEnd(), path: match[1] as string };
 }
 
+/** A locally-handled command spends no agent turn and creates no task, so it is dispatched even
+ *  while its conversation has a turn in-flight. Anything else is an agent turn (serialized). */
+function isIntercept(text: string): boolean {
+  const t = text.trim();
+  return (
+    t === "/model" ||
+    t === "/status" ||
+    t === "/provider" ||
+    t === "/new" ||
+    t === "/id" ||
+    t === "/help" ||
+    t === "/start" ||
+    t === "/cancel" ||
+    operatorCommand(t) !== null // /restart /safemode /revert /revert_<id>
+  );
+}
+
 function operatorCommand(text: string): { name: string; args: string[] } | null {
   const parts = text.split(/\s+/);
   const first = parts[0] ?? "";
@@ -296,14 +314,38 @@ export class Connector {
     await this.flushOutbox();
   }
 
-  /** Process at most one inbox event. Returns false when the inbox is empty. */
+  /** The next message to process: a local command flows even while its conversation has a task
+   *  in-flight (so /status, /cancel, /restart are never blocked behind a long turn), but a new
+   *  agent turn waits behind that conversation's active task (per-conversation serialization). */
+  private nextDispatchable(): InboxRow | null {
+    for (const row of this.store.pendingBatch(32)) {
+      if (isIntercept(row.text) || !this.store.conversationHasActiveTask(row.conversation_id))
+        return row;
+    }
+    return null;
+  }
+
+  /** Process at most one inbox event. Returns false when nothing is dispatchable. */
   async runOnce(): Promise<boolean> {
-    const row = this.store.nextPending();
+    const row = this.nextDispatchable();
     if (!row) {
       await this.flushOutbox();
       return false;
     }
     const text = row.text.trim();
+
+    // Stop a running turn on this conversation (0.3.2). A local command, so it flows even while the
+    // turn is in-flight; the daemon task flips to cancelled and pollTasks finalizes it as "Stopped."
+    if (text === "/cancel") {
+      const task = this.store.activeTaskForConversation(row.conversation_id);
+      if (task) {
+        await this.agent.cancelTask?.(task.task_id, task.user_id);
+        await this.localReply(row, "Stopping that now.");
+      } else {
+        await this.localReply(row, "Nothing running to stop.");
+      }
+      return true;
+    }
 
     // Async command intercepts: a single status read, still no agent turn spent.
     if (text === "/model" || text === "/status" || text === "/provider") {

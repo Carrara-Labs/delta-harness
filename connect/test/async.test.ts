@@ -206,6 +206,47 @@ describe("0.3.2 async dispatch", () => {
     expect(store.activeTasks()).toHaveLength(0);
   });
 
+  test("a local command flows even while the conversation has a task in-flight (codex P1)", async () => {
+    const store = new Store(":memory:");
+    const codec = new RecordingCodec();
+    const agent = scriptedAgent({ terminal: () => ({ status: "running" }) }); // never finishes
+    // give it a status read so /status has something to render
+    (agent as unknown as { status: () => Promise<Record<string, unknown>> }).status = async () => ({
+      version: "0.3.2",
+      model: { model: "m", provider: "anthropic-native" },
+    });
+    const c = new Connector(store, codec, agent, new NoopSupervisor());
+    store.insertInbox(event("e1", "long task")); // starts a task for tg:100
+    await c.runOnce();
+    expect(store.activeTasks()).toHaveLength(1);
+    // A /status for the SAME (busy) conversation must still be answered, not blocked.
+    store.insertInbox(event("e2", "/status"));
+    await c.runOnce();
+    expect(codec.sent.at(-1)).toContain("anthropic-native");
+    // ...and the task is still running (the command didn't disturb it).
+    expect(store.activeTasks()).toHaveLength(1);
+  });
+
+  test("/cancel stops an in-flight task; pollTasks then finalizes it as Stopped", async () => {
+    const store = new Store(":memory:");
+    const codec = new RecordingCodec();
+    let cancelled = false;
+    const agent = scriptedAgent({
+      terminal: () => (cancelled ? { status: "cancelled" } : { status: "running" }),
+    });
+    const c = new Connector(store, codec, agent, new NoopSupervisor());
+    store.insertInbox(event("e1", "long task"));
+    await c.runOnce(); // task active
+    store.insertInbox(event("e2", "/cancel"));
+    await c.runOnce();
+    expect(agent.cancelled).toHaveLength(1); // DELETE fired
+    expect(codec.sent.at(-1)).toBe("Stopping that now.");
+    cancelled = true;
+    await c.pollTasks();
+    expect(codec.sent.at(-1)).toBe("Stopped.");
+    expect(store.activeTasks()).toHaveLength(0);
+  });
+
   test("a transient poll failure keeps the task active (no false completion)", async () => {
     const store = new Store(":memory:");
     const codec = new RecordingCodec();

@@ -201,20 +201,41 @@ export class Store {
     return r.changes > 0;
   }
 
-  /** The oldest pending message WHOSE CONVERSATION HAS NO ACTIVE TASK (0.3.2). A conversation with
-   *  an in-flight async turn is skipped, not blocked, so one long turn never stalls the global
-   *  inbox — other conversations keep flowing while it runs (codex must-fix: per-conversation
-   *  serialization without head-of-line blocking). Its own next message just waits, in order. */
+  /** The oldest pending message overall (rowid tiebreak = arrival order). The connector applies
+   *  eligibility: a local command flows even for a busy conversation, but a new AGENT TURN waits
+   *  behind that conversation's active task (see Connector.nextDispatchable). */
   nextPending(): InboxRow | null {
     return (
       (this.db
-        // rowid tiebreak: two updates in the same ms still drain in arrival order.
         .query(
-          `SELECT * FROM inbox WHERE status = 'pending'
-             AND conversation_id NOT IN (SELECT conversation_id FROM tasks WHERE status = 'active')
-           ORDER BY received_at ASC, rowid ASC LIMIT 1`,
+          `SELECT * FROM inbox WHERE status = 'pending' ORDER BY received_at ASC, rowid ASC LIMIT 1`,
         )
         .get() as InboxRow) ?? null
+    );
+  }
+
+  /** The oldest `limit` pending messages — the connector scans these for the first dispatchable one
+   *  (a command, or an agent turn for a conversation with no active task). */
+  pendingBatch(limit: number): InboxRow[] {
+    return this.db
+      .query(
+        `SELECT * FROM inbox WHERE status = 'pending' ORDER BY received_at ASC, rowid ASC LIMIT ?`,
+      )
+      .all(limit) as InboxRow[];
+  }
+
+  conversationHasActiveTask(conversationId: string): boolean {
+    return !!this.db
+      .query(`SELECT 1 FROM tasks WHERE conversation_id = ? AND status = 'active' LIMIT 1`)
+      .get(conversationId);
+  }
+
+  /** The active task for a conversation (for /cancel), if any. */
+  activeTaskForConversation(conversationId: string): TaskRow | null {
+    return (
+      (this.db
+        .query(`SELECT * FROM tasks WHERE conversation_id = ? AND status = 'active' LIMIT 1`)
+        .get(conversationId) as TaskRow) ?? null
     );
   }
 
