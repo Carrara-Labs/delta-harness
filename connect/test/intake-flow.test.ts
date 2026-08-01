@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isIntercept } from "../src/commands";
 import { extractSecretRequest } from "../src/core";
 import { Store } from "../src/store";
 
@@ -75,5 +76,24 @@ describe("intake session binding", () => {
     expect(row?.conversation_id).toBe("conv-9");
     expect(row?.state).toBe("pending");
     rmSync(path, { force: true });
+  });
+});
+
+describe("the /secret and /secrets commands", () => {
+  test("both are classified as local commands at ingest", () => {
+    // If the grammar misses them they are sent to the MODEL and queue behind an active turn,
+    // which for a credential request is both slow and wrong (codex C-21).
+    for (const t of [
+      "/secrets",
+      "/secret",
+      "/secret EXA_API_KEY",
+      "/secret EXA_API_KEY for search",
+    ])
+      expect(isIntercept(t)).toBe(true);
+  });
+
+  test("a lookalike is NOT intercepted (it is ordinary conversation)", () => {
+    for (const t of ["/secretstuff", "tell me a /secret", "/secreta"])
+      expect(isIntercept(t)).toBe(false);
   });
 });

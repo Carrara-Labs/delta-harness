@@ -431,7 +431,7 @@ export class TelegramLongPoll implements IngressDriver {
   }
 
   /** Register the "/" command menu once at startup (Telegram setMyCommands, 0.3.1). We keep the
-   *  full list short (9 commands), so a single default-scope registration is enough — the default
+   *  full list short (12 commands), so a single default-scope registration is enough — the default
    *  scope is Telegram's fallback for DMs and groups alike, so we cover both without fragmenting
    *  into per-scope menus. Best-effort and non-fatal: a network stall must not wedge boot. */
   private async registerCommands(): Promise<void> {
@@ -446,6 +446,8 @@ export class TelegramLongPoll implements IngressDriver {
       { command: "restart", description: "restart the daemon (operator)" },
       { command: "safemode", description: "restart neutral, no persona or memory (operator)" },
       { command: "revert", description: "list or restore a memory revision (operator)" },
+      { command: "secret", description: "hand me a credential securely (operator)" },
+      { command: "secrets", description: "the credentials I hold, by name (operator)" },
     ];
     try {
       await fetch(API(this.token, "setMyCommands"), {

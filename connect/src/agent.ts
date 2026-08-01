@@ -139,6 +139,22 @@ export class DeltaAgent implements AgentClient {
     }
   }
 
+  /** Credential metadata from the vault: names and purposes, never values. Null on failure. */
+  async listSecrets(): Promise<Array<{ name: string; purpose: string }> | null> {
+    if (!this.controlToken) return null;
+    try {
+      const res = await fetch(new URL("/v1/secrets", this.baseUrl), {
+        headers: { authorization: `Bearer ${this.controlToken}` },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) return null;
+      const body = (await res.json()) as { secrets?: Array<{ name: string; purpose: string }> };
+      return Array.isArray(body.secrets) ? body.secrets : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** Vault names + whether the vault is usable at all, from /v1/status. */
   async vaultState(): Promise<{ enabled: boolean; declared: string[]; safeMode: boolean }> {
     const s = await this.status();

@@ -113,6 +113,8 @@ export interface AgentClient {
   /** Whether the vault is usable and which credential names the config wires a destination
    *  for — an intake offer is refused unless the vault is on and the name is declared. */
   vaultState?(): Promise<{ enabled: boolean; declared: string[]; safeMode: boolean }>;
+  /** Credential metadata the agent holds — names and purposes, never values. Null on failure. */
+  listSecrets?(): Promise<Array<{ name: string; purpose: string }> | null>;
   /** Revert the self-file through the separately inspect-authenticated endpoint. */
   revertSelf?(id: number): Promise<OperationResult>;
   /** Self-file revision history (GET /v1/dev/self/revisions, inspect-gated) for the /revert

@@ -16,6 +16,9 @@ export function isIntercept(text: string): boolean {
     t === "/help" ||
     t === "/start" ||
     t === "/cancel" ||
+    t === "/secrets" ||
+    t.startsWith("/secret ") ||
+    t === "/secret" ||
     operatorCommand(t) !== null // /restart /safemode /revert /revert_<id>
   );
 }

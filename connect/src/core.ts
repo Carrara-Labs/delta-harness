@@ -50,6 +50,8 @@ const HELP = [
   "/restart - restart the daemon (operator only)",
   "/safemode - restart neutral, without persona, policy, or learned memory (operator only)",
   "/revert - list and restore a note I wrote to my own memory (operator only)",
+  "/secret NAME - hand me a credential securely, without typing it in chat (operator only)",
+  "/secrets - the credentials I hold, by name (operator only)",
   "/help - this message",
   "/id - your Telegram id",
 ].join("\n");
@@ -419,6 +421,75 @@ export class Connector {
           : formatStatus(st, text === "/model")
         : "I couldn't read my status just now - try again in a moment.";
       await this.localReply(row, reply);
+      return true;
+    }
+
+    // Secure credential commands (0.4.0). Operator-only: the vault is agent-wide, so a second
+    // allowlisted user must not be able to provision or enumerate another's credentials.
+    if (text === "/secrets" || text === "/secret" || text.startsWith("/secret ")) {
+      if (!operatorAuthorized(row.event_id, row.actor_id, this.allowed)) {
+        await this.localReply(row, OPERATOR_DENIED);
+        return true;
+      }
+      if (!this.intake) {
+        await this.localReply(row, "Secure intake isn't configured on this agent.");
+        return true;
+      }
+      if (text === "/secrets") {
+        const held = (await this.agent.listSecrets?.()) ?? null;
+        if (!held) {
+          await this.localReply(row, "I couldn't read the vault just now - try again in a moment.");
+          return true;
+        }
+        const state = await this.agent.vaultState?.();
+        const lines = held.length
+          ? held.map(
+              (s: { name: string; purpose: string }) =>
+                `• ${s.name}${s.purpose ? ` - ${s.purpose}` : ""}`,
+            )
+          : ["(none yet)"];
+        const canAsk =
+          state?.declared.filter((n) => !held.some((h: { name: string }) => h.name === n)) ?? [];
+        await this.localReply(
+          row,
+          [
+            "Credentials I hold (names only - I can never read a value):",
+            ...lines,
+            ...(canAsk.length
+              ? ["", `I can also use: ${canAsk.join(", ")}. Send /secret NAME to provide one.`]
+              : []),
+          ].join("\n"),
+        );
+        return true;
+      }
+      // /secret NAME [purpose…]
+      const parts = text.split(/\s+/).slice(1);
+      const name = parts[0] ?? "";
+      if (!name) {
+        await this.localReply(row, "Usage: /secret NAME - e.g. /secret EXA_API_KEY");
+        return true;
+      }
+      const minted = await this.intake.mint({
+        name,
+        purpose: parts.slice(1).join(" "),
+        chatId: row.chat_id,
+        conversationId: row.conversation_id,
+        telegramUserId: row.actor_id.startsWith("tg:") ? row.actor_id.slice(3) : row.actor_id,
+      });
+      if ("error" in minted) {
+        await this.localReply(row, `I can't take ${name}: ${minted.error}.`);
+        return true;
+      }
+      // Deliver through the durable outbox like any other reply, so an at-least-once resend
+      // reuses the SAME session rather than minting a second one.
+      this.store.commitTurn({
+        eventId: row.event_id,
+        conversationId: row.conversation_id,
+        chatId: row.chat_id,
+        userId: row.actor_id,
+        replyChunks: [`${INTAKE_SENTINEL}${minted.sessionId}\u0000${name}`],
+      });
+      await this.flushOutbox();
       return true;
     }
 

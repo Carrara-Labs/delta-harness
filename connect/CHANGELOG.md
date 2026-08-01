@@ -4,6 +4,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 this package follows [Semantic Versioning](https://semver.org/). It versions
 independently of the Delta harness engine.
 
+## [0.4.1] — 2026-08-01
+
+### Added
+- **`/secret NAME`** — an operator can hand the agent a credential directly, without the agent
+  having to ask for it first. Previously the only route was the agent emitting a
+  `[[secret-request: …]]` marker, which meant provisioning depended on talking the model into
+  requesting something. Optional trailing text becomes the purpose.
+- **`/secrets`** — the credentials the agent holds, by name and purpose, plus the names it can
+  still be given. Never a value.
+
+Both are operator-only (the vault is agent-wide, so a second allowlisted user must not be able
+to provision or enumerate credentials), classified as local commands at ingest so they are not
+queued behind an in-flight turn, and registered in the Telegram "/" menu.
+
 ## [0.4.0] — 2026-08-01
 
 Secure secret intake. A credential can be handed to an agent **in the chat** without the value
