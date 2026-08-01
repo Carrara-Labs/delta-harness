@@ -89,15 +89,37 @@ export function verifyInitData(
   const hash = params.get("hash") ?? "";
   if (!/^[0-9a-f]{64}$/i.test(hash)) return { ok: false, reason: "bad hash" };
 
-  const pairs: string[] = [];
-  for (const [k, v] of params) {
-    if (k === "hash" || k === "signature") continue;
-    pairs.push(`${k}=${v}`);
-  }
-  pairs.sort();
+  // The check string is EVERY received field except `hash`, sorted, LF-joined.
+  //
+  // `signature` (Telegram's newer Ed25519 field) belongs IN it. Only the third-party Ed25519
+  // algorithm removes `signature`; the bot-token HMAC uses "all received fields". Excluding it
+  // here silently broke every real submission from a modern client while unit tests — which
+  // signed the same way they verified — passed happily.
   const secret = createHmac("sha256", "WebAppData").update(botToken).digest();
-  const expected = createHmac("sha256", secret).update(pairs.join("\n")).digest("hex");
-  if (!hexEqual(expected, hash.toLowerCase())) return { ok: false, reason: "bad signature" };
+  const checkString = (drop: (k: string) => boolean) =>
+    [...params]
+      .filter(([k]) => !drop(k))
+      .map(([k, v]) => `${k}=${v}`)
+      .sort()
+      .join("\n");
+  const digestOf = (text: string) => createHmac("sha256", secret).update(text).digest("hex");
+
+  const want = hash.toLowerCase();
+  let matched = hexEqual(digestOf(checkString((k) => k === "hash")), want);
+  // Fallback for any client that signs the Ed25519 way. Not a weakening: an attacker cannot
+  // forge a valid hash for EITHER construction without the bot token. Logged when it fires so
+  // the fallback can be dropped once we know it is never used.
+  if (!matched && params.has("signature")) {
+    matched = hexEqual(digestOf(checkString((k) => k === "hash" || k === "signature")), want);
+    if (matched) console.error("[delta-connect] initData verified via the signature-excluded form");
+  }
+  if (!matched) {
+    // Field NAMES only — never a value. Makes the next failure diagnosable in one tap.
+    console.error(
+      `[delta-connect] initData hash mismatch; fields present: ${[...params.keys()].sort().join(",")}`,
+    );
+    return { ok: false, reason: "bad signature" };
+  }
 
   const authDate = Number(params.get("auth_date"));
   if (!Number.isSafeInteger(authDate) || authDate <= 0)

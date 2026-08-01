@@ -108,11 +108,37 @@ describe("initData verification", () => {
     if (res.ok) expect(res.userId).toBe(big);
   });
 
-  test("the signature field is excluded from the check string", () => {
-    // Telegram's newer Ed25519 `signature` must not break bot-token HMAC validation.
-    const fields = freshFields();
-    const signed = `${signInitData(fields)}&signature=abc123`;
-    expect(verifyInitData(signed, BOT_TOKEN).ok).toBe(true);
+  test("a modern blob carrying `signature` verifies — it is PART of the check string", () => {
+    // This is the case that broke live. Telegram signs the bot-token HMAC over ALL received
+    // fields except `hash`, so `signature` is included. Only the third-party Ed25519 algorithm
+    // removes it. Signing here the way Telegram actually does is the whole point of the test:
+    // a fixture that signs the way the implementation verifies proves nothing.
+    const fields = { ...freshFields(), signature: "Ed25519_signature_from_telegram" };
+    const signed = signInitData(fields); // signs over every field incl. signature
+    const res = verifyInitData(signed, BOT_TOKEN);
+    expect(res.ok).toBe(true);
+  });
+
+  test("a blob whose hash covers everything EXCEPT signature is still accepted", () => {
+    // Compatibility fallback for a client that signs the Ed25519 way. Both forms are HMACs
+    // under the bot token, so neither is forgeable without it.
+    const fields = { ...freshFields(), signature: "some_signature_value" };
+    const { signature: _drop, ...signedFields } = fields;
+    const pairs = Object.entries(signedFields)
+      .map(([k, v]) => `${k}=${v}`)
+      .sort();
+    const secret = createHmac("sha256", "WebAppData").update(BOT_TOKEN).digest();
+    const hash = createHmac("sha256", secret).update(pairs.join("\n")).digest("hex");
+    const params = new URLSearchParams(fields);
+    params.set("hash", hash);
+    expect(verifyInitData(params.toString(), BOT_TOKEN).ok).toBe(true);
+  });
+
+  test("a signature-bearing blob with a WRONG hash is still refused", () => {
+    const fields = { ...freshFields(), signature: "sig" };
+    const params = new URLSearchParams(fields);
+    params.set("hash", "0".repeat(64));
+    expect(verifyInitData(params.toString(), BOT_TOKEN).ok).toBe(false);
   });
 
   test("the same blob always yields the same digest (so it can be consumed once)", () => {

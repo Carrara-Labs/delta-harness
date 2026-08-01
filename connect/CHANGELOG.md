@@ -4,6 +4,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 this package follows [Semantic Versioning](https://semver.org/). It versions
 independently of the Delta harness engine.
 
+## [0.4.2] — 2026-08-01
+
+### Fixed
+- **Secure intake rejected every real submission.** The bot-token HMAC check string is built
+  from *all* received fields except `hash`; only Telegram's third-party Ed25519 algorithm also
+  removes `signature`. We removed `signature` from both, so any modern client — which sends it —
+  failed with "this link is no longer valid" after the user had already pasted their credential.
+  Unit tests missed it because the fixture signed the same way the verifier verified; the tests
+  now sign the way Telegram actually does. A client that signs the Ed25519 way is still accepted
+  (both forms are HMACs under the bot token, so neither is forgeable without it), and a hash
+  mismatch now logs the field names present so the next failure is diagnosable in one tap.
+
 ## [0.4.1] — 2026-08-01
 
 ### Added
