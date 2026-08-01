@@ -68,7 +68,7 @@ const intakeServer = intakeOn
       allowedUsers: allowed,
       writeVault: (name, value, purpose) => agent.storeSecret(name, value, purpose),
       log,
-      onStored: ({ name, chatId, conversationId }) => {
+      onStored: ({ name, chatId, conversationId, telegramUserId }) => {
         // Confirm by NAME only. Lead with the outcome — the person just handed over a
         // credential and wants to know it landed, not to read a caveat first.
         void codec.send(
@@ -80,7 +80,9 @@ const intakeServer = intakeOn
         // thread makes the model avoid that tool for the rest of the conversation.
         store.enqueueNote({
           conversationId,
-          actorId: `tg:${[...allowed][0] ?? ""}`,
+          // The person who actually submitted — not "whoever is first in the allowlist", which
+          // would attribute the turn to the wrong user on a multi-user deployment.
+          actorId: `tg:${telegramUserId}`,
           chatId,
           key: `${name}:${Date.now()}`,
           text: `[${name} is now available in your vault and usable immediately - no restart needed. If a task was blocked on it, retry that step now and continue. Otherwise reply in one short line that it is ready.]`,

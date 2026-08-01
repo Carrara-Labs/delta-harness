@@ -264,7 +264,12 @@ export type IntakeOptions = {
   writeVault: VaultWriter;
   log: (message: string) => void;
   /** Told when a secret lands, so the connector can confirm in chat and nudge the agent. */
-  onStored?: (session: { name: string; chatId: string; conversationId: string }) => void;
+  onStored?: (session: {
+    name: string;
+    chatId: string;
+    conversationId: string;
+    telegramUserId: string;
+  }) => void;
 };
 
 /** A short, non-reversible tag for logs — the raw session id is a live capability. */
@@ -404,6 +409,7 @@ export class IntakeServer {
           name: session.name,
           chatId: session.chat_id,
           conversationId: session.conversation_id,
+          telegramUserId: session.telegram_user_id,
         });
         return json({ ok: true });
       },
