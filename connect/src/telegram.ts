@@ -369,6 +369,7 @@ export class TelegramLongPoll implements IngressDriver {
   ) {}
 
   async start(): Promise<void> {
+    await this.registerCommands();
     let offset = Number(this.store.getMeta("tg_offset") ?? 0);
     if (!Number.isFinite(offset)) offset = 0;
     while (!this.aborted) {
@@ -396,6 +397,34 @@ export class TelegramLongPoll implements IngressDriver {
       } catch {
         await Bun.sleep(1000);
       }
+    }
+  }
+
+  /** Register the "/" command menu once at startup (Telegram setMyCommands, 0.3.1). We keep the
+   *  full list short (9 commands), so a single default-scope registration is enough — the default
+   *  scope is Telegram's fallback for DMs and groups alike, so we cover both without fragmenting
+   *  into per-scope menus. Best-effort and non-fatal: a network stall must not wedge boot. */
+  private async registerCommands(): Promise<void> {
+    const commands = [
+      { command: "new", description: "start a fresh thread" },
+      { command: "model", description: "which model and effort I'm running" },
+      { command: "provider", description: "which provider and my failover chain" },
+      { command: "status", description: "version, profile, provider, model, budget" },
+      { command: "help", description: "list the commands" },
+      { command: "id", description: "your Telegram id" },
+      { command: "restart", description: "restart the daemon (operator)" },
+      { command: "safemode", description: "restart neutral, no persona or memory (operator)" },
+      { command: "revert", description: "list or restore a memory revision (operator)" },
+    ];
+    try {
+      await fetch(API(this.token, "setMyCommands"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ commands }),
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch {
+      // Non-fatal: the menu is a convenience; every command still works when typed.
     }
   }
 

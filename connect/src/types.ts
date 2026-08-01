@@ -84,4 +84,10 @@ export interface AgentClient {
   status?(): Promise<Record<string, unknown> | null>;
   /** Revert the self-file through the separately inspect-authenticated endpoint. */
   revertSelf?(id: number): Promise<OperationResult>;
+  /** Self-file revision history (GET /v1/dev/self/revisions, inspect-gated) for the /revert
+   *  picker: the live file plus prior snapshots, newest first. Null on any failure. */
+  revisions?(): Promise<{
+    current: string;
+    revisions: { id: number; ts: number; content: string }[];
+  } | null>;
 }

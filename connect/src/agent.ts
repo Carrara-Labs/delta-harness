@@ -115,4 +115,36 @@ export class DeltaAgent implements AgentClient {
       return { ok: false, error: String(error).slice(0, 300) };
     }
   }
+
+  /** Inspect-authenticated self-file revision history for the /revert picker (0.3.1).
+   *  Reuses the existing GET /v1/dev/self/revisions endpoint; null on any failure. */
+  async revisions(): Promise<{
+    current: string;
+    revisions: { id: number; ts: number; content: string }[];
+  } | null> {
+    if (!this.inspectToken) return null;
+    try {
+      const res = await fetch(new URL("/v1/dev/self/revisions", this.baseUrl), {
+        headers: { authorization: `Bearer ${this.inspectToken}` },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { current?: unknown; revisions?: unknown };
+      const current = typeof data.current === "string" ? data.current : "";
+      const revisions = Array.isArray(data.revisions)
+        ? data.revisions.flatMap((r) => {
+            if (typeof r !== "object" || r === null) return [];
+            const o = r as Record<string, unknown>;
+            return typeof o.id === "number" &&
+              typeof o.ts === "number" &&
+              typeof o.content === "string"
+              ? [{ id: o.id, ts: o.ts, content: o.content }]
+              : [];
+          })
+        : [];
+      return { current, revisions };
+    } catch {
+      return null;
+    }
+  }
 }

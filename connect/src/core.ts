@@ -39,59 +39,98 @@ export function chunkText(text: string, max = 4000): string[] {
 }
 
 const HELP = [
-  "I'm your Delta agent. Just talk to me normally - ask a question, hand me a task,",
-  "or think out loud. A few built-in commands:",
+  "I'm your Delta agent. Just talk to me normally - ask a question, hand me a task, or think out loud. A few built-in commands:",
   "",
   "/new - start a fresh thread (clears our previous context)",
   "/model - which model and effort I'm running",
-  "/status - my version, profile, model, budget, and MCP servers",
+  "/provider - which provider I'm on and my failover chain",
+  "/status - my version, profile, provider, model, budget, and MCP servers",
   "/restart - restart the daemon (operator only)",
-  "/safemode - restart with optional features disabled (operator only)",
-  "/revert <id> - restore a self-file revision (operator only)",
+  "/safemode - restart neutral, without persona, policy, or learned memory (operator only)",
+  "/revert - list and restore a note I wrote to my own memory (operator only)",
   "/help - this message",
   "/id - your Telegram id",
 ].join("\n");
 
-/** Format the daemon's secret-free /v1/status into a short chat reply. */
-function formatStatus(st: Record<string, unknown>, modelOnly: boolean): string {
+/** Compact a raw token ceiling into a human figure: 3000000 → "3M", 120000 → "120k". */
+function humanTokens(n: number): string {
+  if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(n % 1_000_000 ? 1 : 0)}M`;
+  if (n >= 1_000) return `${+(n / 1_000).toFixed(n % 1_000 ? 1 : 0)}k`;
+  return String(n);
+}
+
+/** The `model` sub-object of /v1/status, read defensively (0.2.8 adds provider/provider_chain). */
+function modelView(st: Record<string, unknown>): {
+  model: string | null;
+  effort: string | null;
+  provider: string | null;
+  chain: string[];
+} {
   const m =
     typeof st.model === "object" && st.model !== null && !Array.isArray(st.model)
       ? (st.model as Record<string, unknown>)
       : {};
-  const model = typeof m.model === "string" && m.model ? m.model : null;
-  const effort =
-    typeof m.reasoning_effort === "string" && m.reasoning_effort ? m.reasoning_effort : null;
-  const cascade = Array.isArray(m.models)
-    ? m.models.filter((value): value is string => typeof value === "string" && Boolean(value))
-    : [];
+  const str = (v: unknown) => (typeof v === "string" && v ? v : null);
+  return {
+    model: str(m.model),
+    effort: str(m.reasoning_effort),
+    provider: str(m.provider),
+    chain: Array.isArray(m.provider_chain)
+      ? m.provider_chain.filter((v): v is string => typeof v === "string" && Boolean(v))
+      : [],
+  };
+}
+
+/** Which provider I'm on and my failover chain (the /provider command, 0.2.8). */
+function formatProvider(st: Record<string, unknown>): string {
+  const { provider, chain } = modelView(st);
+  if (!provider) return "I couldn't read my provider just now - try again in a moment.";
+  const lines = [`Provider: ${provider}`];
+  if (chain.length > 1) lines.push(`Failover: ${chain.join(" → ")}`);
+  else lines.push("Failover: none configured");
+  return lines.join("\n");
+}
+
+/** Format the daemon's secret-free /v1/status into a short, plain-English chat reply. */
+function formatStatus(st: Record<string, unknown>, modelOnly: boolean): string {
+  const { model, effort, provider, chain } = modelView(st);
+  // Effort always resolves (0.2.8): "default" means the provider's own, never blank.
+  const effortLabel = effort ?? "default";
   if (modelOnly) {
-    const lines = [`Model: ${model ?? "unknown"}`];
-    if (effort) lines.push(`Effort: ${effort}`);
-    if (cascade.length > 1) lines.push(`Failover: ${cascade.join(" → ")}`);
+    const lines: string[] = [];
+    if (provider) lines.push(`Provider: ${provider}`);
+    lines.push(`Model: ${model ?? "unknown"}`);
+    lines.push(`Effort: ${effortLabel}`);
+    if (chain.length > 1) lines.push(`Failover: ${chain.join(" → ")}`);
     return lines.join("\n");
   }
   const lines: string[] = [];
   if (typeof st.version === "string" || typeof st.version === "number")
     lines.push(`Version: ${st.version}`);
   if (typeof st.profile === "string" && st.profile) lines.push(`Profile: ${st.profile}`);
-  if (model) lines.push(`Model: ${model}${effort ? ` (effort ${effort})` : ""}`);
+  // Safe mode is observable from chat (0.2.8) - no need to read the boot log.
+  if (st.safe_mode === true)
+    lines.push("Safe mode: ON — persona, policy and learned memory are not loaded this run");
+  // Provider ABOVE the model, both in human terms.
+  if (provider)
+    lines.push(
+      `Provider: ${provider}${chain.length > 1 ? ` (failover: ${chain.join(" → ")})` : ""}`,
+    );
+  if (model) lines.push(`Model: ${model} · effort ${effortLabel}`);
   const budget =
     typeof st.budget === "object" && st.budget !== null && !Array.isArray(st.budget)
       ? (st.budget as Record<string, unknown>)
       : null;
   if (budget) {
-    const fields = [
-      ["steps", budget.maxSteps],
-      ["tokens", budget.maxTokens],
-      ["cost USD", budget.maxCostUsd],
-    ]
-      .filter(
-        (entry) =>
-          typeof entry[1] === "string" ||
-          (typeof entry[1] === "number" && Number.isFinite(entry[1])),
-      )
-      .map(([label, value]) => `${label}: ${String(value)}`);
-    if (fields.length) lines.push(`Budget/run: ${fields.join(" · ")}`);
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    const steps = num(budget.maxSteps);
+    const tokens = num(budget.maxTokens);
+    const cost = num(budget.maxCostUsd);
+    const parts: string[] = [];
+    if (steps !== null) parts.push(`${steps} steps`);
+    if (tokens !== null) parts.push(`${humanTokens(tokens)} tokens`);
+    if (cost !== null) parts.push(`$${cost} max`);
+    if (parts.length) lines.push(`Budget per task: ${parts.join(" · ")}`);
   }
   if (Array.isArray(st.mcp_servers)) {
     const servers = st.mcp_servers.flatMap((value) => {
@@ -141,10 +180,67 @@ export function extractDocumentMarker(text: string): { text: string; path?: stri
 
 function operatorCommand(text: string): { name: string; args: string[] } | null {
   const parts = text.split(/\s+/);
-  const name = parts[0] ?? "";
-  return name === "/restart" || name === "/safemode" || name === "/revert"
-    ? { name, args: parts.slice(1) }
+  const first = parts[0] ?? "";
+  // Telegram renders /revert_12 as a tappable command link; treat it as "/revert 12"
+  // (hyphens are invalid in a bot command, so the picker uses underscores).
+  const tap = first.match(/^\/revert_(\d+)$/);
+  if (tap) return { name: "/revert", args: [tap[1] as string] };
+  return first === "/restart" || first === "/safemode" || first === "/revert"
+    ? { name: first, args: parts.slice(1) }
     : null;
+}
+
+/** A relative "2h ago" from a Date.now()-ms timestamp. */
+function ago(ts: number, now: number): string {
+  const s = Math.max(0, Math.floor((now - ts) / 1000));
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+/** The change a revision captures. Each self_revisions row is the PRIOR self-file (snapshotted
+ *  after a `remember` write), so its change = diff(row → the state that replaced it): the newest
+ *  row against the live file, an older row against the next-newer row. A set-based line diff is
+ *  leaner than positional LCS and honest for the append-style notes a self-file accumulates. */
+function lineDelta(
+  row: string,
+  nextNewer: string,
+): { added: number; removed: number; preview: string } {
+  const rowLines = row.split("\n");
+  const newLines = nextNewer.split("\n");
+  const rowSet = new Set(rowLines);
+  const newSet = new Set(newLines);
+  const addedLines = newLines.filter((l) => l.trim() && !rowSet.has(l));
+  const removed = rowLines.filter((l) => l.trim() && !newSet.has(l)).length;
+  const firstAdded = addedLines[0]?.trim();
+  const preview = firstAdded
+    ? firstAdded.slice(0, 60)
+    : removed
+      ? "(removed notes)"
+      : "(no textual change)";
+  return { added: addedLines.length, removed, preview };
+}
+
+/** Render the self-file revision history as a tappable picker (bare /revert, 0.3.1). */
+function formatRevisions(
+  data: { current: string; revisions: { id: number; ts: number; content: string }[] },
+  now: number,
+): string {
+  const revs = data.revisions;
+  if (!revs.length) return "No revisions yet - I haven't rewritten my own memory.";
+  const rows = revs.slice(0, 12).map((r, i) => {
+    const nextNewer = i === 0 ? data.current : (revs[i - 1] as { content: string }).content;
+    const { added, removed, preview } = lineDelta(r.content, nextNewer);
+    return `/revert_${r.id} · ${ago(r.ts, now)} · +${added}/-${removed} · "${preview}"`;
+  });
+  return [
+    "Revisions of my self-written memory, newest first. Tap one to restore it:",
+    "",
+    ...rows,
+  ].join("\n");
 }
 
 export class Connector {
@@ -190,7 +286,7 @@ export class Connector {
     const text = row.text.trim();
 
     // Async command intercepts: a single status read, still no agent turn spent.
-    if (text === "/model" || text === "/status") {
+    if (text === "/model" || text === "/status" || text === "/provider") {
       try {
         await this.sup.ensureAwake();
       } catch {
@@ -203,7 +299,9 @@ export class Connector {
         // Third-party AgentClient implementations still degrade like DeltaAgent.
       }
       const reply = st
-        ? formatStatus(st, text === "/model")
+        ? text === "/provider"
+          ? formatProvider(st)
+          : formatStatus(st, text === "/model")
         : "I couldn't read my status just now - try again in a moment.";
       await this.localReply(row, reply);
       return true;
@@ -220,10 +318,35 @@ export class Connector {
         return true;
       }
       if (operator.name === "/revert") {
+        // Bare /revert lists the revisions as tappable rows; /revert <id> (or the tappable
+        // /revert_<id>) restores one. Listing is a read, gated the same as the revert itself.
+        if (operator.args.length === 0) {
+          try {
+            await this.sup.ensureAwake();
+          } catch {
+            // The revisions read below returns the useful bounded error.
+          }
+          let data: {
+            current: string;
+            revisions: { id: number; ts: number; content: string }[];
+          } | null = null;
+          try {
+            data = this.agent.revisions ? await this.agent.revisions() : null;
+          } catch {
+            // A revision read never fails a turn.
+          }
+          await this.localReply(
+            row,
+            data
+              ? formatRevisions(data, Date.now())
+              : "I couldn't read my revision history just now - try again in a moment.",
+          );
+          return true;
+        }
         const raw = operator.args.length === 1 ? operator.args[0] : undefined;
         const id = raw && /^[1-9]\d*$/.test(raw) ? Number(raw) : 0;
         if (!Number.isSafeInteger(id) || id < 1) {
-          await this.localReply(row, "Usage: /revert <positive revision id>");
+          await this.localReply(row, "Usage: /revert (lists revisions) or /revert <id>");
           return true;
         }
         try {

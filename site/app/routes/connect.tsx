@@ -175,9 +175,9 @@ export default function Connect() {
                     "/help lists what it can do; /id returns your Telegram id for the allowlist. Both answer instantly, without spending an agent turn.",
                   ],
                   [
-                    "/model · /status · new",
+                    "/model · /status · /provider",
                     "See what it's running",
-                    "/model shows the model and reasoning effort; /status shows its tier and budget. Read straight from the engine, never a secret.",
+                    "/model shows the provider, model, and effort; /status adds tier, budget in plain terms, and whether it's in safe mode; /provider names the failover chain. Read straight from the engine, never a secret.",
                   ],
                   [
                     "schedule · new",
@@ -195,9 +195,9 @@ export default function Connect() {
                     "The agent can write a report or export and send it to you as a real file, not just pasted text.",
                   ],
                   [
-                    "/restart · /safemode · new",
+                    "/restart · /safemode · /revert",
                     "Recover it, in chat",
-                    "Operator-only commands to bounce the agent or boot it clean if it ever gets stuck - no SSH, no wedged state.",
+                    "Operator-only commands to bounce the agent, boot it clean if it gets stuck, or roll back a note it wrote to its own memory - tap /revert to pick a revision. No SSH, no wedged state.",
                   ],
                 ] as const
               ).map(([tag, h, p]) => (

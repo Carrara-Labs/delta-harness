@@ -4,6 +4,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 this package follows [Semantic Versioning](https://semver.org/). It versions
 independently of the Delta harness engine.
 
+## [0.3.1] — 2026-08-01
+
+A legible, tappable command surface. Needs Harness 0.2.8 for the provider label, resolved effort,
+and safe-mode fields; older daemons degrade gracefully (the new lines are simply omitted).
+
+### Added
+
+- **`/provider`.** Names the active provider and the failover chain.
+- **`/` command menu.** A single `setMyCommands` registration at startup lists the nine commands
+  in Telegram's "/" autocomplete. One default-scope call covers DMs and groups; best-effort and
+  non-fatal, so a network stall never wedges boot.
+- **`/revert` picker.** Bare `/revert` lists the self-file revisions newest-first, each with a
+  relative time, a `+added/-removed` line delta, and the first changed line as the topic, rendered
+  as a tappable `/revert_<id>`. `/revert <id>` still works.
+
+### Changed
+
+- **`/status` is plain English.** The provider is named above the model (`anthropic-native`,
+  `openai-native`, `openrouter`, `codex-sign-in`), the budget reads `Budget per task: 100 steps ·
+  3M tokens · $15 max`, and safe mode shows as a line when it is on.
+- **`/model` always shows the effort**, resolving to `default` when the daemon leaves it unset.
+- **`/help`** wording is tightened; the `/revert` line now says it restores a note the agent wrote
+  to its own memory.
+
+## [0.3.0] — 2026-07-31
+
+Reach, operability, and safe-ops. Validated live on Ferni (Telegram). Needs Harness 0.2.7.
+
+### Added
+
+- **Formatted replies.** A small Markdown-to-Telegram-HTML converter renders the agent's Markdown
+  and splits safely at Telegram's 4096-character limit, with a plain-text retry on a parse error.
+- **Document send.** A trailing `[[send: path]]` marker on a reply uploads that workspace file via
+  `sendDocument`, confined by realpath to the shared workspace.
+- **Scheduler bridge.** A loopback, constant-time-token control server lights up the engine's
+  `schedule_self` tool: a ticker admits due once and interval schedules (cron is rejected).
+- **Operator commands.** `/restart`, `/safemode`, and `/revert <id>` over an actor-id-gated
+  allowlist, plus `/model` and `/status` reads. `/safemode` auto-falls-back on a boot failure or
+  crash loop, so a wedged agent recovers instead of staying down.
+
 ## [0.2.0] — 2026-07-28
 
 Two channel affordances, validated live on Ferni (Telegram).

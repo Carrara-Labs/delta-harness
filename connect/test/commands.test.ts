@@ -178,3 +178,146 @@ describe("local status and document replies", () => {
     expect(codec.documents).toEqual(["reports/a.pdf"]);
   });
 });
+
+describe("0.3.1 command surface (against 0.2.8 status)", () => {
+  const status08 = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    version: "0.2.8",
+    profile: "trusted",
+    safe_mode: false,
+    model: {
+      model: "claude-opus-5",
+      provider: "anthropic-native",
+      provider_chain: ["anthropic-native", "openrouter"],
+      reasoning_effort: "low",
+    },
+    budget: { maxSteps: 100, maxTokens: 3_000_000, maxCostUsd: 15 },
+    mcp_servers: [],
+    ...over,
+  });
+
+  function rig(agent: Partial<AgentClient>) {
+    const store = new Store(":memory:");
+    const codec = new RecordingCodec();
+    const base: AgentClient = {
+      async run() {
+        return { responseId: "r", outputText: "answer" };
+      },
+    };
+    const connector = new Connector(
+      store,
+      codec,
+      { ...base, ...agent },
+      new RecordingSupervisor(),
+      () => {},
+      new Set(["7"]), // actor tg:7 is the operator
+    );
+    return { store, codec, connector };
+  }
+
+  test("/status is plain English: provider above model, humanized budget, safe mode line hidden when off", async () => {
+    const { store, codec, connector } = rig({
+      async status() {
+        return status08();
+      },
+    });
+    store.insertInbox(event("tg:1", "/status"));
+    await drain(connector);
+    const reply = codec.sent.at(-1) ?? "";
+    // Provider line comes before the model line, both human-readable.
+    expect(reply.indexOf("Provider: anthropic-native")).toBeGreaterThanOrEqual(0);
+    expect(reply.indexOf("Provider:")).toBeLessThan(reply.indexOf("Model:"));
+    expect(reply).toContain("failover: anthropic-native → openrouter");
+    expect(reply).toContain("Budget per task: 100 steps · 3M tokens · $15 max");
+    expect(reply).not.toContain("Safe mode"); // off → no noise
+  });
+
+  test("/status shows Safe mode ON when the daemon reports it", async () => {
+    const { store, codec, connector } = rig({
+      async status() {
+        return status08({ safe_mode: true, profile: "safe" });
+      },
+    });
+    store.insertInbox(event("tg:1", "/status"));
+    await drain(connector);
+    expect(codec.sent.at(-1)).toContain("Safe mode: ON");
+  });
+
+  test("/model always resolves effort — 'default' when the daemon leaves it unset", async () => {
+    const { store, codec, connector } = rig({
+      async status() {
+        const s = status08();
+        (s.model as Record<string, unknown>).reasoning_effort = undefined;
+        return s;
+      },
+    });
+    store.insertInbox(event("tg:1", "/model"));
+    await drain(connector);
+    const reply = codec.sent.at(-1) ?? "";
+    expect(reply).toContain("Provider: anthropic-native");
+    expect(reply).toContain("Effort: default");
+  });
+
+  test("/provider names the provider and failover chain", async () => {
+    const { store, codec, connector } = rig({
+      async status() {
+        return status08();
+      },
+    });
+    store.insertInbox(event("tg:1", "/provider"));
+    await drain(connector);
+    const reply = codec.sent.at(-1) ?? "";
+    expect(reply).toContain("Provider: anthropic-native");
+    expect(reply).toContain("Failover: anthropic-native → openrouter");
+  });
+
+  test("bare /revert lists revisions as tappable rows with a set-diff of each change", async () => {
+    const now = Date.now();
+    const { store, codec, connector } = rig({
+      async revisions() {
+        return {
+          current: "# You\nline A\nline B\nline C\n",
+          revisions: [
+            { id: 12, ts: now - 2 * 3600_000, content: "# You\nline A\nline B\n" }, // C added since
+            { id: 11, ts: now - 5 * 3600_000, content: "# You\nline A\n" }, // B added since
+          ],
+        };
+      },
+    });
+    store.insertInbox(event("tg:1", "/revert"));
+    await drain(connector);
+    const reply = codec.sent.at(-1) ?? "";
+    expect(reply).toContain("/revert_12"); // tappable, underscore
+    expect(reply).toContain("/revert_11");
+    expect(reply).toContain("2h ago");
+    expect(reply).toContain('"line C"'); // first added line = the topic for revision 12
+    expect(reply).toContain("+1/-0");
+  });
+
+  test("/revert_12 (tappable) restores revision 12 via the inspect endpoint", async () => {
+    const reverted: number[] = [];
+    const { store, codec, connector } = rig({
+      async revertSelf(id: number) {
+        reverted.push(id);
+        return { ok: true, note: "reverted" };
+      },
+    });
+    store.insertInbox(event("tg:1", "/revert_12"));
+    await drain(connector);
+    expect(reverted).toEqual([12]);
+    expect(codec.sent.at(-1)).toContain("reverted");
+  });
+
+  test("operator commands stay gated: a non-operator cannot list revisions", async () => {
+    let listed = 0;
+    const { store, codec, connector } = rig({
+      async revisions() {
+        listed++;
+        return { current: "", revisions: [] };
+      },
+    });
+    store.insertInbox(event("tg:1", "/revert", "tg:999")); // not the operator
+    await drain(connector);
+    expect(listed).toBe(0);
+    expect(codec.sent.at(-1)).toContain("not authorized");
+  });
+});
