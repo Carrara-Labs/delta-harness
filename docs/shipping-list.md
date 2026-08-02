@@ -32,8 +32,11 @@ data before shipping any of it.
   at the source.
 - **Harness — subagent reliability.** `spawn_subagent` returned "(no output)" on a big extraction
   task, which pushed Ferni onto the costly direct-`web_fetch` path.
-- **Ferni upgrade to 0.2.10 + 0.4.0.** Prepared, not applied: `connect/deploy/UPGRADE-0.4.0.md`.
-  Step 2 adds Connect's first public listener to a live personal agent — an operator decision.
+- **Connect — the intake 409 durability gap.** If the vault write commits but its response is
+  lost, the retry hits the create-only 409 and neither the confirmation nor the agent note fires,
+  so a stored credential looks like a failure. Codex found it during the 0.4.3 review. Deliberately
+  NOT fixed there: the cheap fix (treat 409 as success) would tell someone their value was saved
+  when a different value is in the vault. Wants a real answer, so it waits for a batch.
 
 ## P2 — self-extension frontier (earn-it, deferred)
 
@@ -54,6 +57,13 @@ data before shipping any of it.
   release counter is currently the de-facto convention.
 
 ## Recently shipped (context)
+
+- **Connect 0.4.3** (2026-08-02) — what Ferni was already running: the agent is told when a
+  credential lands (no restart, and no more routing around a tool that started working),
+  intra-word underscores stay literal so a credential name is never renamed by the renderer, an
+  outcome-first confirmation, and the note attributed to the actual submitter. Ferni ran all four
+  in production before the release; codex then found a double-underscore case
+  (`mcp__brain__authenticate`) and a Unicode word-boundary case that live use had not hit.
 
 - **Harness 0.2.10 + Connect 0.4.0** (2026-08-01) — the security track. Final combined battery
   passed 16/16 on a fresh agent running BOTH published artifacts. Encrypted secret vault

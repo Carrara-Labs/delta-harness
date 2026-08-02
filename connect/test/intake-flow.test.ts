@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { randomUUID } from "node:crypto";
-import { rmSync } from "node:fs";
+import { createHmac, randomUUID } from "node:crypto";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isIntercept } from "../src/commands";
 import { extractSecretRequest } from "../src/core";
+import { IntakeServer } from "../src/intake";
 import { Store } from "../src/store";
 
 describe("the secret-request marker", () => {
@@ -99,7 +100,7 @@ describe("the /secret and /secrets commands", () => {
 });
 
 describe("capability-change note", () => {
-  test("a stored credential queues exactly one agent turn, and is idempotent per key", () => {
+  test("a redelivered callback cannot queue the turn twice", () => {
     const path = join(tmpdir(), `connect-note-${randomUUID()}.sqlite`);
     const store = new Store(path);
     const note = {
@@ -123,19 +124,117 @@ describe("capability-change note", () => {
     rmSync(path, { force: true });
   });
 
-  test("the note never carries a value, only the name", () => {
+  test("two genuine stores of the same name each get their own turn", () => {
+    // Production keys on `${name}:${Date.now()}`, so re-providing a credential later is a new
+    // event and MUST notify again. The idempotency above must not swallow it.
     const path = join(tmpdir(), `connect-note2-${randomUUID()}.sqlite`);
     const store = new Store(path);
-    store.enqueueNote({
-      conversationId: "c",
-      actorId: "a",
+    const at = (t: number) => ({
+      conversationId: "tg:1",
+      actorId: "tg:1",
       chatId: "1",
-      text: "[EXA_API_KEY is now available in your vault]",
-      key: "k",
+      text: "[EXA_API_KEY is now available]",
+      key: `EXA_API_KEY:${t}`,
     });
-    const all = JSON.stringify(store.db.query("SELECT * FROM inbox").all());
-    expect(all).toContain("EXA_API_KEY");
-    expect(all).not.toContain("sk-");
+    expect(store.enqueueNote(at(1))).toBe(true);
+    expect(store.enqueueNote(at(2))).toBe(true);
+    expect(store.db.query("SELECT event_id FROM inbox").all()).toHaveLength(2);
+    rmSync(path, { force: true });
+  });
+});
+
+describe("intake, end to end over HTTP", () => {
+  const BOT_TOKEN = "424242:test-bot-token";
+  const OPERATOR = "111";
+  const SUBMITTER = "222";
+  // Credential-shaped, but built from ordinary words so no secret scanner trips on it.
+  const VALUE = "prawn-lantern-varnish-88213-quilt";
+
+  const signInitData = (fields: Record<string, string>) => {
+    const secret = createHmac("sha256", "WebAppData").update(BOT_TOKEN).digest();
+    const check = Object.entries(fields)
+      .map(([k, v]) => `${k}=${v}`)
+      .sort()
+      .join("\n");
+    const params = new URLSearchParams(fields);
+    params.set("hash", createHmac("sha256", secret).update(check).digest("hex"));
+    return params.toString();
+  };
+
+  test("the value reaches the vault, is attributed to the submitter, and never lands in the DB", async () => {
+    const path = join(tmpdir(), `connect-e2e-${randomUUID()}.sqlite`);
+    const store = new Store(path);
+    const sessionId = randomUUID().replaceAll("-", "");
+    store.createIntakeSession({
+      id: sessionId,
+      name: "EXA_API_KEY",
+      purpose: "web search",
+      destination: "api.exa.ai",
+      // The session was minted for the SECOND allowlisted user, so "first entry in the
+      // allowlist" would attribute the turn to the wrong person.
+      telegramUserId: SUBMITTER,
+      chatId: "chat-1",
+      conversationId: "conv-1",
+      ttlMs: 300_000,
+    });
+
+    const vaultSaw: { name: string; value: string }[] = [];
+    let stored: { name: string; telegramUserId: string; conversationId: string } | undefined;
+    const server = new IntakeServer({
+      store,
+      botToken: BOT_TOKEN,
+      publicUrl: "https://example.test",
+      port: 0,
+      allowedUsers: new Set([OPERATOR, SUBMITTER]),
+      writeVault: async (name, value) => {
+        vaultSaw.push({ name, value });
+        return { ok: true, status: 201 };
+      },
+      log: () => {},
+      onStored: (session) => {
+        stored = session;
+        store.enqueueNote({
+          conversationId: session.conversationId,
+          actorId: `tg:${session.telegramUserId}`,
+          chatId: session.chatId,
+          key: `${session.name}:1`,
+          text: `[${session.name} is now available in your vault.]`,
+        });
+      },
+    });
+    server.start();
+    const port = (server as unknown as { server: { port: number } }).server.port;
+
+    const initData = signInitData({
+      auth_date: String(Math.floor(Date.now() / 1000)),
+      query_id: "q1",
+      user: JSON.stringify({ id: Number(SUBMITTER) }),
+    });
+    const res = await fetch(`http://127.0.0.1:${port}/intake/${sessionId}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://example.test" },
+      body: JSON.stringify({ initData, value: VALUE }),
+    });
+    server.stop();
+
+    expect(res.status).toBe(200);
+    // It got to the vault intact...
+    expect(vaultSaw).toEqual([{ name: "EXA_API_KEY", value: VALUE }]);
+    // ...attributed to whoever actually submitted it...
+    expect(stored?.telegramUserId).toBe(SUBMITTER);
+    const rows = store.db.query("SELECT actor_id, text FROM inbox").all() as {
+      actor_id: string;
+      text: string;
+    }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.actor_id).toBe(`tg:${SUBMITTER}`);
+    // ...and the value itself is nowhere in the connector's own state, in any encoding.
+    // The store runs in WAL mode, so a committed row may live in the -wal file rather than the
+    // database proper: scan both, or this proves nothing.
+    const raw = Buffer.concat([path, `${path}-wal`].filter(existsSync).map((f) => readFileSync(f)));
+    expect(raw.includes("EXA_API_KEY")).toBe(true); // control: we ARE looking at live rows
+    for (const form of [VALUE, encodeURIComponent(VALUE), JSON.stringify(VALUE).slice(1, -1)])
+      expect(raw.includes(form)).toBe(false);
     rmSync(path, { force: true });
   });
 });

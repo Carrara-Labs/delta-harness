@@ -27,14 +27,19 @@ const escapeHtml = (text: string) =>
 /** CommonMark's intra-word rule: an underscore INSIDE a word is a literal underscore, never
  *  emphasis. Without it every snake_case identifier is mangled — `EXA_API_KEY` renders as
  *  EXA<i>API</i>KEY, which is exactly the shape a credential name takes. Asterisks carry no such
- *  restriction, so `**bold**` and `*italic*` are unaffected. */
-const isWordChar = (c: string | undefined) => c !== undefined && /[\p{L}\p{N}]/u.test(c);
+ *  restriction, so `**bold**` and `*italic*` are unaffected.
+ *
+ *  Both sides read a two-unit window rather than one character, so an astral letter (a surrogate
+ *  pair) or a combining mark is judged as the character it belongs to instead of as half of one. */
+const wordBefore = (s: string, i: number) =>
+  /[\p{L}\p{N}\p{M}]$/u.test(s.slice(Math.max(0, i - 2), i));
+const wordAfter = (s: string, i: number) => /^[\p{L}\p{N}\p{M}]/u.test(s.slice(i, i + 2));
 
 /** Index of the next delimiter that may legally CLOSE emphasis, or -1. An underscore run
  *  followed by a word character is inside a word, so it closes nothing. */
 function closingDelimiter(source: string, delim: string, from: number): number {
   for (let end = source.indexOf(delim, from); end >= 0; end = source.indexOf(delim, end + 1)) {
-    if (delim[0] !== "_" || !isWordChar(source[end + delim.length])) return end;
+    if (delim[0] !== "_" || !wordAfter(source, end + delim.length)) return end;
   }
   return -1;
 }
@@ -76,7 +81,7 @@ function inlineToHtml(source: string): string {
     }
 
     const bold = source.startsWith("**", i) ? "**" : source.startsWith("__", i) ? "__" : null;
-    if (bold && !(bold === "__" && isWordChar(source[i - 1]))) {
+    if (bold && !(bold === "__" && wordBefore(source, i))) {
       const end = closingDelimiter(source, bold, i + 2);
       if (end > i + 2) {
         out += `<b>${escapeHtml(source.slice(i + 2, end))}</b>`;
@@ -86,13 +91,29 @@ function inlineToHtml(source: string): string {
     }
 
     const italic = source[i] === "*" || source[i] === "_" ? (source[i] as string) : null;
-    if (italic && !(italic === "_" && isWordChar(source[i - 1]))) {
+    if (italic && !(italic === "_" && wordBefore(source, i))) {
       const end = closingDelimiter(source, italic, i + 1);
       if (end > i + 1) {
         out += `<i>${escapeHtml(source.slice(i + 1, end))}</i>`;
         i = end + 1;
         continue;
       }
+    }
+
+    // An underscore that cannot open emphasis is literal, and so is the rest of its run. Advancing
+    // one character would leave the next underscore preceded by `_`, which is not a word
+    // character, so it would open after all: `mcp__brain__auth` became mcp_<i>brain</i>_auth.
+    //
+    // The trade: an uneven run of three or more (`____foo_`) now renders literally where
+    // CommonMark would emphasise from partway inside the run. Full delimiter-run matching costs
+    // far more code than that case is worth, and for a renderer whose job is to leave identifiers
+    // alone, erring toward literal is the right direction.
+    if (source[i] === "_") {
+      let run = i;
+      while (source[run] === "_") run++;
+      out += source.slice(i, run);
+      i = run;
+      continue;
     }
 
     out += escapeHtml(source[i] as string);

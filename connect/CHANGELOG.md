@@ -4,6 +4,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 this package follows [Semantic Versioning](https://semver.org/). It versions
 independently of the Delta harness engine.
 
+## [0.4.3] — 2026-08-02
+
+Everything a credential needs to be usable the moment it lands. Proven on a live agent before
+release: a real phone, a real credential, a search that was failing and then worked.
+
+### Added
+- **The agent is told when a credential arrives**, as an ordinary queued turn. The engine
+  resolves a new credential on the very next call with no restart, but a tool error already sitting
+  in the thread makes the model route around that tool for the rest of the conversation, which
+  looks exactly like a restart requirement. The note carries the name and never the value.
+
+### Fixed
+- **Underscores inside a word are literal, not emphasis.** `EXA_API_KEY` rendered as
+  EXA*API*KEY, so the one message whose job is to name a credential misnamed it. Both single and
+  double runs are covered (`mcp__brain__authenticate` survives intact), and the word test reads
+  whole characters, so a combining mark or an astral letter is no longer mistaken for a word
+  boundary. Real emphasis (`_italic_`, `__bold__`) and all asterisk emphasis are unchanged.
+- **The confirmation leads with the outcome.** Someone who has just handed over a credential
+  wants to know it landed, not to read a caveat first.
+- **The capability note is attributed to whoever actually submitted**, rather than to the first
+  entry in the allowlist, which named the wrong person on a multi-user deployment.
+
+### Known gap
+- If the vault write commits but its response is lost, the retry hits the create-only 409 and
+  neither the confirmation nor the agent note is sent, so a stored credential can look like a
+  failure. This predates 0.4.3 and is not fixed here: treating 409 as success would tell someone
+  their value was saved when a different value is actually in the vault. Tracked for the next
+  batch.
+
 ## [0.4.2] — 2026-08-01
 
 ### Fixed

@@ -286,4 +286,30 @@ describe("intra-word underscores (CommonMark)", () => {
   test("emphasis and an identifier can coexist on one line", () => {
     expect(markdownToHtml("_note_ about read_file")).toBe("<i>note</i> about read_file");
   });
+
+  test("a DOUBLE underscore inside a word is literal too", () => {
+    // Rejecting the run then advancing one character leaves the second underscore preceded by
+    // `_`, which is not a word character, so it opened emphasis after all. MCP tool names are
+    // exactly this shape.
+    expect(markdownToHtml("mcp__brain__authenticate")).toBe("mcp__brain__authenticate");
+    expect(markdownToHtml("A__B__C")).toBe("A__B__C");
+    expect(markdownToHtml("foo__bar__baz")).toBe("foo__bar__baz");
+  });
+
+  test("an uneven run renders literally — an accepted trade, not an accident", () => {
+    // CommonMark would emphasise from partway inside the run (`___<em>foo</em>`). Matching that
+    // needs full delimiter-run bookkeeping, which is more code than the case is worth; a renderer
+    // whose job is to leave identifiers alone should fail toward literal. Locked in so that
+    // changing it is a decision rather than a surprise.
+    expect(markdownToHtml("____foo_")).toBe("____foo_");
+  });
+
+  test("the word test sees whole characters, not UTF-16 halves", () => {
+    // A combining mark and an astral letter are both "inside a word" as far as a reader is
+    // concerned, but neither is a `\p{L}` single code unit.
+    expect(markdownToHtml("á_b_")).toBe("á_b_"); // a + combining acute
+    expect(markdownToHtml("\u{10400}_b_")).toBe("\u{10400}_b_"); // astral letter
+    expect(markdownToHtml("א_ב_ג")).toBe("א_ב_ג");
+    expect(markdownToHtml("键_值_对")).toBe("键_值_对");
+  });
 });
