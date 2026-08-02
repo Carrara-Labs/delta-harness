@@ -4,6 +4,6 @@
   "description": "What Ferni runs. Pinned exactly, so the deployed agent is byte-identical to what anyone else installs, and a rollback is a one-line version change rather than a git checkout.",
   "dependencies": {
     "@carrara-labs/delta-harness": "0.2.10",
-    "@carrara-labs/delta-connect": "0.4.3"
+    "@carrara-labs/delta-connect": "0.5.0"
   }
 }

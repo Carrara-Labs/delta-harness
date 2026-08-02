@@ -23,10 +23,11 @@ data before shipping any of it.
 
 ## P1 — leapfrog + robustness fast-follows
 
-- **Connect S4 — Rich Messages (native rich blocks).** Telegram Bot API 10.1/10.2 (2026) added
-  Rich Messages + `sendRichMessageDraft` for streaming AI replies: tables, task lists, LaTeX,
-  collapsible details, media rendered NATIVELY instead of the current Markdown downgrade. Neither
-  OpenClaw nor Hermes uses it — a clear lead. Opt-in + client-support-gated.
+- **Connect — stream the reply text itself.** 0.5.0 ships rich rendering and a live "what I am
+  doing" line, but deliberately not the answer as it is written: only a step with no tool calls
+  becomes the answer, so the model's narration can claim things that are never sent, and the token
+  deltas are not persisted so it needs a live SSE per task with its own abort and restart story.
+  Worth doing on its own terms, not folded into a rendering release.
 - **Harness — spill demotion / compact sooner.** Demote re-billed `web_fetch` spill bodies to disk
   on later turns (the mechanical cause of Ferni's context ballooning to 155k). Cuts context growth
   at the source.
@@ -43,7 +44,7 @@ data before shipping any of it.
 - **Harness 0.3.0 — self-extension.** Gated self-wiring MCP (curated registry + name-referenced key
   + runtime commit) + skill authoring (`create_skill` validated write-rail). The vault's
   name-referenced credentials are the prerequisite this was waiting on.
-- **Connect 0.5.0 — self-extension edge.** One-time-link secret fallback + a self-wiring
+- **Connect 0.6.0 — self-extension edge.** One-time-link secret fallback + a self-wiring
   approve/confirm surface. Needs H0.3.0.
 
 ## Cross-cutting
@@ -58,6 +59,13 @@ data before shipping any of it.
 
 ## Recently shipped (context)
 
+- **Connect 0.5.0** (2026-08-02) — rich streaming: replies render as Telegram Rich Messages
+  (native tables, task lists, headings, code, math) by handing the agent's markdown to Telegram's
+  own parser rather than our renderer, plus an ephemeral progress line naming the tool in flight,
+  driven by the daemon's existing `?since=` event poll. Four codex passes (the first two returned
+  DO-NOT-RELEASE) and live-verified on Ferni against the real Bot API. Corrects a claim this list
+  carried: OpenClaw ships Rich Messages already, and Hermes ships rich drafts too, so this is
+  parity done in far less code rather than a leapfrog.
 - **Connect 0.4.3** (2026-08-02) — what Ferni was already running: the agent is told when a
   credential lands (no restart, and no more routing around a tool that started working),
   intra-word underscores stay literal so a credential name is never renamed by the renderer, an

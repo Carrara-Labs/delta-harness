@@ -1,6 +1,6 @@
 # Spec: Connect 0.5.0 — Rich streaming
 
-Status: **built**. Written 2026-08-02. Supersedes slices S3 + S4 of
+Status: **shipped in 0.5.0**. Written 2026-08-02. Supersedes slices S3 + S4 of
 [spec-connect-async-streaming.md](spec-connect-async-streaming.md) (S1 async dispatch and S2 typing
 shipped in Connect 0.3.2). Engine change: **none**.
 
@@ -118,14 +118,21 @@ them would mean a live SSE connection per task with its own abort, quiesce, rest
 arbitration story. What the agent is *doing* is honest at every instant, cheap to obtain, and for a
 working agent the more useful thing to watch. Reply-text streaming stays open as a follow-up.
 
-Four invariants, each with a test:
+Five invariants, each with a test:
 
 1. **Never for an unaccepted task.** A placeholder id is not a daemon run; it is skipped entirely.
 2. **Never after "stopping".** Cancel intent suppresses the preview immediately.
-3. **Never after the real reply.** Previews are awaited inside the same tick, and a terminal task is
-   not in the still-running set, so a stale draft cannot land after the message it previewed.
-4. **Never outliving its turn.** The draft id is derived from the **inbox event id**, not the task
-   id, so a placeholder re-key mid-turn does not strand one preview and start another.
+3. **Cancelled, never waited on.** When a turn ends its preview is marked stopped and abandoned,
+   and each remaining step checks the flag. Waiting instead — even on that one task — would put a
+   best-effort call in front of a durable reply, which is the head-of-line blocking the async
+   release exists to prevent. Two review passes were spent proving that a per-task wait, and then a
+   parallel wait, were both still barriers. The residual is stated rather than designed around: a
+   draft already on the wire can arrive just after the answer and then expires within 30 seconds.
+4. **One at a time.** Previews are single-flight per task. Two overlapping refreshes would read the
+   same cursor, so the slower could overwrite newer state with older, and could still be open after
+   its task was finalized.
+5. **One draft id per turn.** Derived from the **inbox event id**, not the task id, so successive
+   frames animate in place rather than stacking up.
 
 ## Deliberately not built
 
@@ -145,7 +152,7 @@ Four invariants, each with a test:
 
 ## Reality checks
 
-`bun test` (146 connect + 811 harness, green) plus a live Ferni turn covering a table, a task list,
+`bun test` (154 connect + 818 harness, green) plus a live Ferni turn covering a table, a task list,
 a fenced block, an intra-word underscore, a dollar amount, and a run long enough to show several
 progress frames.
 

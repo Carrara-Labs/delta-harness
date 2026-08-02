@@ -4,6 +4,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 this package follows [Semantic Versioning](https://semver.org/). It versions
 independently of the Delta harness engine.
 
+## [0.5.0] — 2026-08-02
+
+Replies render as Telegram Rich Messages, and a long turn shows what the agent is doing while it
+works. Proven on a live agent before release, against the real Bot API.
+
+### Added
+- **Rich replies.** The agent's markdown goes to Telegram as a rich message, so tables, task lists
+  with real checkboxes, headings, fenced code with its language, block quotes and math render
+  natively instead of being flattened into a small HTML subset. Telegram's own parser reads the
+  markdown, so there is no renderer of ours in between.
+- **A live progress line.** While a turn runs, an ephemeral draft says what the agent is doing
+  ("Searching the web", "Reading a file"), refreshed from the daemon's event feed and cleared when
+  the answer arrives. It shows the work, not the reply being typed: only a step with no tool calls
+  becomes the answer, so streaming the model's narration would show claims that are never sent.
+- `DELTA_CONNECT_RICH=off` turns both off. A Bot API server without Rich Messages is detected on
+  the first call and never asked again.
+
+### Changed
+- A reply that Telegram refuses as rich falls back to the previous HTML path, so no reply is lost
+  to a rendering problem. A 429, a 5xx, a timeout or an unreadable response is retried by the
+  outbox instead, rather than being re-sent in the downgraded form.
+- Messages are still split at ~3900 characters rather than the 32768 a rich message allows. One
+  queued reply must stay one API call, or a failure part-way through a split would drop or
+  duplicate pieces of it.
+
+### Fixed
+- **`mcp__brain__authenticate` no longer renders as bold.** Telegram's rich parser reads a double
+  underscore as emphasis even inside a word, which is the same mangling 0.4.3 fixed in our own
+  renderer. Underscore runs inside a word are escaped now; code is left alone, because Telegram
+  already treats it as literal.
+
+### Known gaps
+- A progress line already in flight when the answer arrives can appear just after it, and then
+  disappears on its own within 30 seconds. Cancelling the preview rather than waiting for it is
+  deliberate: a durable reply is never queued behind cosmetic UI.
+- Raw HTML written outside a code block is now interpreted by Telegram rather than shown literally.
+  Inside code, which is where an agent almost always puts markup, nothing changes.
+- Images and `tg://` links in agent markdown now render, where the HTML path dropped them.
+- A code span broken across lines gets visible backslashes, as does a fenced block whose info
+  string contains a backtick. Both are rare, and both fail toward a stray backslash rather than a
+  mangled identifier.
+- The intake 409 durability gap from 0.4.3 is unchanged.
+
 ## [0.4.3] — 2026-08-02
 
 Everything a credential needs to be usable the moment it lands. Proven on a live agent before

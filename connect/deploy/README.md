@@ -28,7 +28,7 @@ By default, the **published packages**, pinned exactly in `connect/deploy/packag
 
 ```json
 "@carrara-labs/delta-harness": "0.2.10",
-"@carrara-labs/delta-connect":  "0.4.3"
+"@carrara-labs/delta-connect":  "0.5.0"
 ```
 
 So the deployed agent is what anyone else installs, upgrading is a version edit plus a

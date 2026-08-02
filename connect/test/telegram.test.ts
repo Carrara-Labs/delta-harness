@@ -484,6 +484,20 @@ describe("Rich messages", () => {
     expect(codec.richEnabled).toBe(true); // only a genuine method-not-found latches it off
   });
 
+  test("rich off means neither surface is used at all", async () => {
+    // The documented escape hatch: an operator who wants the previous, narrower rendering must not
+    // have to pin an old version to get it.
+    const urls: string[] = [];
+    globalThis.fetch = (async (url) => {
+      urls.push(String(url));
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    const codec = new TelegramCodec("token", undefined, false);
+    expect((await codec.send("7", "# hi")).ok).toBe(true);
+    expect(await codec.sendDraft("7", 42, "Thinking")).toBe(false);
+    expect(urls.filter((u) => u.includes("Rich"))).toHaveLength(0);
+  });
+
   test("a draft is a thinking block, private chats only, and never throws", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     globalThis.fetch = (async (_url, init) => {

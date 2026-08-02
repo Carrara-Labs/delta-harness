@@ -31,7 +31,11 @@ const allowed = new Set(
 const log = (m: string) => console.log(`[delta-connect] ${m}`);
 
 const store = new Store(dbPath);
-const codec = new TelegramCodec(token, workspace);
+// Rich Messages are on unless a deployment turns them off. The escape hatch exists because the
+// rich path hands the agent's markdown to Telegram's parser instead of our own renderer, and an
+// operator who wants the old, narrower rendering should not have to pin an old version to get it.
+const rich = (process.env.DELTA_CONNECT_RICH ?? "on").toLowerCase() !== "off";
+const codec = new TelegramCodec(token, workspace, rich);
 const agent = new DeltaAgent(baseUrl, controlToken, inspectToken);
 const managedEntry = process.env.CONNECT_DAEMON_ENTRY;
 const failures = Number(process.env.CONNECT_BOOT_FAILURES);
@@ -153,7 +157,7 @@ if (sup instanceof ManagedProcessSupervisor) {
 }
 
 log(
-  `${agentName} bot up. daemon=${baseUrl} allowlist=${allowed.size > 0 ? [...allowed].join(",") : "open (dev)"}`,
+  `${agentName} bot up. daemon=${baseUrl} allowlist=${allowed.size > 0 ? [...allowed].join(",") : "open (dev)"} rich=${rich ? "on" : "off"}`,
 );
 
 let stopping = false;
