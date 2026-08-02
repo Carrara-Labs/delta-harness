@@ -7,6 +7,7 @@ import type {
   AttachmentRef,
   ChannelCodec,
   DownloadedFile,
+  DraftPreview,
   Inbound,
   IngressDriver,
   OutboundResult,
@@ -164,6 +165,53 @@ export function markdownToHtml(source: string): string {
   return out.join("\n");
 }
 
+/** Telegram's rich-markdown parser gets single underscores right — `EXA_API_KEY` survives — but
+ *  reads a DOUBLE underscore as bold even inside a word, so `mcp__brain__authenticate` renders as
+ *  mcp<b>brain</b>authenticate. That is the same mangling Connect 0.4.3 fixed on the HTML path,
+ *  reappearing on a parser we don't own, so the rule we already ship gets applied here too: an
+ *  underscore run inside a word is literal. Escaping is by backslash, which the dialect honors.
+ *
+ *  Code is skipped, because Telegram already treats it as literal (verified against the live API:
+ *  a fenced block and an inline span both preserved `__` and `<u>` untouched). Escaping there
+ *  would put visible backslashes into the user's code, which is the opposite of the fix. */
+export function escapeRichMarkdown(source: string): string {
+  let fenced = false;
+  return source
+    .split("\n")
+    .map((line) => {
+      if (line.trimStart().startsWith("```")) {
+        fenced = !fenced;
+        return line;
+      }
+      if (fenced) return line;
+      let out = "";
+      for (let i = 0; i < line.length; ) {
+        if (line[i] === "`") {
+          const end = line.indexOf("`", i + 1);
+          if (end > i) {
+            out += line.slice(i, end + 1);
+            i = end + 1;
+            continue;
+          }
+        }
+        if (line[i] === "_") {
+          let run = i;
+          while (line[run] === "_") run++;
+          out +=
+            wordBefore(line, i) && wordAfter(line, run)
+              ? "\\_".repeat(run - i)
+              : line.slice(i, run);
+          i = run;
+          continue;
+        }
+        out += line[i];
+        i++;
+      }
+      return out;
+    })
+    .join("\n");
+}
+
 /** Split Markdown source before rendering, balancing fenced code across chunks. */
 export function telegramChunks(source: string): string[] {
   const chunks = chunkText(source, 3900);
@@ -228,10 +276,22 @@ async function decodeTelegramResponse(response: Response): Promise<Decoded> {
 
 export class TelegramCodec implements ChannelCodec {
   readonly name = "telegram";
+  /** Rich Messages (Bot API 10.1+) render the agent's markdown natively — tables, task lists,
+   *  headings, math — instead of the flattened HTML subset. Latched off for the process the first
+   *  time the API says the method does not exist, so an older Bot API server costs one wasted
+   *  round trip in total rather than one per message. */
+  private rich: boolean;
   constructor(
     private readonly token: string,
     private readonly workspace?: string,
-  ) {}
+    rich = true,
+  ) {
+    this.rich = rich;
+  }
+
+  get richEnabled(): boolean {
+    return this.rich;
+  }
 
   chunk(text: string): string[] {
     return telegramChunks(text);
@@ -239,6 +299,24 @@ export class TelegramCodec implements ChannelCodec {
 
   async send(chatId: string, text: string): Promise<OutboundResult> {
     try {
+      if (this.rich) {
+        const response = await fetch(API(this.token, "sendRichMessage"), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            rich_message: { markdown: escapeRichMarkdown(text) },
+          }),
+          signal: AbortSignal.timeout(15000),
+        });
+        const { result } = await decodeTelegramResponse(response);
+        // Delivered, or a 429/5xx the outbox should back off on rather than silently downgrade.
+        if (result.ok || result.retryable) return result;
+        // No such method: this Bot API server predates Rich Messages. Stop asking.
+        if (response.status === 404) this.rich = false;
+        // Anything else is about THIS content (unparseable markdown, a limit). Fall through to
+        // the HTML path so a reply is never lost to a rendering problem.
+      }
       const send = (body: Record<string, unknown>) =>
         fetch(API(this.token, "sendMessage"), {
           method: "POST",
@@ -253,6 +331,37 @@ export class TelegramCodec implements ChannelCodec {
       return (await decodeTelegramResponse(await send({ chat_id: chatId, text }))).result;
     } catch (e) {
       return { ok: false, retryable: true, error: String(e) };
+    }
+  }
+
+  /** Stream an ephemeral preview of the reply as it is being written.
+   *
+   *  A draft is NOT a message: it is a 30-second preview keyed by a `draft_id` we choose, and
+   *  Telegram animates successive drafts under the same id. Nothing is persisted, so there is no
+   *  partial answer to strand in the chat if this process dies mid-turn — the real message is sent
+   *  once, complete, by the ordinary outbox. Best-effort by construction: the caller treats false
+   *  as "no preview", never as a failed turn.
+   *
+   *  Private chats with a numeric id only, per the API. */
+  async sendDraft(chatId: string, draftId: number, draft: DraftPreview): Promise<boolean> {
+    if (!this.rich) return false;
+    const chat = Number(chatId);
+    if (!Number.isSafeInteger(chat) || chat <= 0) return false; // groups/channels: not supported
+    const rich =
+      draft.kind === "text"
+        ? { markdown: escapeRichMarkdown(draft.text) }
+        : { blocks: [{ type: "thinking", text: draft.text }] };
+    try {
+      const response = await fetch(API(this.token, "sendRichMessageDraft"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ chat_id: chat, draft_id: draftId, rich_message: rich }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (response.status === 404) this.rich = false;
+      return (await decodeTelegramResponse(response)).result.ok;
+    } catch {
+      return false; // a preview is never worth failing a turn over
     }
   }
 

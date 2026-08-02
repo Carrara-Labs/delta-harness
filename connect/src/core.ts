@@ -289,6 +289,10 @@ export class Connector {
   /** Give up on an unresolved placeholder after this long — the daemon is unreachable, so surface a
    *  clean failure rather than wedging the conversation forever. */
   private readonly PLACEHOLDER_DEADLINE_MS = 60_000;
+  /** Live-preview state per in-flight task: how far we have read the daemon's event feed, and the
+   *  last line we showed. In memory on purpose — a preview is disposable, so a restart just starts
+   *  reading again rather than owning a durable cursor to reconcile. */
+  private readonly progress = new Map<string, { cursor: number; shown: string }>();
 
   constructor(
     private readonly store: Store,
@@ -703,6 +707,79 @@ export class Connector {
     return false; // still unresolved: NOT progress, so the loop sleeps a tick before retrying
   }
 
+  /** Turn a tool name into something a person reads. Only the tools a user actually waits on are
+   *  named; anything else — including every MCP tool a deployment wires in — falls back to the
+   *  generic form rather than growing this table. */
+  private static readonly ACTIVITY: Readonly<Record<string, string>> = {
+    web_search: "Searching the web",
+    web_fetch: "Reading a page",
+    research: "Researching",
+    read_file: "Reading a file",
+    write_file: "Writing a file",
+    grep: "Searching files",
+    spawn_subagent: "Delegating a piece of this",
+    remember: "Updating what I know",
+    recall: "Checking what I know",
+    code: "Writing code",
+  };
+
+  /** The line to show for the work in flight, from the events read this tick. The LAST tool call
+   *  wins: by the time we look, earlier ones in the same batch have already been answered. A turn
+   *  that started with no tool call after it is the model thinking. */
+  private static activityFrom(events: Array<Record<string, unknown>>): string | null {
+    let label: string | null = null;
+    for (const e of events) {
+      const type = typeof e.type === "string" ? e.type : "";
+      if (type === "turn.start") label = "Thinking";
+      else if (type === "tool.call") {
+        const name = e["gen_ai.tool.name"];
+        label =
+          typeof name === "string"
+            ? (Connector.ACTIVITY[name] ?? `Running ${name.replaceAll("_", " ")}`)
+            : "Working";
+      }
+    }
+    return label;
+  }
+
+  /** A stable, non-zero draft id for a turn. Derived from the INBOX EVENT id, not the task id: a
+   *  start whose 202 was lost is re-keyed from a placeholder to a real run mid-turn, and a preview
+   *  that changed id at that moment would leave two of them on screen. */
+  private static draftId(eventId: string): number {
+    let h = 2166136261;
+    for (let i = 0; i < eventId.length; i++) {
+      h ^= eventId.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 1 || 1; // positive, and never the zero the API rejects
+  }
+
+  /** Show what the agent is doing, as an ephemeral rich draft.
+   *
+   *  Deliberately NOT the reply text as it is written: the daemon streams the model's narration for
+   *  every step, and only the LAST step — one with no tool calls — becomes the answer (run.ts:678).
+   *  Previewing that narration would show "I've deleted it" while the delete is still running, and
+   *  a claim that never gets sent is worse than no preview. What the agent is *doing* is both
+   *  honest at every instant and, for a working agent, the more useful thing to watch.
+   *
+   *  Best-effort throughout: a null read or a false send just means no preview this tick. */
+  private async refreshProgress(task: TaskRow): Promise<void> {
+    if (!this.codec.sendDraft || !this.agent.taskEvents) return;
+    if (task.cancel_requested) return; // already told "stopping" — don't keep animating
+    const state = this.progress.get(task.task_id) ?? { cursor: 0, shown: "" };
+    const read = await this.agent.taskEvents(task.task_id, task.user_id, state.cursor);
+    if (!read) return;
+    // Nothing new this tick means the last thing we showed is still true. Before the first event
+    // lands there is still something honest to say.
+    const label = Connector.activityFrom(read.events) || state.shown || "Thinking";
+    this.progress.set(task.task_id, { cursor: read.cursor, shown: label });
+    // Re-send even when unchanged: a draft expires after 30s, so the refresh IS what keeps it up.
+    await this.codec.sendDraft(task.chat_id, Connector.draftId(task.event_id), {
+      kind: "thinking",
+      text: label,
+    });
+  }
+
   /** Poll every in-flight task to its authoritative terminal state (GET /v1/tasks/:id) and
    *  finalize. The poll is the source of truth (the SSE is best-effort UX), so a restart, suspend,
    *  or dropped stream reconciles cleanly. Returns true if any task reached a terminal state. */
@@ -744,7 +821,14 @@ export class Connector {
     const stillRunning = polled.filter(
       (p) => p.st && (p.st.status === "queued" || p.st.status === "running"),
     );
-    await Promise.allSettled(stillRunning.map((p) => this.codec.typing?.(p.task.chat_id)));
+    // Typing and the live progress preview go out together, and are AWAITED before the finalize
+    // loop below. That await is the ordering barrier: a task that has gone terminal is not in
+    // `stillRunning`, and any preview issued for a still-running task has completed before the
+    // tick that finalizes it can send the real reply. A stale preview can never land after it.
+    await Promise.allSettled([
+      ...stillRunning.map((p) => this.codec.typing?.(p.task.chat_id)),
+      ...stillRunning.map((p) => this.refreshProgress(p.task)),
+    ]);
     let finalized = false;
     for (const { task, st } of polled) {
       if (!st) continue; // transient poll failure: keep the task active, retry next tick
@@ -787,6 +871,9 @@ export class Connector {
         responseId,
         replyChunks,
       });
+      // The turn is over, so its preview state goes with it. This is the only path that retires a
+      // previewed task: a placeholder never gets one, and `/new` leaves the run active on purpose.
+      this.progress.delete(task.task_id);
     }
     if (finalized) {
       await this.flushOutbox();

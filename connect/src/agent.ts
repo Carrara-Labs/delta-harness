@@ -266,6 +266,37 @@ export class DeltaAgent implements AgentClient {
     }
   }
 
+  /** Read a task's structural progress since a cursor (GET /v1/tasks/:id/events?since=N) — the
+   *  bounded JSON form of the events feed, not the SSE one.
+   *
+   *  This is what a live progress preview needs and nothing more: turn and tool lifecycle. Per-token
+   *  deltas are deliberately absent (the daemon never persists them), which is the reason this can
+   *  be an ordinary poll folded into the existing task tick instead of a long-lived stream with its
+   *  own lifecycle. Null on any failure — progress display is never worth a retry. */
+  async taskEvents(
+    id: string,
+    userId: string,
+    since: number,
+  ): Promise<{ events: Array<Record<string, unknown>>; cursor: number } | null> {
+    try {
+      const headers: Record<string, string> = { "x-delta-user": userId };
+      if (this.controlToken) headers.authorization = `Bearer ${this.controlToken}`;
+      const res = await fetch(
+        `${this.baseUrl}/v1/tasks/${encodeURIComponent(id)}/events?since=${since}&limit=200`,
+        { headers, signal: AbortSignal.timeout(10000) },
+      );
+      if (!res.ok) return null;
+      const data = (await res.json().catch(() => ({}))) as {
+        events?: unknown;
+        cursor?: unknown;
+      };
+      if (!Array.isArray(data.events) || typeof data.cursor !== "number") return null;
+      return { events: data.events as Array<Record<string, unknown>>, cursor: data.cursor };
+    } catch {
+      return null;
+    }
+  }
+
   /** Cancel a running task (DELETE /v1/tasks/:id). Best-effort; ends the orphaned-billing an
    *  abandoned turn would otherwise incur. */
   async cancelTask(id: string, userId: string): Promise<void> {

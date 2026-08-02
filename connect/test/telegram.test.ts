@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  escapeRichMarkdown,
   markdownToHtml,
   parseUpdate,
   resolveDocumentPath,
@@ -92,7 +93,8 @@ describe("Telegram Markdown HTML", () => {
           )
         : Response.json({ ok: true });
     }) as typeof fetch;
-    const result = await new TelegramCodec("token").send("7", "**hello**");
+    // rich off, so this exercises the legacy HTML funnel on its own
+    const result = await new TelegramCodec("token", undefined, false).send("7", "**hello**");
     expect(result.ok).toBe(true);
     expect(bodies).toEqual([
       { chat_id: "7", text: "<b>hello</b>", parse_mode: "HTML" },
@@ -311,5 +313,125 @@ describe("intra-word underscores (CommonMark)", () => {
     expect(markdownToHtml("\u{10400}_b_")).toBe("\u{10400}_b_"); // astral letter
     expect(markdownToHtml("א_ב_ג")).toBe("א_ב_ג");
     expect(markdownToHtml("键_值_对")).toBe("键_值_对");
+  });
+});
+
+describe("Rich messages", () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  // Telegram's own parser is the renderer on this path, so these lock in the boundary that was
+  // measured against the live API rather than assumed.
+  test("an underscore run inside a word is escaped; real emphasis and code are not", () => {
+    // The bug this exists for: Telegram reads `__` as bold even mid-identifier.
+    expect(escapeRichMarkdown("mcp__brain__auth")).toBe("mcp\\_\\_brain\\_\\_auth");
+    expect(escapeRichMarkdown("EXA_API_KEY")).toBe("EXA\\_API\\_KEY");
+    // Emphasis at a word boundary is the author's intent — untouched.
+    expect(escapeRichMarkdown("_italic_ and __bold__")).toBe("_italic_ and __bold__");
+    expect(escapeRichMarkdown("**bold** stays")).toBe("**bold** stays");
+    // Telegram already treats code as literal, so escaping there would show the backslashes.
+    expect(escapeRichMarkdown("call `mcp__brain__auth` now")).toBe("call `mcp__brain__auth` now");
+    expect(escapeRichMarkdown("```\nmcp__brain__auth\n```")).toBe("```\nmcp__brain__auth\n```");
+    expect(escapeRichMarkdown("```ts\nconst a__b = 1;\n```")).toBe("```ts\nconst a__b = 1;\n```");
+  });
+
+  test("the word test sees whole characters here too", () => {
+    expect(escapeRichMarkdown("á__b__c")).toBe("á\\_\\_b\\_\\_c");
+    expect(escapeRichMarkdown("\u{10400}__b__c")).toBe("\u{10400}\\_\\_b\\_\\_c");
+  });
+
+  test("a reply goes out as rich markdown, not the flattened HTML subset", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    globalThis.fetch = (async (url, init) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+      return Response.json({ ok: true, result: { message_id: 1 } });
+    }) as typeof fetch;
+    const result = await new TelegramCodec("token").send("7", "# Title\n\n| a | b |\n|---|---|");
+    expect(result.ok).toBe(true);
+    expect(calls).toHaveLength(1); // no second, downgraded send
+    expect(calls[0]?.url).toContain("/sendRichMessage");
+    expect(calls[0]?.body).toEqual({
+      chat_id: "7",
+      rich_message: { markdown: "# Title\n\n| a | b |\n|---|---|" },
+    });
+  });
+
+  test("a rich rejection falls back to HTML so the reply still lands", async () => {
+    const urls: string[] = [];
+    globalThis.fetch = (async (url) => {
+      urls.push(String(url));
+      return urls.length === 1
+        ? Response.json(
+            { ok: false, description: "Bad Request: RICH_MESSAGE_EMPTY" },
+            { status: 400 },
+          )
+        : Response.json({ ok: true });
+    }) as typeof fetch;
+    const codec = new TelegramCodec("token");
+    expect((await codec.send("7", "**hi**")).ok).toBe(true);
+    expect(urls[0]).toContain("/sendRichMessage");
+    expect(urls[1]).toContain("/sendMessage");
+    // A content rejection says nothing about the server: rich stays on for the next message.
+    expect(codec.richEnabled).toBe(true);
+  });
+
+  test("a 429 on the rich call backs off instead of silently downgrading", async () => {
+    // Downgrading here would send the flattened version of a message Telegram never refused.
+    const urls: string[] = [];
+    globalThis.fetch = (async (url) => {
+      urls.push(String(url));
+      return Response.json(
+        { ok: false, description: "slow down", parameters: { retry_after: 3 } },
+        { status: 429 },
+      );
+    }) as typeof fetch;
+    expect(await new TelegramCodec("token").send("7", "hi")).toEqual({
+      ok: false,
+      retryable: true,
+      error: "slow down",
+      retryAfterMs: 3000,
+    });
+    expect(urls).toHaveLength(1);
+  });
+
+  test("an API server without Rich Messages is asked exactly once", async () => {
+    const urls: string[] = [];
+    globalThis.fetch = (async (url) => {
+      urls.push(String(url));
+      return String(url).includes("Rich")
+        ? Response.json({ ok: false, description: "Not Found: method not found" }, { status: 404 })
+        : Response.json({ ok: true });
+    }) as typeof fetch;
+    const codec = new TelegramCodec("token");
+    expect((await codec.send("7", "hi")).ok).toBe(true);
+    expect((await codec.send("7", "again")).ok).toBe(true);
+    expect(codec.richEnabled).toBe(false);
+    expect(urls.filter((u) => u.includes("sendRichMessage"))).toHaveLength(1);
+  });
+
+  test("a draft is a thinking block, private chats only, and never throws", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    globalThis.fetch = (async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return Response.json({ ok: true, result: true });
+    }) as typeof fetch;
+    const codec = new TelegramCodec("token");
+    expect(await codec.sendDraft("7", 42, { kind: "thinking", text: "Searching the web" })).toBe(
+      true,
+    );
+    expect(bodies[0]).toEqual({
+      chat_id: 7,
+      draft_id: 42,
+      rich_message: { blocks: [{ type: "thinking", text: "Searching the web" }] },
+    });
+    // A supergroup id is negative: the API takes private chats only, so we do not even ask.
+    expect(await codec.sendDraft("-100123", 42, { kind: "thinking", text: "x" })).toBe(false);
+    expect(bodies).toHaveLength(1);
+    // A transport failure is a missing preview, never a thrown turn.
+    globalThis.fetch = (async () => {
+      throw new Error("network down");
+    }) as unknown as typeof fetch;
+    expect(await codec.sendDraft("7", 42, { kind: "thinking", text: "x" })).toBe(false);
   });
 });
