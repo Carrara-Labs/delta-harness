@@ -728,14 +728,15 @@ export class Connector {
     code: "Writing code",
   };
 
-  /** The line to show for the work in flight, from the events read this tick. The LAST tool call
-   *  wins: by the time we look, earlier ones in the same batch have already been answered. A turn
-   *  that started with no tool call after it is the model thinking. */
+  /** The line to show for the work in flight, from the events read this tick. The last event that
+   *  says something about activity wins. A tool's own result ends it, so a finished tool is not
+   *  left on screen as if it were still running — after it, the model is thinking again. */
   private static activityFrom(events: Array<Record<string, unknown>>): string | null {
     let label: string | null = null;
     for (const e of events) {
       const type = typeof e.type === "string" ? e.type : "";
-      if (type === "turn.start") label = "Thinking";
+      if (type === "turn.start" || type === "turn.end" || type === "tool.result")
+        label = "Thinking";
       else if (type === "tool.call") {
         const name = e["gen_ai.tool.name"];
         label =
@@ -784,14 +785,19 @@ export class Connector {
     // Send when the line changes, and otherwise only often enough to outlive the 30-second draft.
     // Re-sending an identical draft on every 2.5s tick would be ~120 calls across a five-minute
     // turn, competing with the durable outbox for the same rate limit.
-    const now = Date.now();
-    const due = label !== state.shown || now - state.sentAt >= this.DRAFT_KEEPALIVE_MS;
-    this.progress.set(task.task_id, { cursor, shown: label, sentAt: due ? now : state.sentAt });
+    const due = label !== state.shown || Date.now() - state.sentAt >= this.DRAFT_KEEPALIVE_MS;
+    this.progress.set(task.task_id, { cursor, shown: label, sentAt: state.sentAt });
     if (!due) return;
     // Re-read the cancel flag: the ack may have been sent while the event read above was in flight,
     // and "Stopping that now" followed by "Searching the web" is a lie.
     if (this.store.getTask(task.task_id)?.cancel_requested) return;
-    await this.codec.sendDraft(task.chat_id, Connector.draftId(task.event_id), label);
+    const sent = await this.codec.sendDraft(task.chat_id, Connector.draftId(task.event_id), label);
+    // Only a SEND resets the keepalive clock. Counting a failed attempt would push the next try to
+    // 40s after the last draft that actually landed — a full 10s past Telegram's 30s expiry.
+    if (sent) {
+      const latest = this.progress.get(task.task_id);
+      if (latest) latest.sentAt = Date.now();
+    }
   }
 
   /** Poll every in-flight task to its authoritative terminal state (GET /v1/tasks/:id) and
@@ -838,25 +844,36 @@ export class Connector {
     await Promise.allSettled(stillRunning.map((p) => this.codec.typing?.(p.task.chat_id)));
     // The preview is NOT awaited here. Awaiting every running task's preview before finalizing any
     // task would let one slow chat delay another chat's answer, its `/cancel`, and the whole
-    // dispatch loop — the exact head-of-line blocking the async release removed. Each task's own
-    // preview is tracked instead, and awaited just before that task is finalized below: ordering
-    // matters per task, never across them.
-    for (const p of stillRunning)
-      this.previewInflight.set(
-        p.task.task_id,
-        this.refreshProgress(p.task).catch(() => {}), // best-effort: never an unhandled rejection
-      );
+    // dispatch loop — the exact head-of-line blocking the async release removed.
+    //
+    // SINGLE-FLIGHT per task: a tick never starts a second preview while one is open. Two
+    // overlapping refreshes would both read the same cursor and label, so the slower one could
+    // overwrite the newer state with older values, and could still be in flight after its task was
+    // finalized and its state deleted — leaving a stale draft beside the answer and an orphaned map
+    // entry behind it.
+    for (const p of stillRunning) {
+      const id = p.task.task_id;
+      if (this.previewInflight.has(id)) continue;
+      const preview = this.refreshProgress(p.task).catch(() => {}); // never an unhandled rejection
+      this.previewInflight.set(id, preview);
+      void preview.then(() => {
+        if (this.previewInflight.get(id) === preview) this.previewInflight.delete(id);
+      });
+    }
+    // A preview must land before the reply it was previewing, or a stale "Searching the web"
+    // reappears beside the answer for the rest of its 30 seconds. Waiting happens here, for every
+    // finalizing task AT ONCE and before the serial loop, so the wait is one bounded draft call
+    // rather than the sum of one per task — and nothing waits on a task that is still running.
+    const terminal = polled.filter(
+      (p) => p.st && p.st.status !== "queued" && p.st.status !== "running",
+    );
+    await Promise.allSettled(terminal.map((p) => this.previewInflight.get(p.task.task_id)));
     let finalized = false;
     for (const { task, st } of polled) {
       if (!st) continue; // transient poll failure: keep the task active, retry next tick
       if (st.status === "queued" || st.status === "running") continue; // typing pinged above
       // Terminal: build the reply, finalize atomically (session + outbox + inbox + task), deliver.
       finalized = true;
-      // This task's own preview, if one is still in flight from an earlier tick, must land before
-      // the real reply — otherwise a stale "Searching the web" reappears next to the answer and
-      // sits there for the rest of its 30 seconds. Only this task waits.
-      await this.previewInflight.get(task.task_id);
-      this.previewInflight.delete(task.task_id);
       let replyChunks: string[];
       let responseId: string | undefined;
       if (st.status === "done") {

@@ -320,6 +320,91 @@ describe("live progress preview", () => {
     (stuck as unknown as () => void)();
   });
 
+  test("only one preview per task is ever in flight", async () => {
+    // Two overlapping refreshes both read the same cursor and label, so the slower one can
+    // overwrite newer state with older values — and can still be open after its task has been
+    // finalized and its state deleted, landing a stale draft beside the answer.
+    const store = new Store(":memory:");
+    const codec = new DraftCodec();
+    let open = 0;
+    let peak = 0;
+    const release: Array<() => void> = [];
+    codec.onDraft = () =>
+      new Promise<void>((resolve) => {
+        peak = Math.max(peak, ++open);
+        release.push(() => {
+          open--;
+          resolve();
+        });
+      });
+    let n = 0;
+    const agent = agentWith({
+      terminal: () => ({ status: "running" }),
+      feed: () => [{ type: "tool.call", "gen_ai.tool.name": `tool_${n++}` }],
+    });
+    const c = new Connector(store, codec, agent, new NoopSupervisor());
+    store.insertInbox(event("e1", "long thing"));
+    await c.runOnce();
+
+    await c.pollTasks();
+    await c.pollTasks();
+    await c.pollTasks();
+    await Bun.sleep(1);
+    expect(peak).toBe(1); // three ticks, one open draft
+
+    for (const r of release.splice(0)) r();
+    await Bun.sleep(1);
+    await c.pollTasks(); // the slot is free again, so previews resume
+    await Bun.sleep(1);
+    expect(release).toHaveLength(1);
+    release[0]?.();
+  });
+
+  test("one slow terminal task does not hold up another's reply", async () => {
+    // Both finish in the same tick. Waiting for each preview in turn would make the second reply
+    // wait for the first task's stuck draft as well as its own.
+    const store = new Store(":memory:");
+    const codec = new DraftCodec();
+    const release: Array<() => void> = [];
+    codec.onDraft = () =>
+      new Promise<void>((resolve) => {
+        release.push(resolve);
+      });
+    const finished = new Set<string>();
+    const agent: AgentClient = {
+      async run() {
+        return { responseId: "s", outputText: "s" };
+      },
+      async startTask(_i, o) {
+        return { id: `task-${o.idempotencyKey}` };
+      },
+      async pollTask(id) {
+        return finished.has(id)
+          ? { status: "done", responseId: id, outputText: `answer for ${id}` }
+          : { status: "running" };
+      },
+      async taskEvents() {
+        return { events: [{ type: "tool.call", "gen_ai.tool.name": "web_search" }], cursor: 1 };
+      },
+    };
+    const c = new Connector(store, codec, agent, new NoopSupervisor());
+    store.insertInbox(event("eA", "one", "tg:100"));
+    store.insertInbox(event("eB", "two", "tg:200"));
+    await c.runOnce();
+    await c.runOnce();
+    await c.pollTasks(); // both previews now open and stuck
+
+    finished.add("task-eA");
+    finished.add("task-eB");
+    const finalizing = c.pollTasks();
+    await Bun.sleep(5);
+    expect(codec.sent).toHaveLength(0); // waiting on the previews
+    for (const r of release.splice(0)) r(); // both released together
+    await finalizing;
+    // Both replies land off the same single bounded wait, not one after the other.
+    expect(codec.sent.sort()).toEqual(["answer for task-eA", "answer for task-eB"]);
+  });
+
   test("a channel or daemon without the surface degrades to exactly today's behaviour", async () => {
     const store = new Store(":memory:");
     const sent: string[] = [];

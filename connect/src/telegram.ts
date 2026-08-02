@@ -224,7 +224,9 @@ export function escapeRichMarkdown(source: string): string {
  *  3-space indent allowance. `bare` marks a marker with nothing after it — an opening fence may
  *  carry an info string (```ts), a closing one may not. */
 function fenceMarker(line: string): { char: string; len: number; bare: boolean } | null {
-  const text = line.replace(/^ {0,3}/, "");
+  // Block-quote markers are stripped first: a fence inside a quote is still a fence, and treating
+  // `> ``` ` as ordinary text would escape the quoted code beneath it.
+  const text = line.replace(/^(?: {0,3}> ?)*/, "").replace(/^ {0,3}/, "");
   const char = text[0];
   if (char !== "`" && char !== "~") return null;
   let len = 0;

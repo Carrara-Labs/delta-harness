@@ -336,7 +336,7 @@ describe("Rich messages", () => {
     expect(escapeRichMarkdown("```ts\nconst a__b = 1;\n```")).toBe("```ts\nconst a__b = 1;\n```");
   });
 
-  test("code stays untouched, whatever shape the delimiters take", () => {
+  test("code stays untouched across the delimiter shapes an agent actually writes", () => {
     // The promise is that Telegram already treats code as literal, so we must not write into it.
     // Pairing backticks one character at a time broke every one of these.
     expect(escapeRichMarkdown("a ``x__y`` b")).toBe("a ``x__y`` b"); // multi-backtick span
@@ -353,6 +353,13 @@ describe("Rich messages", () => {
     );
     // An unclosed backtick run is ordinary text, and must not swallow or re-scan the rest.
     expect(escapeRichMarkdown("a ` b__c")).toBe("a ` b\\_\\_c");
+    // A fence inside a block quote is still a fence.
+    expect(escapeRichMarkdown("> ```\n> a__b\n> ```")).toBe("> ```\n> a__b\n> ```");
+    // Known limits, recorded rather than claimed fixed: the scan is per line, so a code span
+    // broken across lines is escaped, and a fence whose info string contains a backtick is read
+    // as a fence rather than a span. Both are rare in agent output and fail toward a visible
+    // backslash, never toward a mangled identifier.
+    expect(escapeRichMarkdown("`a__b\nc__d`")).toBe("`a\\_\\_b\nc\\_\\_d`");
   });
 
   test("escaping leaves structure alone", () => {
