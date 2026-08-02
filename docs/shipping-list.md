@@ -7,6 +7,20 @@ else is low-risk and sequences freely. Shipped items at the bottom for context.
 
 The security track (the vault + secure intake) shipped 2026-08-01. Next work is P1 below.
 
+## Observing (NOT scheduled) — Ferni field report #2
+
+`docs/backlog-ferni-field-report-2.md`, captured 2026-08-01. Dogfooding continues; we want more
+data before shipping any of it.
+
+- **Prompt caching collapses on long threads.** 9% cache hit across a $49.26 day on one agent;
+  the rolling breakpoints land on per-turn ephemeral blocks, so only the spine is ever re-read.
+  Candidate fix identified. Needs a controlled A/B on a lab agent before it is written.
+- **`list_secrets` / `vault.declared` conflate "in the vault" with "available to the agent".**
+  Found by Ferni itself while self-diagnosing. One coherent fix covers both.
+- **Operator actions are invisible to the agent** — a credential removed behind its back produced
+  a confident wrong diagnosis. The arrival case is now handled; removal is not.
+- Smaller: `spawn_subagent` running 300s, the `code` CLI missing from the Ferni image.
+
 ## P1 — leapfrog + robustness fast-follows
 
 - **Connect S4 — Rich Messages (native rich blocks).** Telegram Bot API 10.1/10.2 (2026) added
