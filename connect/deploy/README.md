@@ -22,6 +22,31 @@ sh connect/deploy/deploy.sh          # secrets already set; re-stages + deploys
 The volume persists across deploys, so the agent's learned self-file, memory, and
 the connector's inbox/outbox survive.
 
+## Which code Ferni runs
+
+By default, the **published packages**, pinned exactly in `connect/deploy/package.json`:
+
+```json
+"@carrara-labs/delta-harness": "0.2.10",
+"@carrara-labs/delta-connect":  "0.4.3"
+```
+
+So the deployed agent is what anyone else installs, upgrading is a version edit plus a
+redeploy, and rolling back is the same edit in reverse. The boot log says
+`[ferni] running the published packages`.
+
+For the pre-release test loop, deploy this worktree instead:
+
+```sh
+sh connect/deploy/deploy.sh --from-source
+```
+
+That is what the release gate needs: prove a fix on a real agent **before** it reaches npm,
+which is impossible if the only way to reach Ferni is to publish first. The boot log says
+`running FROM SOURCE` so an unpublished agent is never mistaken for a released one. When the
+fix is published, bump the pins above and redeploy **without** the flag - an agent left on a
+worktree is running something nobody can reproduce.
+
 ## Operate
 
 ```sh

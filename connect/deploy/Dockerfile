@@ -1,19 +1,20 @@
 # Delta Connect + a Delta agent, one always-on Fly machine.
-# Built from a minimal staged context (see deploy.sh) so node_modules/.git/site
-# never reach the builder. The engine is zero-dep; both processes run via Bun.
+#
+# Two shapes, both staged by deploy.sh (see it for which and why):
+#   default        - `package.json` pins the PUBLISHED packages; bun installs them here.
+#   --from-source  - the worktree is staged instead, and the install is a no-op (zero deps).
+# The entrypoint detects which one it got, so this file needs no conditionals.
 FROM oven/bun:1.3
 
 WORKDIR /app
 
-# The engine (zero runtime deps) and the connector, both run from source.
-COPY package.json tsconfig.json ./
-COPY src ./src
-COPY assets ./assets
-COPY connect ./connect
+# Separate layer: the install is cached until a pinned version actually changes.
+COPY package.json ./
+RUN bun install --production
 
-# Bundle seed (persona/policy/vocab - NO secrets; keys arrive as Fly secrets).
-COPY bundle-seed ./bundle-seed
-COPY entrypoint.sh ./entrypoint.sh
+# The rest of the staged context: bundle seed, entrypoint, and on a --from-source
+# deploy the engine and connector sources too.
+COPY . .
 RUN chmod +x ./entrypoint.sh
 
 ENTRYPOINT ["/app/entrypoint.sh"]

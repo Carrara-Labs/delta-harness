@@ -37,10 +37,15 @@ state · Biome · providers subscription-first with OpenRouter backup.
 ## Release gate
 
 npm is a permanent public trail. **Deploy from source to a real agent and finish the
-human-in-the-loop test before publishing** — the deployment builds from this repo, not from npm,
-so the deploy → test → fix loop needs no release. A critical path you know is unverified blocks
-the release; it is not a footnote. Clean up an already-published mistake with `npm deprecate`,
-never `unpublish`.
+human-in-the-loop test before publishing** — `sh connect/deploy/deploy.sh --from-source` builds
+from this worktree, so the deploy → test → fix loop needs no release. A critical path you know is
+unverified blocks the release; it is not a footnote. Clean up an already-published mistake with
+`npm deprecate`, never `unpublish`.
+
+Publishing is not the last step. Redeploy the agent **without** `--from-source` so it runs the
+released packages, and run the post-release battery against the published tarball rather than the
+repo — an agent left on a worktree is running something nobody else can reproduce, and a release
+nobody has installed is untested.
 
 ## Reality checks
 
