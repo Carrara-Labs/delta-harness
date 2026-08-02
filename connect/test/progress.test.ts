@@ -6,7 +6,6 @@ import type {
   AgentClient,
   AgentSupervisor,
   ChannelCodec,
-  DraftPreview,
   Inbound,
   OperationResult,
 } from "../src/types";
@@ -18,15 +17,23 @@ import type {
 class DraftCodec implements ChannelCodec {
   readonly name = "test";
   sent: string[] = [];
-  drafts: Array<{ chatId: string; draftId: number; draft: DraftPreview }> = [];
+  drafts: Array<{ chatId: string; draftId: number; activity: string }> = [];
+  /** Hooks so a test can hold a draft open or observe delivery order. */
+  onDraft?: (chatId: string) => Promise<void>;
+  onSend?: () => void;
   async send(_chatId: string, text: string) {
+    this.onSend?.();
     this.sent.push(text);
     return { ok: true, retryable: false };
   }
   async typing() {}
-  async sendDraft(chatId: string, draftId: number, draft: DraftPreview) {
-    this.drafts.push({ chatId, draftId, draft });
+  async sendDraft(chatId: string, draftId: number, activity: string) {
+    await this.onDraft?.(chatId);
+    this.drafts.push({ chatId, draftId, activity });
     return true;
+  }
+  activities() {
+    return this.drafts.map((d) => d.activity);
   }
 }
 
@@ -84,35 +91,61 @@ function agentWith(script: {
   };
 }
 
+/** pollTasks launches a preview without awaiting it (so one slow chat cannot block another), so a
+ *  test settles the in-flight call explicitly where the production loop would just carry on. */
+const tick = async (c: Connector) => {
+  await c.pollTasks();
+  await Bun.sleep(1);
+};
+
 describe("live progress preview", () => {
-  test("names the work in flight, and keeps the ephemeral draft alive under one id", async () => {
+  test("names the work in flight, under one draft id, without hammering the API", async () => {
     const store = new Store(":memory:");
     const codec = new DraftCodec();
+    const seen: number[] = [];
     let feed: Array<Record<string, unknown>> = [];
-    const agent = agentWith({ terminal: () => ({ status: "running" }), feed: () => feed });
+    const agent = agentWith({
+      terminal: () => ({ status: "running" }),
+      feed: () => feed,
+      onEvents: (_id, since) => seen.push(since),
+    });
     const c = new Connector(store, codec, agent, new NoopSupervisor());
 
     store.insertInbox(event("e1", "research something"));
     await c.runOnce();
 
     // Before any event has landed there is still something honest to show.
-    await c.pollTasks();
-    expect(codec.drafts.at(-1)?.draft).toEqual({ kind: "thinking", text: "Thinking" });
+    await tick(c);
+    expect(codec.activities()).toEqual(["Thinking"]);
 
     feed = [{ type: "turn.start" }, { type: "tool.call", "gen_ai.tool.name": "web_search" }];
-    await c.pollTasks();
-    expect(codec.drafts.at(-1)?.draft).toEqual({ kind: "thinking", text: "Searching the web" });
+    await tick(c);
+    expect(codec.activities()).toEqual(["Thinking", "Searching the web"]);
 
     // A tool nobody named still reads as a sentence rather than an identifier.
     feed = [{ type: "tool.call", "gen_ai.tool.name": "qs_stage_body" }];
-    await c.pollTasks();
-    expect(codec.drafts.at(-1)?.draft).toEqual({ kind: "thinking", text: "Running qs stage body" });
+    await tick(c);
+    expect(codec.activities().at(-1)).toBe("Running qs stage body");
 
-    // Nothing new: the last thing shown is still true, and re-sending is what stops the 30-second
-    // preview from lapsing mid-turn.
+    // Nothing new: the line is still true, so nothing is sent. Re-sending an identical draft on
+    // every 2.5s tick would be ~120 calls across a five-minute turn.
     feed = [];
-    await c.pollTasks();
-    expect(codec.drafts.at(-1)?.draft).toEqual({ kind: "thinking", text: "Running qs stage body" });
+    const quiet = codec.drafts.length;
+    await tick(c);
+    await tick(c);
+    expect(codec.drafts).toHaveLength(quiet);
+
+    // But the draft expires after 30s, so an unchanged line is still refreshed before it lapses.
+    const state = (c as unknown as { progress: Map<string, { sentAt: number }> }).progress;
+    const entry = state.get(store.activeTasks()[0]?.task_id ?? "");
+    if (entry) entry.sentAt -= 25_000;
+    await tick(c);
+    expect(codec.drafts).toHaveLength(quiet + 1);
+    expect(codec.activities().at(-1)).toBe("Running qs stage body");
+
+    // The cursor advances, so the same events are never re-read and the label cannot walk backwards.
+    expect(seen).toEqual([...seen].sort((a, b) => a - b));
+    expect(seen.at(-1)).toBeGreaterThan(0);
 
     // One draft id for the whole turn, so successive frames animate instead of stacking up.
     expect(new Set(codec.drafts.map((d) => d.draftId)).size).toBe(1);
@@ -120,14 +153,39 @@ describe("live progress preview", () => {
     expect(codec.sent).toHaveLength(0); // a preview is not a message
   });
 
-  test("the draft id is derived from the event, so a placeholder re-key does not split it", () => {
-    // A start whose 202 is lost is re-keyed from `pending:e1` to a real run id mid-turn. Keying the
-    // preview on the task id would abandon the first draft and start a second one on screen.
-    const idFor = (eventId: string) =>
-      (Connector as unknown as { draftId: (e: string) => number }).draftId(eventId);
-    expect(idFor("tg:42")).toBe(idFor("tg:42"));
-    expect(idFor("tg:42")).not.toBe(idFor("tg:43"));
-    expect(idFor("")).toBeGreaterThan(0);
+  test("a stale or repeated cursor never walks the line backwards", async () => {
+    // The daemon is monotonic today. If it ever were not, replaying old events would regress
+    // "Searching the web" to "Thinking" and re-read the same history every tick.
+    const store = new Store(":memory:");
+    const codec = new DraftCodec();
+    let cursor = 5;
+    const agent: AgentClient = {
+      async run() {
+        return { responseId: "s", outputText: "s" };
+      },
+      async startTask() {
+        return { id: "task-1" };
+      },
+      async pollTask() {
+        return { status: "running" };
+      },
+      async taskEvents() {
+        return { events: [{ type: "tool.call", "gen_ai.tool.name": "web_search" }], cursor };
+      },
+    };
+    const c = new Connector(store, codec, agent, new NoopSupervisor());
+    store.insertInbox(event("e1", "hi"));
+    await c.runOnce();
+    await tick(c);
+    expect(codec.activities().at(-1)).toBe("Searching the web");
+
+    cursor = 2; // went backwards
+    const before = codec.drafts.length;
+    await tick(c);
+    await tick(c); // and stayed there
+    expect(codec.drafts).toHaveLength(before); // nothing changed, so nothing was sent
+    const state = (c as unknown as { progress: Map<string, { cursor: number }> }).progress;
+    expect(state.get(store.activeTasks()[0]?.task_id ?? "")?.cursor).toBe(5); // read position held
   });
 
   test("a task the daemon has not accepted yet is never previewed", async () => {
@@ -141,7 +199,7 @@ describe("live progress preview", () => {
     store.insertInbox(event("e1", "hi"));
     await c.runOnce();
     expect(store.activeTasks()[0]?.task_id).toStartWith("pending:");
-    await c.pollTasks();
+    await tick(c);
     expect(codec.drafts).toHaveLength(0);
     expect(agent.eventReads).toBe(0);
   });
@@ -149,27 +207,45 @@ describe("live progress preview", () => {
   test("once the user asks to stop, the preview stops animating", async () => {
     const store = new Store(":memory:");
     const codec = new DraftCodec();
+    let n = 0;
     const agent = agentWith({
       terminal: () => ({ status: "running" }),
-      feed: () => [{ type: "tool.call", "gen_ai.tool.name": "web_search" }],
+      // A new tool each tick, so the label would keep changing if nothing suppressed it.
+      feed: () => [{ type: "tool.call", "gen_ai.tool.name": `tool_${n++}` }],
     });
-    const c = new Connector(store, codec, agent, new NoopSupervisor());
+    const c = new Connector(store, codec, agent, new NoopSupervisor(), () => {}, new Set(["7"]));
 
     store.insertInbox(event("e1", "long thing"));
     await c.runOnce();
-    await c.pollTasks();
+    await tick(c);
     expect(codec.drafts.length).toBeGreaterThan(0);
-
     const before = codec.drafts.length;
-    store.requestCancel(store.activeTasks()[0]?.task_id ?? "");
-    await c.pollTasks();
-    // "Stopping that now" followed by a preview still claiming to search would be a lie.
+
+    // The real command, not a poke at the store: it acks and records durable cancel intent.
+    store.insertInbox(event("e2", "/cancel"));
+    await c.runOnce();
+    expect(codec.sent.join(" ")).toContain("Stopping");
+
+    await tick(c);
+    await tick(c);
+    // "Stopping that now" followed by a preview still claiming to work would be a lie.
     expect(codec.drafts).toHaveLength(before);
   });
 
-  test("no preview survives its turn, and none can land after the real reply", async () => {
+  test("a preview in flight lands before the reply it was previewing", async () => {
+    // The interleaving that matters: the daemon finishes while a draft POST is still open. If the
+    // answer went out first, the stale preview would reappear beside it for the rest of its 30s.
     const store = new Store(":memory:");
     const codec = new DraftCodec();
+    const order: string[] = [];
+    let release: (() => void) | null = null;
+    codec.onDraft = () =>
+      new Promise<void>((resolve) => {
+        release = () => {
+          order.push("draft");
+          resolve();
+        };
+      });
     let done = false;
     const agent = agentWith({
       terminal: () =>
@@ -179,38 +255,81 @@ describe("live progress preview", () => {
       feed: () => [{ type: "tool.call", "gen_ai.tool.name": "read_file" }],
     });
     const c = new Connector(store, codec, agent, new NoopSupervisor());
+    codec.onSend = () => order.push("reply");
 
     store.insertInbox(event("e1", "read it"));
     await c.runOnce();
-    await c.pollTasks();
-    const duringTurn = codec.drafts.length;
-    expect(duringTurn).toBeGreaterThan(0);
+    await tick(c); // starts a draft that does not settle
+    expect(order).toEqual([]);
 
     done = true;
-    await c.pollTasks(); // terminal → finalize + deliver
-    expect(codec.sent).toEqual(["the answer"]);
-    // A terminal task is not in the still-running set, so the tick that delivers sends no preview.
-    expect(codec.drafts).toHaveLength(duringTurn);
+    const finalizing = c.pollTasks();
+    await Bun.sleep(5); // let finalization reach the await on this task's preview
+    expect(order).toEqual([]); // it is waiting, not racing
+    (release as unknown as () => void)();
+    await finalizing;
 
+    expect(order).toEqual(["draft", "reply"]);
+    expect(codec.sent).toEqual(["the answer"]);
     // And the per-task state is gone with it — the map tracks work in flight, nothing more.
     const state = (c as unknown as { progress: Map<string, unknown> }).progress;
     expect(state.size).toBe(0);
+  });
 
-    await c.pollTasks();
-    expect(codec.drafts).toHaveLength(duringTurn);
+  test("one slow preview never delays another conversation's reply", async () => {
+    // The head-of-line blocking the async release removed must not come back through the preview.
+    const store = new Store(":memory:");
+    const codec = new DraftCodec();
+    let stuck: (() => void) | null = null;
+    codec.onDraft = (chatId) =>
+      chatId === "200"
+        ? new Promise<void>((resolve) => {
+            stuck = resolve;
+          })
+        : Promise.resolve();
+    const finished = new Set<string>();
+    const agent: AgentClient = {
+      async run() {
+        return { responseId: "s", outputText: "s" };
+      },
+      async startTask(_i, o) {
+        return { id: `task-${o.idempotencyKey}` };
+      },
+      async pollTask(id) {
+        return finished.has(id)
+          ? { status: "done", responseId: id, outputText: `answer for ${id}` }
+          : { status: "running" };
+      },
+      async taskEvents() {
+        return { events: [{ type: "tool.call", "gen_ai.tool.name": "web_search" }], cursor: 1 };
+      },
+    };
+    const c = new Connector(store, codec, agent, new NoopSupervisor());
+
+    store.insertInbox(event("eA", "quick", "tg:100"));
+    store.insertInbox(event("eB", "slow", "tg:200"));
+    await c.runOnce();
+    await c.runOnce();
+    await tick(c); // B's preview hangs from here on
+
+    finished.add("task-eA");
+    // A's answer must not wait on B's stuck draft.
+    await tick(c);
+    expect(codec.sent).toEqual(["answer for task-eA"]);
+    expect(stuck).not.toBeNull();
+    (stuck as unknown as () => void)();
   });
 
   test("a channel or daemon without the surface degrades to exactly today's behaviour", async () => {
     const store = new Store(":memory:");
-    // No sendDraft on the codec, no taskEvents on the agent.
+    const sent: string[] = [];
     const plain: ChannelCodec = {
       name: "plain",
-      sent: [] as string[],
       async send(_c: string, text: string) {
-        (this as unknown as { sent: string[] }).sent.push(text);
+        sent.push(text);
         return { ok: true, retryable: false };
       },
-    } as ChannelCodec & { sent: string[] };
+    };
     let done = false;
     const agent: AgentClient = {
       async run() {
@@ -228,9 +347,9 @@ describe("live progress preview", () => {
     const c = new Connector(store, plain, agent, new NoopSupervisor());
     store.insertInbox(event("e1", "hi"));
     await c.runOnce();
-    await c.pollTasks();
+    await tick(c);
     done = true;
-    await c.pollTasks();
-    expect((plain as unknown as { sent: string[] }).sent).toEqual(["answer"]);
+    await tick(c);
+    expect(sent).toEqual(["answer"]);
   });
 });

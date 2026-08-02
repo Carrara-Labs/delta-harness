@@ -39,11 +39,6 @@ export type OutboundResult = {
 /** A bounded operation result. Supervisory and inspect failures stay values. */
 export type OperationResult = { ok: boolean; error?: string; note?: string };
 
-/** A live preview frame: either the reply text written so far, or a placeholder for work in
- *  progress ("Searching the web"). Kept to these two shapes on purpose — a rich message carries
- *  exactly one of markdown or blocks, so the either/or is the wire format, not a simplification. */
-export type DraftPreview = { kind: "text" | "thinking"; text: string };
-
 /** Bytes fetched for an attachment, ready to hand to the daemon file seam. */
 export type DownloadedFile = { bytes: Uint8Array; name: string; mime: string };
 
@@ -63,10 +58,10 @@ export interface ChannelCodec {
     url: string,
   ): Promise<OutboundResult>;
   typing?(chatId: string): Promise<void>;
-  /** Show an ephemeral preview of the reply being written: the text so far, or a placeholder
-   *  naming what the agent is doing. Returns false when there is no preview (unsupported channel,
-   *  unsupported chat, or any failure) — never throws, and never fails the turn. */
-  sendDraft?(chatId: string, draftId: number, draft: DraftPreview): Promise<boolean>;
+  /** Show an ephemeral preview naming what the agent is doing right now. Returns false when there
+   *  is no preview (unsupported channel, unsupported chat, or any failure) — never throws, and
+   *  never fails the turn. */
+  sendDraft?(chatId: string, draftId: number, activity: string): Promise<boolean>;
   /** Fetch an attachment's bytes. Returns null on any failure (error-as-value). */
   download?(ref: AttachmentRef): Promise<DownloadedFile | null>;
 }

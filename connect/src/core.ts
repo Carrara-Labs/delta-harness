@@ -289,10 +289,15 @@ export class Connector {
   /** Give up on an unresolved placeholder after this long — the daemon is unreachable, so surface a
    *  clean failure rather than wedging the conversation forever. */
   private readonly PLACEHOLDER_DEADLINE_MS = 60_000;
-  /** Live-preview state per in-flight task: how far we have read the daemon's event feed, and the
-   *  last line we showed. In memory on purpose — a preview is disposable, so a restart just starts
-   *  reading again rather than owning a durable cursor to reconcile. */
-  private readonly progress = new Map<string, { cursor: number; shown: string }>();
+  /** Live-preview state per in-flight task: how far we have read the daemon's event feed, the last
+   *  line we showed, and when we last sent it. In memory on purpose — a preview is disposable, so a
+   *  restart just starts reading again rather than owning a durable cursor to reconcile. */
+  private readonly progress = new Map<string, { cursor: number; shown: string; sentAt: number }>();
+  /** The preview call in flight for a task, so its own finalization can wait for it without any
+   *  other task waiting too. */
+  private readonly previewInflight = new Map<string, Promise<void>>();
+  /** A draft expires after 30s; refresh comfortably inside that, but only when nothing changed. */
+  private readonly DRAFT_KEEPALIVE_MS = 20_000;
 
   constructor(
     private readonly store: Store,
@@ -766,18 +771,27 @@ export class Connector {
   private async refreshProgress(task: TaskRow): Promise<void> {
     if (!this.codec.sendDraft || !this.agent.taskEvents) return;
     if (task.cancel_requested) return; // already told "stopping" — don't keep animating
-    const state = this.progress.get(task.task_id) ?? { cursor: 0, shown: "" };
+    const state = this.progress.get(task.task_id) ?? { cursor: 0, shown: "", sentAt: 0 };
     const read = await this.agent.taskEvents(task.task_id, task.user_id, state.cursor);
     if (!read) return;
+    // A cursor that does not advance carries nothing new — and replaying old events would walk the
+    // label backwards, from "Searching the web" to "Thinking".
+    const advanced = read.cursor > state.cursor;
     // Nothing new this tick means the last thing we showed is still true. Before the first event
     // lands there is still something honest to say.
-    const label = Connector.activityFrom(read.events) || state.shown || "Thinking";
-    this.progress.set(task.task_id, { cursor: read.cursor, shown: label });
-    // Re-send even when unchanged: a draft expires after 30s, so the refresh IS what keeps it up.
-    await this.codec.sendDraft(task.chat_id, Connector.draftId(task.event_id), {
-      kind: "thinking",
-      text: label,
-    });
+    const label = (advanced && Connector.activityFrom(read.events)) || state.shown || "Thinking";
+    const cursor = advanced ? read.cursor : state.cursor;
+    // Send when the line changes, and otherwise only often enough to outlive the 30-second draft.
+    // Re-sending an identical draft on every 2.5s tick would be ~120 calls across a five-minute
+    // turn, competing with the durable outbox for the same rate limit.
+    const now = Date.now();
+    const due = label !== state.shown || now - state.sentAt >= this.DRAFT_KEEPALIVE_MS;
+    this.progress.set(task.task_id, { cursor, shown: label, sentAt: due ? now : state.sentAt });
+    if (!due) return;
+    // Re-read the cancel flag: the ack may have been sent while the event read above was in flight,
+    // and "Stopping that now" followed by "Searching the web" is a lie.
+    if (this.store.getTask(task.task_id)?.cancel_requested) return;
+    await this.codec.sendDraft(task.chat_id, Connector.draftId(task.event_id), label);
   }
 
   /** Poll every in-flight task to its authoritative terminal state (GET /v1/tasks/:id) and
@@ -821,20 +835,28 @@ export class Connector {
     const stillRunning = polled.filter(
       (p) => p.st && (p.st.status === "queued" || p.st.status === "running"),
     );
-    // Typing and the live progress preview go out together, and are AWAITED before the finalize
-    // loop below. That await is the ordering barrier: a task that has gone terminal is not in
-    // `stillRunning`, and any preview issued for a still-running task has completed before the
-    // tick that finalizes it can send the real reply. A stale preview can never land after it.
-    await Promise.allSettled([
-      ...stillRunning.map((p) => this.codec.typing?.(p.task.chat_id)),
-      ...stillRunning.map((p) => this.refreshProgress(p.task)),
-    ]);
+    await Promise.allSettled(stillRunning.map((p) => this.codec.typing?.(p.task.chat_id)));
+    // The preview is NOT awaited here. Awaiting every running task's preview before finalizing any
+    // task would let one slow chat delay another chat's answer, its `/cancel`, and the whole
+    // dispatch loop — the exact head-of-line blocking the async release removed. Each task's own
+    // preview is tracked instead, and awaited just before that task is finalized below: ordering
+    // matters per task, never across them.
+    for (const p of stillRunning)
+      this.previewInflight.set(
+        p.task.task_id,
+        this.refreshProgress(p.task).catch(() => {}), // best-effort: never an unhandled rejection
+      );
     let finalized = false;
     for (const { task, st } of polled) {
       if (!st) continue; // transient poll failure: keep the task active, retry next tick
       if (st.status === "queued" || st.status === "running") continue; // typing pinged above
       // Terminal: build the reply, finalize atomically (session + outbox + inbox + task), deliver.
       finalized = true;
+      // This task's own preview, if one is still in flight from an earlier tick, must land before
+      // the real reply — otherwise a stale "Searching the web" reappears next to the answer and
+      // sits there for the rest of its 30 seconds. Only this task waits.
+      await this.previewInflight.get(task.task_id);
+      this.previewInflight.delete(task.task_id);
       let replyChunks: string[];
       let responseId: string | undefined;
       if (st.status === "done") {
@@ -874,6 +896,7 @@ export class Connector {
       // The turn is over, so its preview state goes with it. This is the only path that retires a
       // previewed task: a placeholder never gets one, and `/new` leaves the run active on purpose.
       this.progress.delete(task.task_id);
+      this.previewInflight.delete(task.task_id);
     }
     if (finalized) {
       await this.flushOutbox();

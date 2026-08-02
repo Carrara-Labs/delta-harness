@@ -387,6 +387,12 @@ export class Store {
     return (this.db.query(`SELECT COUNT(*) AS n FROM tasks`).get() as { n: number }).n;
   }
 
+  /** One task row by id, or null. Used to re-read a flag that may have changed while an await was
+   *  in flight — a cached row is a snapshot, not the truth. */
+  getTask(taskId: string): TaskRow | null {
+    return (this.db.query(`SELECT * FROM tasks WHERE task_id = ?`).get(taskId) as TaskRow) ?? null;
+  }
+
   activeTasks(): TaskRow[] {
     return this.db
       .query(`SELECT * FROM tasks WHERE status = 'active' ORDER BY created_at ASC, rowid ASC`)

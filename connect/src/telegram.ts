@@ -7,7 +7,6 @@ import type {
   AttachmentRef,
   ChannelCodec,
   DownloadedFile,
-  DraftPreview,
   Inbound,
   IngressDriver,
   OutboundResult,
@@ -175,24 +174,33 @@ export function markdownToHtml(source: string): string {
  *  a fenced block and an inline span both preserved `__` and `<u>` untouched). Escaping there
  *  would put visible backslashes into the user's code, which is the opposite of the fix. */
 export function escapeRichMarkdown(source: string): string {
-  let fenced = false;
+  let fence: { char: string; len: number } | null = null;
   return source
     .split("\n")
     .map((line) => {
-      if (line.trimStart().startsWith("```")) {
-        fenced = !fenced;
+      const marker = fenceMarker(line);
+      if (fence) {
+        // Only a bare run of the same character, at least as long, closes the block. Otherwise a
+        // ``` line inside a ```` fence would end it early and the rest of the code would be escaped.
+        if (marker?.bare && marker.char === fence.char && marker.len >= fence.len) fence = null;
         return line;
       }
-      if (fenced) return line;
+      if (marker) {
+        fence = marker;
+        return line;
+      }
       let out = "";
       for (let i = 0; i < line.length; ) {
         if (line[i] === "`") {
-          const end = line.indexOf("`", i + 1);
-          if (end > i) {
-            out += line.slice(i, end + 1);
-            i = end + 1;
-            continue;
-          }
+          // Code spans are delimited by RUNS: a run of n backticks is closed by a run of exactly n.
+          // Pairing single characters instead would treat ``a__b`` as an empty span followed by bare
+          // text, and escape inside the code.
+          let open = i;
+          while (line[open] === "`") open++;
+          const close = codeSpanEnd(line, open, open - i);
+          out += line.slice(i, close < 0 ? open : close);
+          i = close < 0 ? open : close; // an unclosed run is literal text, but never re-scanned
+          continue;
         }
         if (line[i] === "_") {
           let run = i;
@@ -210,6 +218,30 @@ export function escapeRichMarkdown(source: string): string {
       return out;
     })
     .join("\n");
+}
+
+/** The fenced-code marker a line carries, or null: 3+ backticks or tildes under CommonMark's
+ *  3-space indent allowance. `bare` marks a marker with nothing after it — an opening fence may
+ *  carry an info string (```ts), a closing one may not. */
+function fenceMarker(line: string): { char: string; len: number; bare: boolean } | null {
+  const text = line.replace(/^ {0,3}/, "");
+  const char = text[0];
+  if (char !== "`" && char !== "~") return null;
+  let len = 0;
+  while (text[len] === char) len++;
+  return len >= 3 ? { char, len, bare: text.slice(len).trim() === "" } : null;
+}
+
+/** Index just past the backtick run of exactly `len` that closes a code span, or -1. */
+function codeSpanEnd(line: string, from: number, len: number): number {
+  for (let i = from; i < line.length; i++) {
+    if (line[i] !== "`") continue;
+    let end = i;
+    while (line[end] === "`") end++;
+    if (end - i === len) return end;
+    i = end - 1; // a longer or shorter run cannot close this span
+  }
+  return -1;
 }
 
 /** Split Markdown source before rendering, balancing fenced code across chunks. */
@@ -260,10 +292,21 @@ async function decodeTelegramResponse(response: Response): Promise<Decoded> {
     typeof data.parameters?.retry_after === "number"
       ? data.parameters.retry_after * 1000
       : undefined;
+  // A 2xx whose body we could not read is AMBIGUOUS, not a rejection: Telegram may well have
+  // accepted the message and lost the response. Calling that a content error would send the reply a
+  // second time down the fallback path. Retryable keeps it on the outbox's at-least-once contract,
+  // which is the duplicate risk we already accept, instead of a duplicate we manufacture.
+  if (response.ok)
+    return {
+      result: { ok: false, retryable: true, error: "unreadable response" },
+      parseEntities: false,
+    };
   return {
     result: {
       ok: false,
-      retryable: response.status === 429 || response.status >= 500,
+      // 408 and 425 are "ask again", not "this content is wrong". Classifying them as permanent
+      // kills the whole reply group in flushOutbox, which is message loss.
+      retryable: [408, 425, 429].includes(response.status) || response.status >= 500,
       error: data.description,
       ...(retryAfterMs ? { retryAfterMs } : {}),
     },
@@ -272,6 +315,14 @@ async function decodeTelegramResponse(response: Response): Promise<Decoded> {
       typeof data.description === "string" &&
       data.description.toLowerCase().includes("can't parse entities"),
   };
+}
+
+/** Whether a response means "this Bot API server has no such method", and so that the whole
+ *  feature should be latched off rather than retried per message. Measured against api.telegram.org:
+ *  an unknown method answers exactly `404 {"description":"Not Found"}`. Anything wordier is about
+ *  the request (a missing chat, a bad parameter) and must cost one fallback, not the feature. */
+function methodMissing(status: number, description?: string): boolean {
+  return status === 404 && (description ?? "").trim().toLowerCase() === "not found";
 }
 
 export class TelegramCodec implements ChannelCodec {
@@ -310,10 +361,11 @@ export class TelegramCodec implements ChannelCodec {
           signal: AbortSignal.timeout(15000),
         });
         const { result } = await decodeTelegramResponse(response);
-        // Delivered, or a 429/5xx the outbox should back off on rather than silently downgrade.
+        // Delivered, or something to retry (429, 5xx, an unreadable 2xx). Return rather than
+        // downgrade: Telegram never refused this content, and it may already have accepted it.
         if (result.ok || result.retryable) return result;
         // No such method: this Bot API server predates Rich Messages. Stop asking.
-        if (response.status === 404) this.rich = false;
+        if (methodMissing(response.status, result.error)) this.rich = false;
         // Anything else is about THIS content (unparseable markdown, a limit). Fall through to
         // the HTML path so a reply is never lost to a rendering problem.
       }
@@ -334,32 +386,33 @@ export class TelegramCodec implements ChannelCodec {
     }
   }
 
-  /** Stream an ephemeral preview of the reply as it is being written.
+  /** Show what the agent is doing, as an ephemeral rich draft.
    *
    *  A draft is NOT a message: it is a 30-second preview keyed by a `draft_id` we choose, and
    *  Telegram animates successive drafts under the same id. Nothing is persisted, so there is no
-   *  partial answer to strand in the chat if this process dies mid-turn — the real message is sent
-   *  once, complete, by the ordinary outbox. Best-effort by construction: the caller treats false
-   *  as "no preview", never as a failed turn.
+   *  half-finished bubble to strand in the chat if this process dies mid-turn — the real reply is
+   *  sent once, complete, by the ordinary outbox.
    *
-   *  Private chats with a numeric id only, per the API. */
-  async sendDraft(chatId: string, draftId: number, draft: DraftPreview): Promise<boolean> {
+   *  Best-effort by construction: bounded well under the poll cadence, and false just means "no
+   *  preview". Private chats with a numeric id only, per the API. */
+  async sendDraft(chatId: string, draftId: number, activity: string): Promise<boolean> {
     if (!this.rich) return false;
     const chat = Number(chatId);
     if (!Number.isSafeInteger(chat) || chat <= 0) return false; // groups/channels: not supported
-    const rich =
-      draft.kind === "text"
-        ? { markdown: escapeRichMarkdown(draft.text) }
-        : { blocks: [{ type: "thinking", text: draft.text }] };
     try {
       const response = await fetch(API(this.token, "sendRichMessageDraft"), {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ chat_id: chat, draft_id: draftId, rich_message: rich }),
-        signal: AbortSignal.timeout(10000),
+        body: JSON.stringify({
+          chat_id: chat,
+          draft_id: draftId,
+          rich_message: { blocks: [{ type: "thinking", text: activity }] },
+        }),
+        signal: AbortSignal.timeout(5000),
       });
-      if (response.status === 404) this.rich = false;
-      return (await decodeTelegramResponse(response)).result.ok;
+      const { result } = await decodeTelegramResponse(response);
+      if (methodMissing(response.status, result.error)) this.rich = false;
+      return result.ok;
     } catch {
       return false; // a preview is never worth failing a turn over
     }

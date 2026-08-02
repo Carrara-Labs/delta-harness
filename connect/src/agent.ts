@@ -290,7 +290,15 @@ export class DeltaAgent implements AgentClient {
         events?: unknown;
         cursor?: unknown;
       };
-      if (!Array.isArray(data.events) || typeof data.cursor !== "number") return null;
+      // A cursor is a row id. Anything else — a float, a negative, NaN from a proxy that mangled
+      // the body — would be written back as our read position and could replay history forever.
+      if (
+        !Array.isArray(data.events) ||
+        typeof data.cursor !== "number" ||
+        !Number.isSafeInteger(data.cursor) ||
+        data.cursor < 0
+      )
+        return null;
       return { events: data.events as Array<Record<string, unknown>>, cursor: data.cursor };
     } catch {
       return null;

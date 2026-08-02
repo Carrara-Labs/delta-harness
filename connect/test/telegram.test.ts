@@ -336,6 +336,38 @@ describe("Rich messages", () => {
     expect(escapeRichMarkdown("```ts\nconst a__b = 1;\n```")).toBe("```ts\nconst a__b = 1;\n```");
   });
 
+  test("code stays untouched, whatever shape the delimiters take", () => {
+    // The promise is that Telegram already treats code as literal, so we must not write into it.
+    // Pairing backticks one character at a time broke every one of these.
+    expect(escapeRichMarkdown("a ``x__y`` b")).toBe("a ``x__y`` b"); // multi-backtick span
+    expect(escapeRichMarkdown("`` ` a__b ``")).toBe("`` ` a__b ``"); // a lone tick inside a span
+    // A four-backtick fence wrapping a three-backtick one: the inner markers are content, so the
+    // block runs to the closing four and everything between it stays exactly as written.
+    const nested = "````\n```\na__b\n```\n````";
+    expect(escapeRichMarkdown(nested)).toBe(nested);
+    expect(escapeRichMarkdown("~~~\na__b\n~~~")).toBe("~~~\na__b\n~~~"); // tilde fence
+    expect(escapeRichMarkdown("```ts x\na__b\n```")).toBe("```ts x\na__b\n```"); // info string
+    // A fence marker with trailing content cannot CLOSE a block, so what follows is still code.
+    expect(escapeRichMarkdown("```\na__b\n``` trailing\nc__d\n```")).toBe(
+      "```\na__b\n``` trailing\nc__d\n```",
+    );
+    // An unclosed backtick run is ordinary text, and must not swallow or re-scan the rest.
+    expect(escapeRichMarkdown("a ` b__c")).toBe("a ` b\\_\\_c");
+  });
+
+  test("escaping leaves structure alone", () => {
+    expect(escapeRichMarkdown("| a__b | c |\n|---|---|\n| 1 | 2 |")).toBe(
+      "| a\\_\\_b | c |\n|---|---|\n| 1 | 2 |",
+    );
+    expect(escapeRichMarkdown("see [my_link](https://x.test/a_b)")).toBe(
+      "see [my\\_link](https://x.test/a\\_b)",
+    );
+    expect(escapeRichMarkdown("text[^note_1]")).toBe("text[^note\\_1]");
+    expect(escapeRichMarkdown("a\r\nb__c")).toBe("a\r\nb\\_\\_c"); // CRLF survives
+    expect(escapeRichMarkdown("____")).toBe("____"); // a line of only underscores
+    expect(escapeRichMarkdown("")).toBe("");
+  });
+
   test("the word test sees whole characters here too", () => {
     expect(escapeRichMarkdown("á__b__c")).toBe("á\\_\\_b\\_\\_c");
     expect(escapeRichMarkdown("\u{10400}__b__c")).toBe("\u{10400}\\_\\_b\\_\\_c");
@@ -400,7 +432,7 @@ describe("Rich messages", () => {
     globalThis.fetch = (async (url) => {
       urls.push(String(url));
       return String(url).includes("Rich")
-        ? Response.json({ ok: false, description: "Not Found: method not found" }, { status: 404 })
+        ? Response.json({ ok: false, description: "Not Found" }, { status: 404 })
         : Response.json({ ok: true });
     }) as typeof fetch;
     const codec = new TelegramCodec("token");
@@ -410,6 +442,41 @@ describe("Rich messages", () => {
     expect(urls.filter((u) => u.includes("sendRichMessage"))).toHaveLength(1);
   });
 
+  test("an ambiguous success is retried, never re-sent down the fallback path", async () => {
+    // Telegram accepted the message but the body was truncated. Calling that a content rejection
+    // would deliver the reply twice - once rich, once HTML.
+    const urls: string[] = [];
+    globalThis.fetch = (async (url) => {
+      urls.push(String(url));
+      return new Response("{tru", { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    const result = await new TelegramCodec("token").send("7", "hi");
+    expect(result.ok).toBe(false);
+    expect(result.retryable).toBe(true);
+    expect(urls).toHaveLength(1); // no HTML copy
+  });
+
+  test("transient statuses stay retryable so a reply is never dropped", async () => {
+    // flushOutbox kills the whole reply group on a permanent failure, so misclassifying a timeout
+    // as permanent is message loss.
+    for (const status of [408, 425, 500, 503]) {
+      globalThis.fetch = (async () =>
+        Response.json({ ok: false, description: "later" }, { status })) as unknown as typeof fetch;
+      const r = await new TelegramCodec("token").send("7", "hi");
+      expect({ status, retryable: r.retryable }).toEqual({ status, retryable: true });
+    }
+  });
+
+  test("an unrelated 404 costs one fallback, not the whole feature", async () => {
+    const codec = new TelegramCodec("token");
+    globalThis.fetch = (async (url) =>
+      String(url).includes("Rich")
+        ? Response.json({ ok: false, description: "Not Found: chat not found" }, { status: 404 })
+        : Response.json({ ok: true })) as typeof fetch;
+    expect((await codec.send("7", "hi")).ok).toBe(true);
+    expect(codec.richEnabled).toBe(true); // only a genuine method-not-found latches it off
+  });
+
   test("a draft is a thinking block, private chats only, and never throws", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     globalThis.fetch = (async (_url, init) => {
@@ -417,21 +484,19 @@ describe("Rich messages", () => {
       return Response.json({ ok: true, result: true });
     }) as typeof fetch;
     const codec = new TelegramCodec("token");
-    expect(await codec.sendDraft("7", 42, { kind: "thinking", text: "Searching the web" })).toBe(
-      true,
-    );
+    expect(await codec.sendDraft("7", 42, "Searching the web")).toBe(true);
     expect(bodies[0]).toEqual({
       chat_id: 7,
       draft_id: 42,
       rich_message: { blocks: [{ type: "thinking", text: "Searching the web" }] },
     });
     // A supergroup id is negative: the API takes private chats only, so we do not even ask.
-    expect(await codec.sendDraft("-100123", 42, { kind: "thinking", text: "x" })).toBe(false);
+    expect(await codec.sendDraft("-100123", 42, "x")).toBe(false);
     expect(bodies).toHaveLength(1);
     // A transport failure is a missing preview, never a thrown turn.
     globalThis.fetch = (async () => {
       throw new Error("network down");
     }) as unknown as typeof fetch;
-    expect(await codec.sendDraft("7", 42, { kind: "thinking", text: "x" })).toBe(false);
+    expect(await codec.sendDraft("7", 42, "x")).toBe(false);
   });
 });
