@@ -63,6 +63,7 @@ function agentWith(script: {
   terminal: () => { status: string; responseId?: string; outputText?: string } | null;
   feed?: () => Array<Record<string, unknown>>;
   onEvents?: (id: string, since: number) => void;
+  beforeEvents?: () => Promise<void>;
   startFails?: boolean;
 }): AgentClient & { eventReads: number } {
   let cursor = 0;
@@ -83,6 +84,7 @@ function agentWith(script: {
     async taskEvents(id, _userId, since) {
       reads++;
       script.onEvents?.(id, since);
+      if (script.beforeEvents) await script.beforeEvents();
       const events = script.feed?.() ?? [];
       cursor += events.length;
       return { events, cursor };
@@ -232,20 +234,13 @@ describe("live progress preview", () => {
     expect(codec.drafts).toHaveLength(before);
   });
 
-  test("a preview in flight lands before the reply it was previewing", async () => {
-    // The interleaving that matters: the daemon finishes while a draft POST is still open. If the
-    // answer went out first, the stale preview would reappear beside it for the rest of its 30s.
+  test("a preview in flight is abandoned when the turn ends, not waited on", async () => {
+    // The interleaving that matters: the daemon finishes while the preview is still open. Waiting
+    // for it would put a best-effort UX call in front of a durable reply. Cancelling it means the
+    // reply goes out at once AND the stale line is never sent.
     const store = new Store(":memory:");
     const codec = new DraftCodec();
-    const order: string[] = [];
     let release: (() => void) | null = null;
-    codec.onDraft = () =>
-      new Promise<void>((resolve) => {
-        release = () => {
-          order.push("draft");
-          resolve();
-        };
-      });
     let done = false;
     const agent = agentWith({
       terminal: () =>
@@ -253,71 +248,27 @@ describe("live progress preview", () => {
           ? { status: "done", responseId: "r1", outputText: "the answer" }
           : { status: "running" },
       feed: () => [{ type: "tool.call", "gen_ai.tool.name": "read_file" }],
+      // Hang the EVENT READ, the longer half of a refresh and the common place to be caught.
+      beforeEvents: () =>
+        new Promise((resolve) => {
+          release = resolve as () => void;
+        }),
     });
     const c = new Connector(store, codec, agent, new NoopSupervisor());
-    codec.onSend = () => order.push("reply");
 
     store.insertInbox(event("e1", "read it"));
     await c.runOnce();
-    await tick(c); // starts a draft that does not settle
-    expect(order).toEqual([]);
+    await c.pollTasks(); // a preview is now open and stuck
 
     done = true;
-    const finalizing = c.pollTasks();
-    await Bun.sleep(5); // let finalization reach the await on this task's preview
-    expect(order).toEqual([]); // it is waiting, not racing
-    (release as unknown as () => void)();
-    await finalizing;
-
-    expect(order).toEqual(["draft", "reply"]);
+    await c.pollTasks(); // must not wait for it
     expect(codec.sent).toEqual(["the answer"]);
-    // And the per-task state is gone with it — the map tracks work in flight, nothing more.
+
+    (release as unknown as () => void)();
+    await Bun.sleep(2);
+    expect(codec.drafts).toHaveLength(0); // the abandoned preview sent nothing
     const state = (c as unknown as { progress: Map<string, unknown> }).progress;
     expect(state.size).toBe(0);
-  });
-
-  test("one slow preview never delays another conversation's reply", async () => {
-    // The head-of-line blocking the async release removed must not come back through the preview.
-    const store = new Store(":memory:");
-    const codec = new DraftCodec();
-    let stuck: (() => void) | null = null;
-    codec.onDraft = (chatId) =>
-      chatId === "200"
-        ? new Promise<void>((resolve) => {
-            stuck = resolve;
-          })
-        : Promise.resolve();
-    const finished = new Set<string>();
-    const agent: AgentClient = {
-      async run() {
-        return { responseId: "s", outputText: "s" };
-      },
-      async startTask(_i, o) {
-        return { id: `task-${o.idempotencyKey}` };
-      },
-      async pollTask(id) {
-        return finished.has(id)
-          ? { status: "done", responseId: id, outputText: `answer for ${id}` }
-          : { status: "running" };
-      },
-      async taskEvents() {
-        return { events: [{ type: "tool.call", "gen_ai.tool.name": "web_search" }], cursor: 1 };
-      },
-    };
-    const c = new Connector(store, codec, agent, new NoopSupervisor());
-
-    store.insertInbox(event("eA", "quick", "tg:100"));
-    store.insertInbox(event("eB", "slow", "tg:200"));
-    await c.runOnce();
-    await c.runOnce();
-    await tick(c); // B's preview hangs from here on
-
-    finished.add("task-eA");
-    // A's answer must not wait on B's stuck draft.
-    await tick(c);
-    expect(codec.sent).toEqual(["answer for task-eA"]);
-    expect(stuck).not.toBeNull();
-    (stuck as unknown as () => void)();
   });
 
   test("only one preview per task is ever in flight", async () => {
@@ -360,16 +311,11 @@ describe("live progress preview", () => {
     release[0]?.();
   });
 
-  test("one slow terminal task does not hold up another's reply", async () => {
-    // Both finish in the same tick. Waiting for each preview in turn would make the second reply
-    // wait for the first task's stuck draft as well as its own.
+  test("a stuck preview never holds up any reply", async () => {
+    // Two tasks finish in the same tick with their previews wedged. Neither reply may wait.
     const store = new Store(":memory:");
     const codec = new DraftCodec();
-    const release: Array<() => void> = [];
-    codec.onDraft = () =>
-      new Promise<void>((resolve) => {
-        release.push(resolve);
-      });
+    codec.onDraft = () => new Promise(() => {}); // never settles
     const finished = new Set<string>();
     const agent: AgentClient = {
       async run() {
@@ -392,16 +338,11 @@ describe("live progress preview", () => {
     store.insertInbox(event("eB", "two", "tg:200"));
     await c.runOnce();
     await c.runOnce();
-    await c.pollTasks(); // both previews now open and stuck
+    await c.pollTasks(); // both previews now open and wedged forever
 
     finished.add("task-eA");
     finished.add("task-eB");
-    const finalizing = c.pollTasks();
-    await Bun.sleep(5);
-    expect(codec.sent).toHaveLength(0); // waiting on the previews
-    for (const r of release.splice(0)) r(); // both released together
-    await finalizing;
-    // Both replies land off the same single bounded wait, not one after the other.
+    await c.pollTasks();
     expect(codec.sent.sort()).toEqual(["answer for task-eA", "answer for task-eB"]);
   });
 

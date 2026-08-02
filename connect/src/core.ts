@@ -293,9 +293,9 @@ export class Connector {
    *  line we showed, and when we last sent it. In memory on purpose — a preview is disposable, so a
    *  restart just starts reading again rather than owning a durable cursor to reconcile. */
   private readonly progress = new Map<string, { cursor: number; shown: string; sentAt: number }>();
-  /** The preview call in flight for a task, so its own finalization can wait for it without any
-   *  other task waiting too. */
-  private readonly previewInflight = new Map<string, Promise<void>>();
+  /** The preview in flight for a task: single-flight, and cancellable. Finalization sets `stopped`
+   *  and moves on, so a best-effort call never sits in front of a durable reply. */
+  private readonly previewInflight = new Map<string, { stopped: boolean; done: Promise<void> }>();
   /** A draft expires after 30s; refresh comfortably inside that, but only when nothing changed. */
   private readonly DRAFT_KEEPALIVE_MS = 20_000;
 
@@ -768,13 +768,15 @@ export class Connector {
    *  a claim that never gets sent is worse than no preview. What the agent is *doing* is both
    *  honest at every instant and, for a working agent, the more useful thing to watch.
    *
-   *  Best-effort throughout: a null read or a false send just means no preview this tick. */
-  private async refreshProgress(task: TaskRow): Promise<void> {
+   *  Best-effort throughout: a null read or a false send just means no preview this tick. `preview`
+   *  is this call's own registration — once its turn ends, `stopped` is set and the remaining steps
+   *  are abandoned rather than waited on. */
+  private async refreshProgress(task: TaskRow, preview: { stopped: boolean }): Promise<void> {
     if (!this.codec.sendDraft || !this.agent.taskEvents) return;
     if (task.cancel_requested) return; // already told "stopping" — don't keep animating
     const state = this.progress.get(task.task_id) ?? { cursor: 0, shown: "", sentAt: 0 };
     const read = await this.agent.taskEvents(task.task_id, task.user_id, state.cursor);
-    if (!read) return;
+    if (!read || preview.stopped) return;
     // A cursor that does not advance carries nothing new — and replaying old events would walk the
     // label backwards, from "Searching the web" to "Thinking".
     const advanced = read.cursor > state.cursor;
@@ -790,7 +792,7 @@ export class Connector {
     if (!due) return;
     // Re-read the cancel flag: the ack may have been sent while the event read above was in flight,
     // and "Stopping that now" followed by "Searching the web" is a lie.
-    if (this.store.getTask(task.task_id)?.cancel_requested) return;
+    if (preview.stopped || this.store.getTask(task.task_id)?.cancel_requested) return;
     const sent = await this.codec.sendDraft(task.chat_id, Connector.draftId(task.event_id), label);
     // Only a SEND resets the keepalive clock. Counting a failed attempt would push the next try to
     // 40s after the last draft that actually landed — a full 10s past Telegram's 30s expiry.
@@ -854,26 +856,28 @@ export class Connector {
     for (const p of stillRunning) {
       const id = p.task.task_id;
       if (this.previewInflight.has(id)) continue;
-      const preview = this.refreshProgress(p.task).catch(() => {}); // never an unhandled rejection
+      const preview = { stopped: false, done: Promise.resolve() };
+      preview.done = this.refreshProgress(p.task, preview).catch(() => {}); // never unhandled
       this.previewInflight.set(id, preview);
-      void preview.then(() => {
+      void preview.done.then(() => {
         if (this.previewInflight.get(id) === preview) this.previewInflight.delete(id);
       });
     }
-    // A preview must land before the reply it was previewing, or a stale "Searching the web"
-    // reappears beside the answer for the rest of its 30 seconds. Waiting happens here, for every
-    // finalizing task AT ONCE and before the serial loop, so the wait is one bounded draft call
-    // rather than the sum of one per task — and nothing waits on a task that is still running.
-    const terminal = polled.filter(
-      (p) => p.st && p.st.status !== "queued" && p.st.status !== "running",
-    );
-    await Promise.allSettled(terminal.map((p) => this.previewInflight.get(p.task.task_id)));
     let finalized = false;
     for (const { task, st } of polled) {
       if (!st) continue; // transient poll failure: keep the task active, retry next tick
       if (st.status === "queued" || st.status === "running") continue; // typing pinged above
       // Terminal: build the reply, finalize atomically (session + outbox + inbox + task), deliver.
       finalized = true;
+      // The turn is over, so its preview is CANCELLED — never awaited. Waiting, even on this one
+      // task, still put a best-effort UX call in front of a durable reply, which is the head-of-line
+      // blocking the async release exists to prevent. Stopping it makes the remaining steps
+      // abandon: if the cancel lands during the event read (much the longer half, and the common
+      // case) no draft is sent at all. A draft already on the wire may still arrive after the
+      // answer, and then expires by itself within 30 seconds.
+      const preview = this.previewInflight.get(task.task_id);
+      if (preview) preview.stopped = true;
+      this.previewInflight.delete(task.task_id);
       let replyChunks: string[];
       let responseId: string | undefined;
       if (st.status === "done") {
