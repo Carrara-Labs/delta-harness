@@ -49,6 +49,15 @@ primary_region = "iad"
   # not export prompts or tool payloads. The exporter fails open and is never on a turn's path.
   TELEMETRY_URL = "https://delta-control-plane.fly.dev/api/telemetry/ingest"
   DELTA_CAPTURE_PAYLOADS = "1"
+  # --- cache investigation, 2026-08-03 (TEMPORARY, remove both when it concludes) ---
+  # Round 1 showed cache reads pinned at exactly 6,507 tokens (the system prefix) while input
+  # grew to 60k within a single run, on calls 9s apart. So the rolling transcript breakpoints
+  # are never read back, and TTL cannot explain the within-run case.
+  # 1h retention tests the SEPARATE, smaller effect: the spine cache dying across human gaps.
+  DELTA_CACHE_TTL = "1h"
+  # NOT the same flag as DELTA_CAPTURE_PAYLOADS: this one persists the true per-call request and
+  # response into the `calls` table, which is the only way to see where the breakpoints land.
+  DELTA_CAPTURE_CALLS = "1"
   # generous budgets for real work
   DELTA_MAX_COST_USD = "15"
   DELTA_MAX_TOKENS = "3000000"

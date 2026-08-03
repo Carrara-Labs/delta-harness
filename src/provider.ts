@@ -270,6 +270,13 @@ export type ChatRequest = {
    * streams reasoning then fails pre-answer can still fail over — reasoning capture cannot
    * change execution. Live-only; not persisted. */
   onReasoningDelta?: (text: string) => void;
+  /** How many messages at the END of `messages` are DERIVED per-turn blocks (context,
+   * retrieval, plan, budget) rather than persisted transcript. The rolling cache breakpoints
+   * skip them: they are rebuilt every turn and one of them carries a clock, so a cached prefix
+   * ending in one can never be matched again — every turn would write a large cache that is
+   * structurally unreadable. Measured on a live agent 2026-08-03: cache reads pinned at exactly
+   * the system prefix (6,507 tokens) while the request grew to 59k, on calls 9s apart. */
+  ephemeralCount?: number;
   /** Cache-affinity key (the session id). Anthropic paths get rolling cache_control
    * breakpoints; the OpenAI Responses backend caches by prefix + this routing key
    * (`prompt_cache_key`, clamped to 64 chars). */
@@ -704,7 +711,26 @@ type Chunk = {
 //      a documented provider-caching technique.)
 // OpenAI-family models cache automatically; only cache metadata is Anthropic-specific.
 // Tool-result framing applies on every wire path.
-function withPromptCache(messages: ChatMsg[], model: string, cacheTtl?: "1h"): unknown[] {
+/** Highest index a ROLLING cache breakpoint may land on: everything after it is a derived
+ * per-turn block. Shared by BOTH wire serializers — they build different shapes but must agree
+ * on eligibility, and the first version of this fix shipped it to only one of them (codex P1),
+ * which left the native Anthropic path — the one the affected agent actually runs — unfixed.
+ * Hostile counts are clamped rather than trusted: a NaN would silently disable the exclusion
+ * and an Infinity would silently disable rolling caching altogether. */
+export function rollingScanFrom(length: number, ephemeralCount: unknown): number {
+  const n =
+    typeof ephemeralCount === "number" && Number.isFinite(ephemeralCount)
+      ? Math.min(Math.max(0, Math.floor(ephemeralCount)), Math.max(0, length))
+      : 0;
+  return length - 1 - n;
+}
+
+function withPromptCache(
+  messages: ChatMsg[],
+  model: string,
+  cacheTtl?: "1h",
+  ephemeralCount = 0,
+): unknown[] {
   const framed = messages.map((m) =>
     m.role === "tool" ? { ...m, content: untrustedToolResult(m.content) } : m,
   );
@@ -724,10 +750,14 @@ function withPromptCache(messages: ChatMsg[], model: string, cacheTtl?: "1h"): u
   // single previous mark and forcing a full cache rewrite (codex #7). Total: 3 of 4.
   let lastSystem = -1;
   const rolling: number[] = []; // last two PERSISTED user/tool indices
+  // Only the ROLLING scan is restricted — the system mark still scans the whole array, so an
+  // over-large count can never cost us the stable prefix too.
+  const rollingFrom = rollingScanFrom(framed.length, ephemeralCount);
   for (let i = framed.length - 1; i >= 0; i--) {
     const m = framed[i];
     const r = m?.role;
     if (lastSystem < 0 && r === "system") lastSystem = i;
+    if (i > rollingFrom) continue;
     // String-content only: the trailing parts-array user message (the ephemeral
     // image attachment, Sprint 8) is DERIVED and moves every turn — marking it
     // burns one of the two rolling breakpoints on a prefix that can never match
@@ -772,7 +802,7 @@ async function streamOnce(
   const openrouter = cfg.baseUrl.includes("openrouter.ai");
   const body: Record<string, unknown> = {
     model,
-    messages: withPromptCache(req.messages, model, cfg.cacheTtl),
+    messages: withPromptCache(req.messages, model, cfg.cacheTtl, req.ephemeralCount),
     stream: true,
     stream_options: { include_usage: true },
   };
@@ -993,6 +1023,7 @@ type AnthropicContentBlock =
 function toAnthropic(
   messages: ChatMsg[],
   cacheTtl?: "1h",
+  ephemeralCount = 0,
 ): {
   system: unknown;
   msgs: Array<{ role: "user" | "assistant"; content: AnthropicContentBlock[] }>;
@@ -1063,10 +1094,16 @@ function toAnthropic(
   // user-role messages (tool_results are user-role here, so the tool-loop tail is covered).
   // Two marks, not one — Anthropic's ~20-block cache lookback can miss a single previous
   // mark after a big parallel-tool turn (codex #7). Never on tool_use (assistant) blocks.
+  // Skip the trailing DERIVED blocks (each string-content ephemeral becomes exactly one user
+  // message above, and they are last), and skip any message carrying an image: both are rebuilt
+  // every turn, so a prefix ending on one can never be matched again.
   let marked = 0;
-  for (let i = msgs.length - 1; i >= 0 && marked < 2; i--) {
+  for (let i = rollingScanFrom(msgs.length, ephemeralCount); i >= 0 && marked < 2; i--) {
     const m = msgs[i];
     if (m?.role !== "user") continue;
+    // Image blocks are cast in above (they are outside AnthropicContentBlock), so widen to read
+    // the discriminant rather than trusting the narrowed union.
+    if (m.content.some((b) => (b as { type: string }).type === "image")) continue;
     const block = m.content[m.content.length - 1];
     if (block && block.type !== "tool_use") {
       block.cache_control = { type: "ephemeral" };
@@ -1090,7 +1127,7 @@ async function streamAnthropic(
   // before fetch (a hung broker must not escape the timeout; codex #6).
   const sig = withTimeout(req.signal, timeoutMs, idle);
   let emitted = false;
-  const { system, msgs } = toAnthropic(req.messages, cfg.cacheTtl);
+  const { system, msgs } = toAnthropic(req.messages, cfg.cacheTtl, req.ephemeralCount);
   // A9: the native wire wants a bare DASHED id ("claude-opus-4-8") — strip any provider prefix
   // and translate dotted versions, for EVERY model (primary AND fallback), not just the utility
   // model. The RETURNED model keeps the configured id (pricing/telemetry already alias both forms).

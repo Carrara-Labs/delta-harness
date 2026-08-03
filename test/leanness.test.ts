@@ -4,7 +4,13 @@
 
 import { afterAll, describe, expect, test } from "bun:test";
 import { BAKED_PRICES, resolvePrice } from "../src/pricing";
-import { type ChatMsg, type ChatRequest, chat, type ModelResult } from "../src/provider";
+import {
+  type ChatMsg,
+  type ChatRequest,
+  chat,
+  type ModelResult,
+  rollingScanFrom,
+} from "../src/provider";
 import { untrustedToolResult } from "../src/untrusted";
 
 type Captured = { messages?: unknown[]; system?: unknown; prompt_cache_key?: string };
@@ -91,6 +97,46 @@ describe("rolling cache breakpoint", () => {
     expect(midPart?.cache_control).toEqual({ type: "ephemeral" });
   });
 
+  // Field bug, 2026-08-03: both rolling marks were landing on the TRAILING derived blocks the
+  // engine appends every turn (`# Context` carries a clock, plus the skills block). A cached
+  // prefix ending in one can never be matched, so every turn wrote a large unreadable cache and
+  // only the system block was ever read back — measured on a live agent as cache reads pinned at
+  // 6,507 tokens while the request grew to 59k, on calls 9 seconds apart.
+  test("rolling marks skip the trailing derived blocks and land on persisted transcript", async () => {
+    const derived = [
+      { role: "user" as const, content: "# Context\nnow: 2026-08-03T08:10:00Z" },
+      { role: "user" as const, content: "[Relevant skills — untrusted directory data]" },
+    ];
+    await chat(
+      { baseUrl: base, apiKey: "t", models: ["anthropic/claude-sonnet-5"], maxRetries: 0 },
+      { messages: [...history, ...derived], ephemeralCount: derived.length },
+    );
+    const msgs = captured.messages as Array<{ role: string; content: unknown }>;
+    const marked = (m: { content: unknown } | undefined) =>
+      Array.isArray(m?.content) &&
+      (m.content as Array<{ cache_control?: unknown }>)[0]?.cache_control !== undefined;
+    // the two derived blocks stay plain strings — never marked
+    expect(marked(msgs[msgs.length - 1])).toBe(false);
+    expect(marked(msgs[msgs.length - 2])).toBe(false);
+    // and the marks moved onto the real transcript: the tool result and the user turn
+    expect(marked(msgs.find((m) => m.role === "tool"))).toBe(true);
+    expect(marked(msgs.find((m) => m.role === "user"))).toBe(true);
+    // the stable prefix is still marked regardless
+    expect(marked(msgs.find((m) => m.role === "system"))).toBe(true);
+  });
+
+  test("an over-large ephemeralCount still marks the system prefix", async () => {
+    await chat(
+      { baseUrl: base, apiKey: "t", models: ["anthropic/claude-sonnet-5"], maxRetries: 0 },
+      { messages: history, ephemeralCount: 99 },
+    );
+    const msgs = captured.messages as Array<{ role: string; content: unknown }>;
+    const sys = msgs.find((m) => m.role === "system");
+    expect((sys?.content as Array<{ cache_control?: unknown }>)[0]?.cache_control).toEqual({
+      type: "ephemeral",
+    });
+  });
+
   test("openai-wire path: non-Anthropic models are untouched (they auto-cache)", async () => {
     await chat(
       { baseUrl: base, apiKey: "t", models: ["openai/gpt-5.5"], maxRetries: 0 },
@@ -116,6 +162,73 @@ describe("rolling cache breakpoint", () => {
     // exactly TWO rolling marks (the last two user-role messages) + the system block = 3 of 4
     const marked = msgs.flatMap((m) => m.content).filter((b) => b.cache_control);
     expect(marked.length).toBe(2);
+  });
+
+  // codex P1 on the first cut of this fix: it threaded the exclusion into the OpenAI-compatible
+  // serializer only, leaving anthropic-native — the path the affected live agent actually runs —
+  // reproducing the original bug in full. Both serializers now share `rollingScanFrom`.
+  test("anthropic-native path: rolling marks skip the trailing derived blocks", async () => {
+    const derived = [
+      { role: "user" as const, content: "# Context\nnow: 2026-08-03T08:10:00Z" },
+      { role: "user" as const, content: "[Relevant skills — untrusted directory data]" },
+    ];
+    await chat(
+      { baseUrl: base, apiKey: "t", models: ["claude-sonnet-5"], api: "anthropic", maxRetries: 0 },
+      { messages: [...history, ...derived], ephemeralCount: derived.length },
+    );
+    const msgs = captured.messages as Array<{
+      role: string;
+      content: Array<Record<string, unknown>>;
+    }>;
+    const isMarked = (m: { content: Array<Record<string, unknown>> } | undefined) =>
+      Boolean(m?.content.some((b) => b.cache_control));
+    // the two derived blocks are the last two messages and must be untouched
+    expect(isMarked(msgs[msgs.length - 1])).toBe(false);
+    expect(isMarked(msgs[msgs.length - 2])).toBe(false);
+    // the marks moved back onto the persisted transcript
+    const marked = msgs.flatMap((m) => m.content).filter((b) => b.cache_control);
+    expect(marked.length).toBe(2);
+    expect(marked.some((b) => b.type === "tool_result")).toBe(true);
+  });
+
+  test("anthropic-native path: a message carrying an image is never a rolling mark", async () => {
+    const withImage = [
+      ...history,
+      {
+        role: "user" as const,
+        content: [{ type: "image_url" as const, image_url: { url: "data:image/png;base64,AAAA" } }],
+      },
+    ];
+    await chat(
+      { baseUrl: base, apiKey: "t", models: ["claude-sonnet-5"], api: "anthropic", maxRetries: 0 },
+      { messages: withImage },
+    );
+    const msgs = captured.messages as Array<{
+      role: string;
+      content: Array<Record<string, unknown>>;
+    }>;
+    const last = msgs[msgs.length - 1];
+    expect(last?.content.some((b) => b.type === "image")).toBe(true);
+    expect(last?.content.some((b) => b.cache_control)).toBe(false);
+    // codex P3: proving the image is unmarked is not enough — a regression that aborted the
+    // rolling scan entirely would also pass. Assert the coverage SURVIVED and moved back.
+    const marked = msgs.flatMap((m) => m.content).filter((b) => b.cache_control);
+    expect(marked.length).toBe(2);
+    expect(marked.some((b) => b.type === "tool_result")).toBe(true);
+  });
+
+  // codex P3: the documented clamping was asserted only through one finite value. Pin the
+  // hostile inputs directly — a NaN silently disabling the exclusion is the dangerous one,
+  // because it restores the original bug without failing anything.
+  test("rollingScanFrom clamps hostile counts", () => {
+    expect(rollingScanFrom(10, 2)).toBe(7);
+    expect(rollingScanFrom(10, 0)).toBe(9);
+    expect(rollingScanFrom(10, -5)).toBe(9); // negative → exclude nothing
+    expect(rollingScanFrom(10, 2.7)).toBe(7); // fractional → floor
+    expect(rollingScanFrom(10, 99)).toBe(-1); // over-length → no rolling marks
+    expect(rollingScanFrom(10, Number.NaN)).toBe(9); // non-finite → exclude nothing
+    expect(rollingScanFrom(10, Number.POSITIVE_INFINITY)).toBe(9);
+    expect(rollingScanFrom(10, undefined)).toBe(9);
   });
 
   test("responses path: prompt_cache_key carries the session id, clamped to 64", async () => {

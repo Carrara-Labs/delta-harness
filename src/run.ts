@@ -868,6 +868,10 @@ export async function executeRun(
       messages,
       tools: toolSpecs(tools),
       cacheKey: run.session_id, // cache affinity: rolling breakpoints / prompt_cache_key
+      // The trailing DERIVED blocks, so the rolling cache breakpoints can skip them and land
+      // on persisted transcript instead. They are rebuilt every turn (`# Context` carries a
+      // clock), so a prefix ending in one can never match the next request.
+      ephemeralCount: ephemeral.length,
       ...(reasoningEffort ? { reasoningEffort } : {}),
       // Stream text deltas as ephemeral events (SSE consumers see them live;
       // not persisted). Cheap no-op when nobody is listening.
