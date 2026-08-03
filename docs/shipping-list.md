@@ -12,13 +12,11 @@ The security track (the vault + secure intake) shipped 2026-08-01. Next work is 
 `docs/backlog-ferni-field-report-2.md`, captured 2026-08-01. Dogfooding continues; we want more
 data before shipping any of it.
 
-- **Prompt caching collapses on long threads.** 9% cache hit across a $49.26 day on one agent;
-  the rolling breakpoints land on per-turn ephemeral blocks, so only the spine is ever re-read.
-  Candidate fix identified. Needs a controlled A/B on a lab agent before it is written.
-- **Compaction cannot get under the budget.** Ferni logs `context_irreducible` on every turn since
-  the 0.5.0 deploy: the assembled request still exceeds the context budget after compaction ran.
-  Same root as the spill problem seen from the other end, and a second independent signal for the
-  0.2.11 batch.
+- ~~Prompt caching collapses on long threads.~~ **FIXED in 0.2.11.** The rolling breakpoints were
+  landing on derived per-turn blocks, one carrying a clock, so the cached prefix could never be
+  matched. Ferni measured 11% before, 91% after.
+- ~~Compaction cannot get under the budget.~~ **FIXED in 0.2.11.** It was 94 of 94 fleet-wide, not
+  "every turn" as this list once said; the tail it keeps was never re-bounded.
 - **`list_secrets` / `vault.declared` conflate "in the vault" with "available to the agent".**
   Found by Ferni itself while self-diagnosing. One coherent fix covers both.
 - **Operator actions are invisible to the agent** — a credential removed behind its back produced
@@ -49,9 +47,8 @@ Specs: `spec-cache-breakpoints.md`, `spec-compaction-tail.md`.
   becomes the answer, so the model's narration can claim things that are never sent, and the token
   deltas are not persisted so it needs a live SSE per task with its own abort and restart story.
   Worth doing on its own terms, not folded into a rendering release.
-- **Harness — spill demotion / compact sooner.** Demote re-billed `web_fetch` spill bodies to disk
-  on later turns (the mechanical cause of Ferni's context ballooning to 155k). Cuts context growth
-  at the source.
+- ~~Harness — spill demotion.~~ **SHIPPED in 0.2.11**, at the compaction commit rather than per
+  turn, so it costs no extra prefix-cache churn.
 - **Harness — subagent reliability.** `spawn_subagent` returned "(no output)" on a big extraction
   task, which pushed Ferni onto the costly direct-`web_fetch` path.
 - **Connect — the intake 409 durability gap.** If the vault write commits but its response is
