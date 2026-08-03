@@ -21,9 +21,16 @@ const DEMOTED_MARK = "[delta:demoted/1]";
  *  into the prefix and gets summarized from the stub, not from the archived original, so the stub
  *  has to carry enough signal to summarize (codex P2). */
 const DEMOTE_HEAD = 800;
+/** Slack for the stub's fixed trailer (the pointer sentence + path). Anything longer than
+ *  DEMOTE_HEAD + this cannot be one of our stubs, whatever it claims in its first bytes. */
+const STUB_TAIL_MAX = 400;
 /** Hermes' floor (`_compression_made_progress`): a sub-5% wobble is not progress and would keep
  *  the loop spinning. Progress is measured on the whole ACTIVE SET, not the prefix alone. */
 const MATERIAL = 0.95;
+
+/** UTF-8 byte length. `.length` counts UTF-16 code units, so a CJK-heavy summary could pass a
+ *  size test while GROWING the real serialized request (codex P1). One metric, both sides. */
+const bytes = (s: string): number => Buffer.byteLength(s, "utf8");
 
 const zeroUsage = (): Usage => ({
   input: 0,
@@ -177,7 +184,11 @@ function demoteSpilled(row: Row, workspace: string): string {
     (m as { tool_call_id?: string }).tool_call_id ?? "",
   );
   if (!m.content.includes(path)) return msg; // not one of ours → leave it alone
-  if (m.content.startsWith(DEMOTED_MARK)) return msg; // already demoted (and provably ours)
+  // Already demoted? The sentinel alone is forgeable — a hostile tool result can open with it and
+  // opt its 20KB body out of demotion (codex P1). Our stub is BOUNDED, so authenticate by shape:
+  // only a row short enough to actually BE a stub is treated as one.
+  if (m.content.startsWith(DEMOTED_MARK) && m.content.length <= DEMOTE_HEAD + STUB_TAIL_MAX)
+    return msg;
   if (!existsSync(path)) return msg;
   const head = m.content.slice(0, DEMOTE_HEAD);
   return JSON.stringify({
@@ -331,10 +342,12 @@ export async function maybeCompact(
   // to summarize a turn or two it did not need to lose — observed in the lab as a compaction that
   // summarized a SINGLE turn purely to reach the demotion. The prefix stays ACTIVE here: nothing
   // is summarized, so nothing may be dropped; only the tail rows are replaced by bounded copies.
-  const activeBytes = rows.reduce((n, r) => n + r.msg.length, 0);
+  const activeBytes = rows.reduce((n, r) => n + bytes(r.msg), 0);
   const demotedBytes =
-    prefix.reduce((n, r) => n + r.msg.length, 0) + kept.reduce((n, r) => n + r.msg.length, 0);
-  if (demotedAny && demotedBytes < activeBytes * MATERIAL) {
+    prefix.reduce((n, r) => n + bytes(r.msg), 0) + kept.reduce((n, r) => n + bytes(r.msg), 0);
+  // force (overflow recovery) accepts ANY reduction here too: the provider has already refused the
+  // prompt, so discarding a sub-5% win and falling through to summarization is strictly worse.
+  if (demotedAny && demotedBytes < activeBytes * (opts.force ? 1 : MATERIAL)) {
     db.transaction(() => {
       for (const r of tail) db.query("UPDATE messages SET active = 0 WHERE id = ?").run(r.id);
       for (const r of kept)
@@ -462,8 +475,8 @@ export async function maybeCompact(
   // comparing the two made compaction report a win while the active set GREW (codex reproduced
   // 5,091 → 8,406). Build the row once here and reuse the identical object at commit.
   const summaryRow = JSON.stringify({ role: "user", content: summaryContent } satisfies ChatMsg);
-  const oldBytes = rows.reduce((n, r) => n + r.msg.length, 0);
-  const newBytes = summaryRow.length + kept.reduce((n, r) => n + r.msg.length, 0);
+  const oldBytes = rows.reduce((n, r) => n + bytes(r.msg), 0);
+  const newBytes = bytes(summaryRow) + kept.reduce((n, r) => n + bytes(r.msg), 0);
   // `force` is the overflow-recovery path: the provider has ALREADY refused the prompt, so ANY
   // reduction beats failing the turn. The material floor exists to stop the PROACTIVE loop
   // spinning on sub-5% wobbles; applying it to last-resort recovery would turn a recoverable turn
