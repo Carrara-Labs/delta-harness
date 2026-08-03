@@ -6,6 +6,44 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.11] — 2026-08-03
+
+Context economics. Prompt caching and compaction were each defeating themselves; both are fixed and
+the pair compounds, because a prompt that stays small needs compacting far less often. No
+configuration change is required and nothing is opt-in.
+
+### Fixed
+- **Rolling cache breakpoints land on persisted transcript.** They were marking the derived
+  per-turn blocks the engine appends after the history — context, retrieval, plan, budget — one of
+  which carries a clock. A cached prefix ending on a block that changes every turn can never be
+  matched, so every turn wrote a cache that could not be read back and only the system prefix was
+  ever served from cache. Both wire serializers now share one eligibility rule.
+- **Compaction shrinks the prompt it was called to shrink.** Nothing re-bounded the recent tail it
+  keeps: `capAndSpill` caps a tool result once, when it is produced, and the capped copy then rode
+  the active context for the rest of the session. Spilled results in the retained tail are demoted
+  to a bounded head plus their spill pointer; the full output stays on disk and the original row
+  stays archived for `recall`. When demotion alone is enough, the summarizer is skipped entirely.
+- **Compaction's tail floor is a wire group, not a row count.** Two rows of any size could survive a
+  zeroed budget, and the loop that repaired split tool groups was unbounded. Whole groups are
+  selected instead, so a group is never split and there is nothing to repair.
+- **Compaction reports progress honestly.** Success compared the summary against the prefix alone,
+  in UTF-16 code units. It now compares the whole active set, before and after, in UTF-8 bytes, and
+  requires a material reduction — except on overflow recovery, where any reduction beats failing
+  the turn.
+- **`prompt_cache_key` on the OpenAI-compatible wire.** It was sent on the Responses wire only, but
+  it is a Chat Completions field and OpenAI documents it as required for reliable matching on
+  GPT-5.6 and later. Sent only to hosts documented to accept it, with a per-provider override
+  (`DELTA_PROMPT_CACHE_KEY`) for a verified proxy.
+- **`max_completion_tokens` on OpenAI's own endpoint.** `max_tokens` is deprecated on Chat
+  Completions and o-series reasoning models reject it, so a direct `api.openai.com` base URL with a
+  reasoning model failed on a parameter the engine controls. Other endpoints keep `max_tokens`,
+  which OpenRouter normalizes for every upstream.
+
+### Caveat
+Anthropic's cache lookup scans a bounded number of blocks back from each breakpoint. Demotion
+reduces the size of a tool result but not the number of blocks, so a turn with many parallel tool
+calls can still miss the previous cached tail. Unchanged in this release.
+
 ## [0.2.10] — 2026-08-01
 
 The secret vault. An agent's third-party credentials can live encrypted in the daemon instead of
