@@ -109,10 +109,11 @@ Aperture's own runbook section is `~/ai-recruiter/docs/fleet-runbook.md` under "
 `DELTA_CAPTURE_PAYLOADS=1` is required or `model.call` exports without model, latency, token or cost
 attributes.
 
-**Ferni exports nothing.** Verified against the live machine env, not the repo file: no
-`TELEMETRY_URL`, and its six Fly secrets do not include a telemetry token. Its telemetry exists and
-is complete, it just never leaves the VM, so Ferni must be queried over SSH (section 2.2). Wiring it
-to either collector is a one-variable change.
+**Always verify against the deployed env, not the repo file.** `connect/deploy/fly.toml` does not
+show Fly secrets or provisioner-injected vars, and `/proc/1/environ` is the init process, not the
+daemon. Use `flyctl ssh console -a <app> -C "sh -c 'env | grep TELEMETRY'"` plus
+`flyctl secrets list`. The definitive test of whether an agent has *ever* exported is its own
+`events` table: `select exported, count(*) from events group by exported`.
 
 Read the Aperture collector with:
 
