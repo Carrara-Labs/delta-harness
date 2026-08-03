@@ -84,9 +84,23 @@ collectors.** Check both, always.
 
 | Collector | Receives from | Endpoint | Credentials |
 | --- | --- | --- | --- |
-| **Control plane** | `delta-agent-*` (Meeting Processor, probes) | control-plane ingest | `DATABASE_URL` in `~/delta-agents/.env` |
+| **Control plane** | `delta-agent-*` (Meeting Processor, probes) **and Ferni** | `https://delta-control-plane.fly.dev/api/telemetry/ingest` | `DATABASE_URL` in `~/delta-agents/.env` |
 | **Aperture** | `aperture-qs-*`, `aperture-intake-*`, all 8 lanes | `https://aperture.is/api/telemetry` | `PROD_DATABASE_MIGRATION_URL` in `~/ai-recruiter/app/.env` |
-| **(none)** | **Ferni** | — | telemetry stays local in `/data/delta.db` `events` |
+
+Ferni was wired to the control-plane rail on 2026-08-03 (`agent_id = "ferni"`). It is not a
+provisioned machine, so it authenticates with an **operator token** in `TELEMETRY_TOKEN` rather than
+a gateway token: the ingest route dual-auths for exactly this case (`apps/api/src/routes.ts`, the
+`/api/telemetry/ingest` branch). To wire any other unprovisioned daemon, do the same three things:
+
+```
+TELEMETRY_URL = https://delta-control-plane.fly.dev/api/telemetry/ingest
+TELEMETRY_TOKEN = <DELTA_API_TOKEN, staged via `flyctl secrets import --stage` on stdin>
+DELTA_CAPTURE_PAYLOADS = 1
+```
+
+The exporter drains its whole backlog on the first successful tick, so history is not lost by wiring
+late: Ferni's 1,979 events going back to 27 July landed on the first pass, with usage attributes
+intact on all 246 `model.call` rows.
 
 The Aperture rail is the bigger and fresher corpus: 50,678 events, 22 July onward, still live. Its
 `agent_events` adds `workspace_slug` and `agent_type` for lane attribution. Ingest is bearer-auth'd
@@ -208,7 +222,7 @@ is costing money.
 | Agent | Version | Behind by | Traffic | Health |
 | --- | --- | --- | --- | --- |
 | Aperture QS + Intake (8 lanes) | **0.2.6** | 4 releases | 342 runs, **$727**, 50,678 events, live | Cache excellent (88.9%). 68 of 68 compactions failed to get under budget. |
-| Ferni | Harness **0.2.10** + Connect **0.5.0** | current | 78 runs, $94.76 | Cache read/write 19.1%, below break-even. 26 of 26 compactions failed. |
+| Ferni | Harness **0.2.10** + Connect **0.5.0** | current | 78 runs, $94.76, now exporting | Cache read/write 19.1%, below break-even. 26 of 26 compactions failed. |
 | Meeting Processor | image `delta-2026.7.14` | **predates v0.1.1** | 437 runs, ~$397 | Compaction thrash up to 29x in one run. |
 | Delta 1/4, Trevor, harness-1/2, probes | `delta-2026.7.8` … `7.13` | predates v0.1.1 | idle | — |
 
@@ -234,11 +248,10 @@ is costing money.
 
 ## 5. Traps
 
-- **There are two collectors and one agent on neither.** The control-plane rail looks dead (newest
-  event 30 July, 97% from one obsolete agent) and that is real, but the Aperture rail is live and
-  five times larger. Concluding "the fleet does not export telemetry" from the control-plane rail
-  alone is wrong, and the first pass of this review made exactly that mistake. Ferni is the only
-  agent genuinely not exporting.
+- **There are two collectors.** Concluding "the fleet does not export telemetry" from the
+  control-plane rail alone is wrong, and the first pass of this review made exactly that mistake:
+  that rail was near-dead (97% from one obsolete agent) while the Aperture rail was live and five
+  times larger. Query both, every time.
 - **Check the deployed env, not the repo file.** `connect/deploy/fly.toml` does not show Fly
   secrets or provisioner-injected vars. Confirm with
   `flyctl ssh console -a <app> -C "sh -c 'env | cut -d= -f1 | sort'"` and `flyctl secrets list`.
