@@ -5,6 +5,7 @@
 // compacts PRE-SEND so a resumed/continued session's first call can't overflow.
 
 import { describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
 import { maybeCompact } from "../src/compaction";
 import { openDb } from "../src/db";
 import { Events } from "../src/events";
@@ -51,9 +52,12 @@ describe("maybeCompact (W2 unit)", () => {
     const db = openDb(":memory:");
     const events = new Events(db);
     const msgs: ChatMsg[] = [];
+    // Realistic sizes. The shrink guard now compares the WHOLE active set before vs after and
+    // requires a MATERIAL (>5%) reduction, so a toy session whose summary envelope is larger than
+    // the prefix it replaces is correctly refused — the old test passed on a one-byte win.
     for (let i = 0; i < 12; i++) {
-      msgs.push({ role: "user", content: `question ${i}` });
-      msgs.push({ role: "assistant", content: `answer ${i}` });
+      msgs.push({ role: "user", content: `question ${i} ${"q".repeat(300)}` });
+      msgs.push({ role: "assistant", content: `answer ${i} ${"a".repeat(300)}` });
     }
     seedSession(db, msgs);
     const did = await maybeCompact(
@@ -68,8 +72,8 @@ describe("maybeCompact (W2 unit)", () => {
 
     const result = active(db);
     expect((result[0] as { content: string }).content).toContain("earlier turns compacted");
-    expect((result.at(-1) as { content: string }).content).toBe("answer 11");
-    expect((result.at(-2) as { content: string }).content).toBe("question 11");
+    expect((result.at(-1) as { content: string }).content).toStartWith("answer 11");
+    expect((result.at(-2) as { content: string }).content).toStartWith("question 11");
     expect(result.length).toBeLessThan(6); // a small recent tail + the summary, not all 24
   });
 
@@ -460,4 +464,138 @@ describe("pre-send gate + long-run durability (W2 integration)", () => {
     expect(Math.max(...sizes)).toBeLessThan(22_000);
     expect(compactions).toBeGreaterThan(0);
   }, 20_000);
+});
+
+// ── tail demotion (2026-08-03) ─────────────────────────────────────────────────────
+// Fleet measurement: 94 of 94 compactions on 0.2.6 and 0.2.10 ran and still left the request over
+// budget, because nothing ever re-bounded the tail compaction keeps. capAndSpill caps a tool result
+// once at birth; the capped copy then rides the active context verbatim for the rest of the session.
+describe("tail demotion", () => {
+  // Must be a REAL `.delta/spill/` path: SPILL_PATH_RE matches the deterministic capAndSpill
+  // location only, so a tool result that merely mentions a path cannot get itself truncated.
+  const spillDir = `${tmpdir()}/delta-spill-test/.delta/spill`;
+  const spillPath = `${spillDir}/r.c1.txt`;
+  const bigResult = (path: string) =>
+    `${"R".repeat(6000)}\n\n… [elided 90000 chars — full output saved to ${path}; read that file for the rest] …\n\n${"T".repeat(4000)}`;
+
+  const seedWithSpill = (db: ReturnType<typeof openDb>, path: string) => {
+    const msgs: ChatMsg[] = [];
+    for (let i = 0; i < 6; i++) {
+      msgs.push({ role: "user", content: `q${i} ${"u".repeat(400)}` });
+      msgs.push({
+        role: "assistant",
+        content: null,
+        tool_calls: [{ id: `c${i}`, type: "function", function: { name: "big", arguments: "{}" } }],
+      });
+      msgs.push({ role: "tool", tool_call_id: `c${i}`, content: bigResult(path) });
+    }
+    seedSession(db, msgs);
+  };
+
+  test("an oversized spilled result in the KEPT tail is demoted to its pointer", async () => {
+    await Bun.write(spillPath, "the full original output");
+    const db = openDb(":memory:");
+    seedWithSpill(db, spillPath);
+    const before = active(db)
+      .map((m) => JSON.stringify(m).length)
+      .reduce((a, b) => a + b, 0);
+    const did = await maybeCompact(
+      db,
+      new Events(db),
+      okSummary,
+      "s",
+      { sessionId: "s" },
+      { recentBudgetTokens: 500 },
+    );
+    expect(did?.shrank).toBe(true);
+    const after = active(db);
+    const bytes = after.map((m) => JSON.stringify(m).length).reduce((a, b) => a + b, 0);
+    // the whole active set actually got smaller — the thing 94/94 failed to do
+    expect(bytes).toBeLessThan(before / 2);
+    // a demoted row keeps its pointer, so the full output stays recoverable
+    const stub = after.find((m) => JSON.stringify(m).includes("delta:demoted"));
+    expect(JSON.stringify(stub)).toContain(spillPath);
+    // and it is still a valid tool result: role and call id intact, or the provider rejects it
+    expect((stub as { role: string }).role).toBe("tool");
+    expect((stub as { tool_call_id?: string }).tool_call_id).toBeTruthy();
+  });
+
+  test("demotion is idempotent — a second compaction leaves the stub byte-identical", async () => {
+    await Bun.write(spillPath, "the full original output");
+    const db = openDb(":memory:");
+    seedWithSpill(db, spillPath);
+    const events = new Events(db);
+    await maybeCompact(db, events, okSummary, "s", { sessionId: "s" }, { recentBudgetTokens: 500 });
+    const first = JSON.stringify(active(db).filter((m) => JSON.stringify(m).includes("demoted")));
+    expect(first).not.toBe("[]"); // guard: without a stub this test would pass vacuously
+    await maybeCompact(db, events, okSummary, "s", { sessionId: "s" }, { recentBudgetTokens: 500 });
+    const second = JSON.stringify(active(db).filter((m) => JSON.stringify(m).includes("demoted")));
+    expect(second).toBe(first);
+  });
+
+  test("fails closed: no spill file on disk means no demotion", async () => {
+    const db = openDb(":memory:");
+    seedWithSpill(db, `${spillDir}/does-not-exist.txt`);
+    await maybeCompact(
+      db,
+      new Events(db),
+      okSummary,
+      "s",
+      { sessionId: "s" },
+      { recentBudgetTokens: 500 },
+    );
+    // a stub promising a file that isn't there is worse than the bytes it saves
+    expect(JSON.stringify(active(db))).not.toContain("delta:demoted");
+  });
+
+  test("a tool result with no spill marker is never truncated", async () => {
+    const db = openDb(":memory:");
+    const msgs: ChatMsg[] = [];
+    for (let i = 0; i < 6; i++) {
+      msgs.push({ role: "user", content: `q${i} ${"u".repeat(400)}` });
+      msgs.push({
+        role: "assistant",
+        content: null,
+        tool_calls: [{ id: `c${i}`, type: "function", function: { name: "t", arguments: "{}" } }],
+      });
+      msgs.push({
+        role: "tool",
+        tool_call_id: `c${i}`,
+        content: `plain result ${"P".repeat(4000)}`,
+      });
+    }
+    seedSession(db, msgs);
+    await maybeCompact(
+      db,
+      new Events(db),
+      okSummary,
+      "s",
+      { sessionId: "s" },
+      { recentBudgetTokens: 500 },
+    );
+    const live = JSON.stringify(active(db));
+    expect(live).not.toContain("delta:demoted");
+    expect(live).toContain("plain result"); // kept whole — nothing to recover it from
+  });
+
+  test("a tool group is never split from the assistant that called it", async () => {
+    await Bun.write(spillPath, "full");
+    const db = openDb(":memory:");
+    seedWithSpill(db, spillPath);
+    await maybeCompact(
+      db,
+      new Events(db),
+      okSummary,
+      "s",
+      { sessionId: "s" },
+      { recentBudgetTokens: 500 },
+    );
+    const after = active(db) as Array<{ role: string; tool_call_id?: string; tool_calls?: [] }>;
+    // every tool result must be preceded (somewhere earlier in the active set) by its caller
+    const callIds = new Set(
+      after.flatMap((m) => (m.tool_calls ?? []).map((c: { id: string }) => c.id)),
+    );
+    for (const m of after)
+      if (m.role === "tool") expect(callIds.has(m.tool_call_id ?? "")).toBe(true);
+  });
 });

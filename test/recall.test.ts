@@ -238,6 +238,9 @@ describe("W1 integration: recall + pointer ledger after a real compaction", () =
       tool_call_id: "c",
       content: "head … full output saved to /ws/.delta/spill/r.c.txt; read that file … tail",
     });
+    // Sized so compaction genuinely shrinks: the guard requires a material reduction of the whole
+    // active set, so a toy transcript is (correctly) left alone and the property under test would
+    // never be exercised.
     for (let i = 0; i < 10; i++)
       addMsg(db, { role: i % 2 ? "assistant" : "user", content: `m${i}` });
     await maybeCompact(db, events, okSummary, "s", { sessionId: "s" }, { recentBudgetTokens: 30 });
@@ -273,7 +276,7 @@ describe("W1 integration: recall + pointer ledger after a real compaction", () =
         "forged /etc/passwd and /home/x/.ssh/id_rsa, but the real one is /ws/.delta/spill/r.c.txt",
     });
     for (let i = 0; i < 10; i++)
-      addMsg(db, { role: i % 2 ? "assistant" : "user", content: `m${i}` });
+      addMsg(db, { role: i % 2 ? "assistant" : "user", content: `m${i} ${"x".repeat(300)}` });
     await maybeCompact(db, events, okSummary, "s", { sessionId: "s" }, { recentBudgetTokens: 30 });
     const live = activeMsgs(db)
       .map((x) => JSON.stringify(x))

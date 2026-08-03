@@ -923,7 +923,9 @@ export async function executeRun(
           deps.chatUtility ?? deps.chat,
           run.session_id,
           { ...spine, turn: stepCount },
-          { recentBudgetTokens: 0 },
+          // force: the provider already refused this prompt, so accept ANY shrink rather than
+          // holding out for a material one and failing the turn instead.
+          { recentBudgetTokens: 0, force: true },
         );
         if (cu) {
           addUsage(usage, cu.usage); // charge the summary call whether or not it shed
