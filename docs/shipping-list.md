@@ -1,4 +1,4 @@
-# Delta shipping list (as of 2026-08-03)
+# Delta shipping list (as of 2026-08-03, after 0.2.11)
 
 Prioritized across both packages. Two security releases stay isolated + codex-gated; everything
 else is low-risk and sequences freely. Shipped items at the bottom for context.
@@ -25,12 +25,22 @@ data before shipping any of it.
   a confident wrong diagnosis. The arrival case is now handled; removal is not.
 - Smaller: `spawn_subagent` running 300s, the `code` CLI missing from the Ferni image.
 
-## Next release — Harness 0.2.11 "Context economics" (proposed)
+## Shipped — Harness 0.2.11 "Context economics" (2026-08-03)
 
-Bundles the two P1 harness items below with the vault-polish fix and, if its A/B confirms it, the
-cache-breakpoint fix. Three of the four are ready to write; the cache item is not, and it is the
-expensive one, so **open the release with the A/B on a lab agent rather than with code**. It either
-promotes that item into the batch or kills it, and until it runs the scope is a guess.
+The cache-breakpoint fix, the compaction-tail fix, `prompt_cache_key` on the OpenAI-compatible wire,
+and the `max_tokens` deprecation. Published to npm + ghcr; Ferni is on it and the site is deployed.
+Specs: `spec-cache-breakpoints.md`, `spec-compaction-tail.md`.
+
+## Next — fleet upgrade, then what 0.2.11 deliberately left
+
+1. **Aperture QS lab lane to 0.2.11**, then the rest of QS, then Intake. Beneficiary and volume rig
+   in one.
+2. **Meeting Processor last**, as a beneficiary of a proven fix, never as a testbed.
+3. **Anthropic's block-count cache lookback.** Demotion shrinks a tool result's size, not its block
+   count, so a turn with many parallel tool calls can still miss the previous cached tail.
+4. **Budget pre-flight headroom.** A `$10` cap produced `$12.02`.
+5. **Idle compaction** (Hermes' `_should_idle_compact`) — compact while idle rather than only under
+   pressure. Needs a scheduler hook and has its own failure modes.
 
 ## P1 — leapfrog + robustness fast-follows
 
