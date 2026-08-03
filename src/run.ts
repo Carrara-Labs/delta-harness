@@ -820,7 +820,7 @@ export async function executeRun(
         deps.chatUtility ?? deps.chat, // summaries don't need the frontier model
         run.session_id,
         { ...spine, turn: stepCount },
-        { recentBudgetTokens: recentBudget },
+        { recentBudgetTokens: recentBudget, workspace: deps.workspace },
       );
       if (cu) {
         addUsage(usage, cu.usage); // charge the summary call regardless of whether it shrank
@@ -925,7 +925,7 @@ export async function executeRun(
           { ...spine, turn: stepCount },
           // force: the provider already refused this prompt, so accept ANY shrink rather than
           // holding out for a material one and failing the turn instead.
-          { recentBudgetTokens: 0, force: true },
+          { recentBudgetTokens: 0, force: true, workspace: deps.workspace },
         );
         if (cu) {
           addUsage(usage, cu.usage); // charge the summary call whether or not it shed

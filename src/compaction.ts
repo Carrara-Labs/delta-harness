@@ -10,7 +10,7 @@ import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import type { Events, Spine } from "./events";
 import type { ChatMsg, ChatRequest, ModelResult, Usage } from "./provider";
-import { elide } from "./tools";
+import { elide, spillPathFor } from "./tools";
 import { untrustedToolResult } from "./untrusted";
 
 const RECENT_TOKENS_DEFAULT = 24_000; // tail kept verbatim, sized by token budget (was a fixed 4)
@@ -149,7 +149,8 @@ const LEDGER_MAX_CHARS = 4000; // hard byte bound so the ledger can't itself bec
  *  Done at the compaction COMMIT on purpose: that already rewrites the active set, so the prompt
  *  prefix is invalidated at that instant anyway and demotion costs zero extra cache churn. Doing
  *  it per-turn instead would rewrite the prefix every turn and destroy the cache. */
-function demoteSpilled(msg: string): string {
+function demoteSpilled(row: Row, workspace: string): string {
+  const msg = row.msg;
   let m: ChatMsg;
   try {
     m = JSON.parse(msg) as ChatMsg;
@@ -157,9 +158,18 @@ function demoteSpilled(msg: string): string {
     return msg;
   }
   if (m.role !== "tool" || typeof m.content !== "string") return msg;
-  if (m.content.startsWith(DEMOTED_MARK)) return msg;
-  const path = m.content.match(SPILL_PATH_RE)?.[0];
-  if (!path || !existsSync(path)) return msg;
+  // DERIVE the path from the row's own identity — never from a path parsed out of the content.
+  // A tool result is model-visible and attacker-influenced: the first regex match could be a fake
+  // that suppresses demotion, or a real file we should never point at, and a forged sentinel could
+  // opt a row out entirely (codex P1). The engine knows where IT wrote the spill.
+  const path = spillPathFor(
+    workspace,
+    row.run_id,
+    (m as { tool_call_id?: string }).tool_call_id ?? "",
+  );
+  if (!m.content.includes(path)) return msg; // not one of ours → leave it alone
+  if (m.content.startsWith(DEMOTED_MARK)) return msg; // already demoted (and provably ours)
+  if (!existsSync(path)) return msg;
   const head = m.content.slice(0, DEMOTE_HEAD);
   return JSON.stringify({
     ...m,
@@ -234,7 +244,7 @@ export async function maybeCompact(
   chat: (req: ChatRequest) => Promise<ModelResult>,
   sessionId: string,
   spine: Spine,
-  opts: { recentBudgetTokens?: number; force?: boolean } = {},
+  opts: { recentBudgetTokens?: number; force?: boolean; workspace?: string } = {},
 ): Promise<CompactResult | null> {
   const rows = db
     .query("SELECT id, run_id, msg FROM messages WHERE session_id = ? AND active = 1 ORDER BY id")
@@ -249,13 +259,24 @@ export async function maybeCompact(
   // tool-heavy single turn would become one indivisible unit, which is exactly the case that most
   // needs compacting.
   const groups: Row[][] = [];
+  const callIds = new Map<Row[], Set<string>>();
   for (const r of rows) {
-    const role = (JSON.parse(r.msg) as ChatMsg).role;
+    const m = JSON.parse(r.msg) as ChatMsg & {
+      tool_call_id?: string;
+      tool_calls?: Array<{ id: string }>;
+    };
     const last = groups[groups.length - 1];
-    if (role === "tool" && last) last.push(r);
-    else groups.push([r]);
+    // Attach a tool result to the group whose assistant ACTUALLY called it. Matching on role alone
+    // mis-groups an interleaved history (`assistant(c1), assistant, tool(c1)`) and would let a cut
+    // summarize a caller while retaining its result — which the provider then rejects (codex P2).
+    if (m.role === "tool" && last && callIds.get(last)?.has(m.tool_call_id ?? "")) last.push(r);
+    else {
+      const g = [r];
+      groups.push(g);
+      callIds.set(g, new Set((m.tool_calls ?? []).map((c) => c.id)));
+    }
   }
-  if (groups.length <= (opts.force ? 1 : 2)) return null; // nothing meaningful to shed
+  if (groups.length <= 1) return null; // no prefix to shed
 
   const budget = Math.max(0, opts.recentBudgetTokens ?? RECENT_TOKENS_DEFAULT);
   const groupTokens = (g: Row[]) => g.reduce((n, r) => n + tokEst(r.msg), 0);
@@ -385,7 +406,7 @@ export async function maybeCompact(
   let tailTokens = kept.reduce((n, r) => n + tokEst(r.msg), 0);
   for (const r of kept) {
     if (tailTokens <= budget) break;
-    const demoted = demoteSpilled(r.msg);
+    const demoted = opts.workspace ? demoteSpilled(r, opts.workspace) : r.msg;
     if (demoted === r.msg) continue;
     tailTokens -= tokEst(r.msg) - tokEst(demoted);
     r.msg = demoted;
@@ -396,8 +417,13 @@ export async function maybeCompact(
   // a 27KB tool result in the tail counted as a win and the next turn compacted again — 94 of 94
   // compactions across the fleet ran and still left the request over budget (Hermes hit the mirror
   // image of this and fixed it the same way: material token reduction, not a row-count proxy).
+  // Measure what actually gets STORED. `summaryContent.length` is the raw string; the commit writes
+  // JSON.stringify({role,content}), which adds the envelope and escapes every newline and quote —
+  // comparing the two made compaction report a win while the active set GREW (codex reproduced
+  // 5,091 → 8,406). Build the row once here and reuse the identical object at commit.
+  const summaryRow = JSON.stringify({ role: "user", content: summaryContent } satisfies ChatMsg);
   const oldBytes = rows.reduce((n, r) => n + r.msg.length, 0);
-  const newBytes = summaryContent.length + kept.reduce((n, r) => n + r.msg.length, 0);
+  const newBytes = summaryRow.length + kept.reduce((n, r) => n + r.msg.length, 0);
   // `force` is the overflow-recovery path: the provider has ALREADY refused the prompt, so ANY
   // reduction beats failing the turn. The material floor exists to stop the PROACTIVE loop
   // spinning on sub-5% wobbles; applying it to last-resort recovery would turn a recoverable turn
@@ -408,11 +434,10 @@ export async function maybeCompact(
   const lastRunId = tail[tail.length - 1]?.run_id ?? prefix[prefix.length - 1]?.run_id ?? "";
   db.transaction(() => {
     db.query("UPDATE messages SET active = 0 WHERE session_id = ? AND active = 1").run(sessionId);
-    const summaryMsg: ChatMsg = { role: "user", content: summaryContent };
     db.query("INSERT INTO messages (run_id, session_id, msg, created_at) VALUES (?, ?, ?, ?)").run(
       lastRunId,
       sessionId,
-      JSON.stringify(summaryMsg),
+      summaryRow, // the EXACT bytes the shrink test measured
       Date.now(),
     );
     // Tail rows are re-inserted as NEW rows; the originals stay deactivated, so demoting a copy

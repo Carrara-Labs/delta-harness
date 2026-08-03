@@ -5,13 +5,14 @@
 // compacts PRE-SEND so a resumed/continued session's first call can't overflow.
 
 import { describe, expect, test } from "bun:test";
+import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { maybeCompact } from "../src/compaction";
 import { openDb } from "../src/db";
 import { Events } from "../src/events";
 import type { ChatMsg, ChatRequest } from "../src/provider";
 import { Queue } from "../src/queue";
-import { type Tools, testTools } from "../src/tools";
+import { spillPathFor, type Tools, testTools } from "../src/tools";
 import { makeDeps, ok, textResult, toolCallResult } from "./helpers";
 
 function seedSession(db: ReturnType<typeof openDb>, msgs: ChatMsg[], request = "{}") {
@@ -471,14 +472,15 @@ describe("pre-send gate + long-run durability (W2 integration)", () => {
 // budget, because nothing ever re-bounded the tail compaction keeps. capAndSpill caps a tool result
 // once at birth; the capped copy then rides the active context verbatim for the rest of the session.
 describe("tail demotion", () => {
-  // Must be a REAL `.delta/spill/` path: SPILL_PATH_RE matches the deterministic capAndSpill
-  // location only, so a tool result that merely mentions a path cannot get itself truncated.
-  const spillDir = `${tmpdir()}/delta-spill-test/.delta/spill`;
-  const spillPath = `${spillDir}/r.c1.txt`;
+  // The engine DERIVES the spill path from the row's own run id + tool_call_id rather than parsing
+  // one out of model-visible content, so the fixture must use the same one definition. seedSession
+  // writes run_id 'r'.
+  const ws = `${tmpdir()}/delta-spill-test`;
+  const pathFor = (callId: string) => spillPathFor(ws, "r", callId);
   const bigResult = (path: string) =>
     `${"R".repeat(6000)}\n\n… [elided 90000 chars — full output saved to ${path}; read that file for the rest] …\n\n${"T".repeat(4000)}`;
 
-  const seedWithSpill = (db: ReturnType<typeof openDb>, path: string) => {
+  const seedWithSpill = (db: ReturnType<typeof openDb>, _path?: string) => {
     const msgs: ChatMsg[] = [];
     for (let i = 0; i < 6; i++) {
       msgs.push({ role: "user", content: `q${i} ${"u".repeat(400)}` });
@@ -487,15 +489,15 @@ describe("tail demotion", () => {
         content: null,
         tool_calls: [{ id: `c${i}`, type: "function", function: { name: "big", arguments: "{}" } }],
       });
-      msgs.push({ role: "tool", tool_call_id: `c${i}`, content: bigResult(path) });
+      msgs.push({ role: "tool", tool_call_id: `c${i}`, content: bigResult(pathFor(`c${i}`)) });
     }
     seedSession(db, msgs);
   };
 
   test("an oversized spilled result in the KEPT tail is demoted to its pointer", async () => {
-    await Bun.write(spillPath, "the full original output");
+    for (let i = 0; i < 6; i++) await Bun.write(pathFor(`c${i}`), "the full original output");
     const db = openDb(":memory:");
-    seedWithSpill(db, spillPath);
+    seedWithSpill(db);
     const before = active(db)
       .map((m) => JSON.stringify(m).length)
       .reduce((a, b) => a + b, 0);
@@ -505,7 +507,7 @@ describe("tail demotion", () => {
       okSummary,
       "s",
       { sessionId: "s" },
-      { recentBudgetTokens: 500 },
+      { recentBudgetTokens: 500, workspace: ws },
     );
     expect(did?.shrank).toBe(true);
     const after = active(db);
@@ -513,36 +515,56 @@ describe("tail demotion", () => {
     // the whole active set actually got smaller — the thing 94/94 failed to do
     expect(bytes).toBeLessThan(before / 2);
     // a demoted row keeps its pointer, so the full output stays recoverable
-    const stub = after.find((m) => JSON.stringify(m).includes("delta:demoted"));
-    expect(JSON.stringify(stub)).toContain(spillPath);
+    const stub = after.find((m) => JSON.stringify(m).includes("delta:demoted")) as {
+      role: string;
+      tool_call_id?: string;
+    };
+    // the stub points at ITS OWN derived spill path — the engine never trusts a path in content
+    expect(JSON.stringify(stub)).toContain(pathFor(stub.tool_call_id ?? ""));
     // and it is still a valid tool result: role and call id intact, or the provider rejects it
     expect((stub as { role: string }).role).toBe("tool");
     expect((stub as { tool_call_id?: string }).tool_call_id).toBeTruthy();
   });
 
   test("demotion is idempotent — a second compaction leaves the stub byte-identical", async () => {
-    await Bun.write(spillPath, "the full original output");
+    for (let i = 0; i < 6; i++) await Bun.write(pathFor(`c${i}`), "the full original output");
     const db = openDb(":memory:");
-    seedWithSpill(db, spillPath);
+    seedWithSpill(db);
     const events = new Events(db);
-    await maybeCompact(db, events, okSummary, "s", { sessionId: "s" }, { recentBudgetTokens: 500 });
+    await maybeCompact(
+      db,
+      events,
+      okSummary,
+      "s",
+      { sessionId: "s" },
+      { recentBudgetTokens: 500, workspace: ws },
+    );
     const first = JSON.stringify(active(db).filter((m) => JSON.stringify(m).includes("demoted")));
     expect(first).not.toBe("[]"); // guard: without a stub this test would pass vacuously
-    await maybeCompact(db, events, okSummary, "s", { sessionId: "s" }, { recentBudgetTokens: 500 });
+    await maybeCompact(
+      db,
+      events,
+      okSummary,
+      "s",
+      { sessionId: "s" },
+      { recentBudgetTokens: 500, workspace: ws },
+    );
     const second = JSON.stringify(active(db).filter((m) => JSON.stringify(m).includes("demoted")));
     expect(second).toBe(first);
   });
 
   test("fails closed: no spill file on disk means no demotion", async () => {
+    // the markers still name the derived paths; the FILES are gone
+    for (let i = 0; i < 6; i++) rmSync(pathFor(`c${i}`), { force: true });
     const db = openDb(":memory:");
-    seedWithSpill(db, `${spillDir}/does-not-exist.txt`);
+    seedWithSpill(db);
     await maybeCompact(
       db,
       new Events(db),
       okSummary,
       "s",
       { sessionId: "s" },
-      { recentBudgetTokens: 500 },
+      { recentBudgetTokens: 500, workspace: ws },
     );
     // a stub promising a file that isn't there is worse than the bytes it saves
     expect(JSON.stringify(active(db))).not.toContain("delta:demoted");
@@ -571,7 +593,7 @@ describe("tail demotion", () => {
       okSummary,
       "s",
       { sessionId: "s" },
-      { recentBudgetTokens: 500 },
+      { recentBudgetTokens: 500, workspace: ws },
     );
     const live = JSON.stringify(active(db));
     expect(live).not.toContain("delta:demoted");
@@ -579,16 +601,16 @@ describe("tail demotion", () => {
   });
 
   test("a tool group is never split from the assistant that called it", async () => {
-    await Bun.write(spillPath, "full");
+    for (let i = 0; i < 6; i++) await Bun.write(pathFor(`c${i}`), "full");
     const db = openDb(":memory:");
-    seedWithSpill(db, spillPath);
+    seedWithSpill(db);
     await maybeCompact(
       db,
       new Events(db),
       okSummary,
       "s",
       { sessionId: "s" },
-      { recentBudgetTokens: 500 },
+      { recentBudgetTokens: 500, workspace: ws },
     );
     const after = active(db) as Array<{ role: string; tool_call_id?: string; tool_calls?: [] }>;
     // every tool result must be preceded (somewhere earlier in the active set) by its caller

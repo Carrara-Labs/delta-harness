@@ -100,6 +100,17 @@ export function elide(text: string, max = 20_000): string {
  * exactly what pushes the next prompt over the context window — this bounds it at the source.
  * Reuses elide's head/tail split; preserves any leading `[tool error]` prefix. Default 20KB
  * (the old per-builtin inline budget). Spill is lazy — 99% of capped results are never re-read. */
+/** The DETERMINISTIC spill location for a tool result. One definition, used both to WRITE the
+ *  spill and to recognise one later — compaction derives this path from the row's own run id and
+ *  tool_call_id instead of trusting a path parsed out of model-visible content, so a hostile tool
+ *  result cannot point a pointer-stub at an arbitrary file (codex P1).
+ *  callId comes from the PROVIDER — sanitize both ids so a hostile `../`-laden id can never escape
+ *  the spill dir and overwrite an arbitrary path (codex #4). */
+export function spillPathFor(workspace: string, runId: string, callId: string): string {
+  const safe = (s: string) => s.replace(/[^\w-]/g, "_").slice(0, 80);
+  return `${workspace}/.delta/spill/${safe(runId)}.${safe(callId)}.txt`;
+}
+
 export async function capAndSpill(
   text: string,
   workspace: string,
@@ -108,10 +119,7 @@ export async function capAndSpill(
   max = 20_000,
 ): Promise<string> {
   if (text.length <= max) return text;
-  // callId comes from the PROVIDER — sanitize both ids so a hostile `../`-laden id can
-  // never escape the spill dir and overwrite an arbitrary path (codex #4).
-  const safe = (s: string) => s.replace(/[^\w-]/g, "_").slice(0, 80);
-  const path = `${workspace}/.delta/spill/${safe(runId)}.${safe(callId)}.txt`;
+  const path = spillPathFor(workspace, runId, callId);
   try {
     await Bun.write(path, text);
   } catch {
