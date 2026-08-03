@@ -24,6 +24,15 @@ const DEMOTE_HEAD = 800;
 /** Hermes' floor (`_compression_made_progress`): a sub-5% wobble is not progress and would keep
  *  the loop spinning. Progress is measured on the whole ACTIVE SET, not the prefix alone. */
 const MATERIAL = 0.95;
+
+const zeroUsage = (): Usage => ({
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  total: 0,
+  costUsd: 0,
+});
 const ASK_CAP = 4_000; // bound on the pinned original request
 const SUMMARY_CAP = 8_000; // bound on the persisted summary body (can't itself become the bloat)
 
@@ -302,6 +311,49 @@ export async function maybeCompact(
 
   const prefix = rows.slice(0, cut);
   const tail = rows.slice(cut);
+
+  // Demote oldest-first until the retained tail fits its budget. Oldest-first keeps the freshest
+  // results verbatim when there is room, while still letting the budget win when there is not.
+  const kept = tail.map((r) => ({ ...r }));
+  let tailTokens = kept.reduce((n, r) => n + tokEst(r.msg), 0);
+  let demotedAny = false;
+  for (const r of kept) {
+    if (tailTokens <= budget) break;
+    const demoted = opts.workspace ? demoteSpilled(r, opts.workspace) : r.msg;
+    if (demoted === r.msg) continue;
+    tailTokens -= tokEst(r.msg) - tokEst(demoted);
+    r.msg = demoted;
+    demotedAny = true;
+  }
+
+  // DEMOTION-ONLY: if dropping spilled bodies from the tail already wins, take it and skip the
+  // summarizer entirely. Otherwise a session whose bloat is one huge tool result pays a model call
+  // to summarize a turn or two it did not need to lose — observed in the lab as a compaction that
+  // summarized a SINGLE turn purely to reach the demotion. The prefix stays ACTIVE here: nothing
+  // is summarized, so nothing may be dropped; only the tail rows are replaced by bounded copies.
+  const activeBytes = rows.reduce((n, r) => n + r.msg.length, 0);
+  const demotedBytes =
+    prefix.reduce((n, r) => n + r.msg.length, 0) + kept.reduce((n, r) => n + r.msg.length, 0);
+  if (demotedAny && demotedBytes < activeBytes * MATERIAL) {
+    db.transaction(() => {
+      for (const r of tail) db.query("UPDATE messages SET active = 0 WHERE id = ?").run(r.id);
+      for (const r of kept)
+        db.query(
+          "INSERT INTO messages (run_id, session_id, msg, created_at) VALUES (?, ?, ?, ?)",
+        ).run(r.run_id, sessionId, r.msg, Date.now());
+    })();
+    events.emit("compaction", spine, {
+      compacted_turns: 0,
+      kept: kept.length,
+      demoted_only: true,
+      summary_tokens: 0,
+      summary_cost_usd: 0,
+      identifiers_audited: 0,
+      identifiers_missing: 0,
+      merged: false,
+    });
+    return { usage: zeroUsage(), shrank: true };
+  }
   const transcript = prefix.map((r) => {
     const m = JSON.parse(r.msg) as ChatMsg;
     const body =
@@ -400,18 +452,6 @@ export async function maybeCompact(
   // PROVE it shrinks before committing: replacing a small prefix with a bounded summary envelope
   // can GROW the active set (codex repro), which would make overflow recovery worse and churn the
   // prefix cache. If it wouldn't shrink, skip the commit — but still charge the summary call(s).
-  // Demote oldest-first until the retained tail fits its budget. Oldest-first keeps the freshest
-  // results verbatim when there is room, while still letting the budget win when there is not.
-  const kept = tail.map((r) => ({ ...r }));
-  let tailTokens = kept.reduce((n, r) => n + tokEst(r.msg), 0);
-  for (const r of kept) {
-    if (tailTokens <= budget) break;
-    const demoted = opts.workspace ? demoteSpilled(r, opts.workspace) : r.msg;
-    if (demoted === r.msg) continue;
-    tailTokens -= tokEst(r.msg) - tokEst(demoted);
-    r.msg = demoted;
-  }
-
   // Progress is measured on the WHOLE ACTIVE SET in size terms, and must be MATERIAL. The old test
   // compared the summary to the PREFIX only, so a compaction that shed a small prefix while leaving
   // a 27KB tool result in the tail counted as a win and the next turn compacted again — 94 of 94

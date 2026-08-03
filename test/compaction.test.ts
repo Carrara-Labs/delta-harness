@@ -510,10 +510,12 @@ describe("tail demotion", () => {
       { recentBudgetTokens: 500, workspace: ws },
     );
     expect(did?.shrank).toBe(true);
+    // FREE: dropping spilled bodies already wins, so no summarizer call was needed
+    expect(did?.usage.costUsd).toBe(0);
     const after = active(db);
     const bytes = after.map((m) => JSON.stringify(m).length).reduce((a, b) => a + b, 0);
-    // the whole active set actually got smaller — the thing 94/94 failed to do
-    expect(bytes).toBeLessThan(before / 2);
+    // the whole active set actually got smaller — the thing 94/94 compactions failed to do
+    expect(bytes).toBeLessThan(before * 0.95);
     // a demoted row keeps its pointer, so the full output stays recoverable
     const stub = after.find((m) => JSON.stringify(m).includes("delta:demoted")) as {
       role: string;
