@@ -722,19 +722,31 @@ type Chunk = {
  * documented to accept it, matched on the parsed HOSTNAME so `openrouter.ai.attacker.test`
  * cannot opt itself in, plus an explicit per-provider override for a custom proxy. Everything
  * else is left alone: losing cache hits is cheap, a terminal 400 on every call is not. */
-export function acceptsPromptCacheKey(cfg: { baseUrl: string; promptCacheKey?: boolean }): boolean {
-  if (cfg.promptCacheKey !== undefined) return cfg.promptCacheKey;
+function hostMatches(baseUrl: string, domains: string[]): boolean {
   let host = "";
   try {
     // One trailing dot is a valid absolute DNS spelling of the same host (codex P3).
-    host = new URL(cfg.baseUrl).hostname.toLowerCase().replace(/\.$/, "");
+    host = new URL(baseUrl).hostname.toLowerCase().replace(/\.$/, "");
   } catch {
     return false;
   }
+  return domains.some((d) => host === d || host.endsWith(`.${d}`));
+}
+
+export function acceptsPromptCacheKey(cfg: { baseUrl: string; promptCacheKey?: boolean }): boolean {
+  if (cfg.promptCacheKey !== undefined) return cfg.promptCacheKey;
   // Only what the vendor docs were actually read for. Azure and other gateways stay off until
   // someone verifies them rather than assumes.
-  const known = ["openrouter.ai", "openai.com"];
-  return known.some((d) => host === d || host.endsWith(`.${d}`));
+  return hostMatches(cfg.baseUrl, ["openrouter.ai", "openai.com"]);
+}
+
+/** OpenAI DEPRECATED `max_tokens` on Chat Completions in favour of `max_completion_tokens`, and
+ * the o-series reasoning models reject it outright. Only OpenAI's own endpoint is switched:
+ * OpenRouter normalises `max_tokens` for every upstream (verified live against openai/gpt-5.5),
+ * and an arbitrary OpenAI-compatible server may know only the old name — sending the new one
+ * blindly would trade a working deprecated field for a hard 400, which is not failover-worthy. */
+export function usesMaxCompletionTokens(baseUrl: string): boolean {
+  return hostMatches(baseUrl, ["openai.com"]);
 }
 
 /** Highest index a ROLLING cache breakpoint may land on: everything after it is a derived
@@ -843,7 +855,9 @@ async function streamOnce(
   // compatible wire (184 calls). Gated by host — see acceptsPromptCacheKey.
   if (req.cacheKey && acceptsPromptCacheKey(cfg)) body.prompt_cache_key = req.cacheKey.slice(0, 64);
   if (req.tools?.length) body.tools = req.tools;
-  if (req.maxTokens) body.max_tokens = req.maxTokens;
+  if (req.maxTokens)
+    body[usesMaxCompletionTokens(cfg.baseUrl) ? "max_completion_tokens" : "max_tokens"] =
+      req.maxTokens;
   // Reasoning effort: OpenRouter takes a unified `reasoning: {effort}` (it normalizes
   // effort→budget per routed model); a direct OpenAI-compatible endpoint takes the flat
   // `reasoning_effort`. Either is ignored by a non-reasoning model on most gateways.

@@ -11,6 +11,7 @@ import {
   chat,
   type ModelResult,
   rollingScanFrom,
+  usesMaxCompletionTokens,
 } from "../src/provider";
 import { untrustedToolResult } from "../src/untrusted";
 
@@ -333,5 +334,18 @@ describe("pricing (Sprint 2)", () => {
   });
   test("an unrelated slug that merely CONTAINS a key no longer matches", () => {
     expect(resolvePrice("not-a-claude-sonnet-5", BAKED_PRICES)).toBeNull();
+  });
+});
+
+// OpenAI deprecated max_tokens on Chat Completions in favour of max_completion_tokens, and the
+// o-series rejects it outright. Only OpenAI's own host is switched: OpenRouter normalises the old
+// name (verified live against openai/gpt-5.5) and an arbitrary compatible server may know only it.
+describe("deprecated parameter names", () => {
+  test("only OpenAI's own endpoint gets max_completion_tokens", () => {
+    expect(usesMaxCompletionTokens("https://api.openai.com/v1")).toBe(true);
+    expect(usesMaxCompletionTokens("https://openrouter.ai/api/v1")).toBe(false);
+    expect(usesMaxCompletionTokens("http://127.0.0.1:8080/v1")).toBe(false);
+    expect(usesMaxCompletionTokens("https://api.openai.com.attacker.test/v1")).toBe(false);
+    expect(usesMaxCompletionTokens("not a url")).toBe(false);
   });
 });
