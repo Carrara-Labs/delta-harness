@@ -7,6 +7,10 @@ Re-run this end to end before any performance or cost work. It takes about 30 mi
 only way to know what is actually deployed, because **three separate deployment paths exist and none
 of them tells the others what it is running.**
 
+> **Read section 2.4 first.** There are **two independent telemetry collectors**, not one. Querying
+> only the control-plane collector makes the live fleet look dead; it is where the first pass of this
+> review went wrong.
+
 ---
 
 ## 1. The map — what is what
@@ -22,6 +26,15 @@ control plane pins a **date-tagged** image that does not name a harness version 
 tag to a release with `git for-each-ref --sort=creatordate --format='%(refname:short) %(creatordate:short)' refs/tags`.
 
 Deprecated: `~/delta` is the old monorepo. Harness work happens in `~/delta-harness` only.
+
+**Roles when testing a harness change** (Nic, 2026-08-03):
+
+- **Ferni = the testbed.** The autonomous-agent archetype, built to dogfood. Break things here first.
+- **Quick Search = the volume rig.** An agentic feature, in production, but easy to observe on long
+  runs, and lab/test Aperture workspaces can be spun up and run **in parallel** to build a sample
+  fast, inheriting all the QS wiring and telemetry.
+- **Meeting Processor = monitor only.** Production, awkward to iterate on. Watch it for regressions;
+  do not tune on it. Upgrade it as a beneficiary of a proven fix, never as an experiment.
 
 ---
 
@@ -64,7 +77,49 @@ const db = new Database("/data/delta.db", { readonly: true });
 `input`/`output`/`cacheRead`/`cacheWrite`/`costUsd`), `messages` (`active=1` is the live context),
 `events` (local telemetry, `ts`/`type`/`data`), `sessions`, `memory`, `self_revisions`, `vault`.
 
-### The control-plane telemetry (all agents that export)
+### 2.4 The two telemetry collectors
+
+Engine telemetry is turned on by `TELEMETRY_URL`, and **different fleets point at different
+collectors.** Check both, always.
+
+| Collector | Receives from | Endpoint | Credentials |
+| --- | --- | --- | --- |
+| **Control plane** | `delta-agent-*` (Meeting Processor, probes) | control-plane ingest | `DATABASE_URL` in `~/delta-agents/.env` |
+| **Aperture** | `aperture-qs-*`, `aperture-intake-*`, all 8 lanes | `https://aperture.is/api/telemetry` | `PROD_DATABASE_MIGRATION_URL` in `~/ai-recruiter/app/.env` |
+| **(none)** | **Ferni** | — | telemetry stays local in `/data/delta.db` `events` |
+
+The Aperture rail is the bigger and fresher corpus: 50,678 events, 22 July onward, still live. Its
+`agent_events` adds `workspace_slug` and `agent_type` for lane attribution. Ingest is bearer-auth'd
+with `TELEMETRY_INGEST_TOKEN`; the exporter fails open so a dead collector never breaks an agent.
+Aperture's own runbook section is `~/ai-recruiter/docs/fleet-runbook.md` under "Telemetry", and note
+`DELTA_CAPTURE_PAYLOADS=1` is required or `model.call` exports without model, latency, token or cost
+attributes.
+
+**Ferni exports nothing.** Verified against the live machine env, not the repo file: no
+`TELEMETRY_URL`, and its six Fly secrets do not include a telemetry token. Its telemetry exists and
+is complete, it just never leaves the VM, so Ferni must be queried over SSH (section 2.2). Wiring it
+to either collector is a one-variable change.
+
+Read the Aperture collector with:
+
+```js
+const env = await Bun.file(process.env.HOME + "/ai-recruiter/app/.env").text();
+const url = env.split("\n").find((l) => l.startsWith("PROD_DATABASE_MIGRATION_URL="))
+  ?.slice("PROD_DATABASE_MIGRATION_URL=".length).replace(/^["']|["']$/g, "").trim();
+```
+
+Run it from `~/ai-recruiter/app` so the driver resolves. Lane breakdown:
+
+```sql
+select workspace_slug, agent_type, count(distinct run_id) runs,
+       round(sum((attributes->>'gen_ai.usage.cost_usd')::numeric),2) cost,
+       round(avg((attributes->>'cache_hit_pct')::numeric),1) cache_pct,
+       percentile_disc(0.95) within group (order by (attributes->>'latency_ms')::int) p95_ms
+from agent_events where event_name='model.call' and attributes ? 'gen_ai.usage.cost_usd'
+group by 1,2 order by cost desc;
+```
+
+### The control-plane collector
 
 Postgres on Railway. Connection string is `DATABASE_URL` in `~/delta-agents/.env` — never echo it.
 No `psql` on this machine; use the repo's own driver:
@@ -150,29 +205,43 @@ is costing money.
 
 ## 4. State as of 2026-08-03
 
-| Agent | Version | Behind by | Health |
-| --- | --- | --- | --- |
-| Ferni | Harness **0.2.10** + Connect **0.5.0** | current | Runs fine. Cache read/write 19.1%, below break-even. 26 of 26 compactions failed to get under budget. |
-| Aperture QS + Intake | **0.2.6** | 4 releases | No engine telemetry reaching the collector. |
-| Meeting Processor | image `delta-2026.7.14` | **predates v0.1.1** | Highest traffic we have: 437 runs, ~$397, 36,654 events. Compaction thrash up to 29x in one run. |
-| Delta 1/4, Trevor, harness-1/2, probes | `delta-2026.7.8` … `7.13` | predates v0.1.1 | Idle. |
+| Agent | Version | Behind by | Traffic | Health |
+| --- | --- | --- | --- | --- |
+| Aperture QS + Intake (8 lanes) | **0.2.6** | 4 releases | 342 runs, **$727**, 50,678 events, live | Cache excellent (88.9%). 68 of 68 compactions failed to get under budget. |
+| Ferni | Harness **0.2.10** + Connect **0.5.0** | current | 78 runs, $94.76 | Cache read/write 19.1%, below break-even. 26 of 26 compactions failed. |
+| Meeting Processor | image `delta-2026.7.14` | **predates v0.1.1** | 437 runs, ~$397 | Compaction thrash up to 29x in one run. |
+| Delta 1/4, Trevor, harness-1/2, probes | `delta-2026.7.8` … `7.13` | predates v0.1.1 | idle | — |
 
 **Known problems, ranked** (detail in the 3 August review):
 
-1. Compaction does not reduce the prompt. Fleet-wide the call after a compaction averaged 143% of
-   the call before it, and on Ferni's current build 26 of 26 compactions still exceeded the budget.
-2. Prompt caching is a net cost on chat-paced agents. 83% of Ferni's input tokens were cache writes.
-3. 80% of compactions lose at least one identifier (4,620 of 27,923 audited, 16.5%).
+1. **Compaction never reduces the prompt.** Confirmed on three independent corpora and three harness
+   versions: pre-0.1.1 (call after a compaction averaged 143% of the call before), 0.2.6 (100.4%,
+   and 68 of 68 compactions still over budget), 0.2.10 (26 of 26). Cause is in current source:
+   `elide` is applied to the summarized transcript, the pinned ask and the summary, but never to the
+   **kept tail**, while `MIN_TAIL=2` and the orphan-snap let that tail exceed its budget.
+2. **Compaction loses facts.** 16.5% of audited identifiers on the control-plane corpus, 28.7% on
+   Aperture's.
+3. **Prompt caching inverts on chat-paced agents only.** Aperture, running dense back-to-back runs,
+   gets 88.9%. Ferni, on human-paced Telegram gaps, writes 83% of its input tokens to a cache it
+   reads back 19% of. The 5-minute default TTL is the suspect; `DELTA_CACHE_TTL=1h` is unset.
 4. Budget caps overshoot: a `$10` cap produced `$12.02`.
-5. Latency: Opus 5 averaged 40.9s per model call, p95 172.6s.
+5. Latency improves sharply with version: Opus 5 p95 was 172.6s on the pre-0.1.1 build and 58.0s on
+   0.2.6. Still slow in absolute terms.
+
+**Unit economics:** a Quick Search run costs **$1.69 to $3.09** depending on lane.
 
 ---
 
 ## 5. Traps
 
-- **Telemetry is dark.** `TELEMETRY_URL` is unset on Ferni, so the agent we dogfood hardest exports
-  nothing to the collector. The newest event in `agent_events` is 2026-07-30 and 97% of the corpus
-  comes from one agent. Check this first, or you will analyse an empty rail.
+- **There are two collectors and one agent on neither.** The control-plane rail looks dead (newest
+  event 30 July, 97% from one obsolete agent) and that is real, but the Aperture rail is live and
+  five times larger. Concluding "the fleet does not export telemetry" from the control-plane rail
+  alone is wrong, and the first pass of this review made exactly that mistake. Ferni is the only
+  agent genuinely not exporting.
+- **Check the deployed env, not the repo file.** `connect/deploy/fly.toml` does not show Fly
+  secrets or provisioner-injected vars. Confirm with
+  `flyctl ssh console -a <app> -C "sh -c 'env | cut -d= -f1 | sort'"` and `flyctl secrets list`.
 - **Old builds emit fewer attributes.** 2,761 of 4,981 `model.call` rows carry no usage fields at
   all. Filter with `attributes ? 'gen_ai.usage.input_tokens'` rather than assuming they are there.
 - **Date tags are not versions.** `delta-2026.7.14` sounds recent and predates the first release.
