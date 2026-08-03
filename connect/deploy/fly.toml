@@ -41,6 +41,14 @@ primary_region = "iad"
   # inspect write enables the /revert operator command; local skill folders live on the volume
   DELTA_INSPECT_WRITE = "1"
   DELTA_SKILLS = "local"
+  # Engine telemetry to the control-plane collector. Ferni is not a provisioned machine, so
+  # it authenticates with an operator token (TELEMETRY_TOKEN, a staged Fly secret) rather than
+  # a gateway token - the ingest route dual-auths for exactly this case. Without
+  # DELTA_CAPTURE_PAYLOADS the model.call/tool.* events export with NO model, latency, token or
+  # cost attributes, which is the difference between a usable corpus and an empty one; it does
+  # not export prompts or tool payloads. The exporter fails open and is never on a turn's path.
+  TELEMETRY_URL = "https://delta-control-plane.fly.dev/api/telemetry/ingest"
+  DELTA_CAPTURE_PAYLOADS = "1"
   # generous budgets for real work
   DELTA_MAX_COST_USD = "15"
   DELTA_MAX_TOKENS = "3000000"
