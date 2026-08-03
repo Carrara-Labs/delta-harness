@@ -64,3 +64,27 @@ describe("delta init", () => {
     expect(await cliInit([])).toBe(2);
   });
 });
+
+// codex P2: the prompt_cache_key override was advertised on ProviderConfig but neither config
+// surface copied it through, so an operator setting it got `undefined`. Pin BOTH surfaces —
+// an escape hatch that silently does nothing is worse than not having one.
+describe("prompt_cache_key override reaches the provider config", () => {
+  test("primary provider: DELTA_PROMPT_CACHE_KEY forces on and off", () => {
+    expect(loadConfig({ DELTA_PROMPT_CACHE_KEY: "1" }).provider.promptCacheKey).toBe(true);
+    expect(loadConfig({ DELTA_PROMPT_CACHE_KEY: "0" }).provider.promptCacheKey).toBe(false);
+    // unset means auto-detect from the host, NOT false
+    expect(loadConfig({}).provider.promptCacheKey).toBeUndefined();
+  });
+
+  test("fallback providers: the flag survives DELTA_PROVIDERS parsing, booleans only", () => {
+    const providers = JSON.stringify([
+      { baseUrl: "https://proxy.internal/v1", apiKey: "k", promptCacheKey: true },
+      { baseUrl: "https://other.internal/v1", apiKey: "k", promptCacheKey: "yes" },
+    ]);
+    const cfg = loadConfig({ DELTA_PROVIDERS: providers });
+    const fallbacks = cfg.providers.filter((p) => p.label !== "primary");
+    expect(fallbacks[0]?.promptCacheKey).toBe(true);
+    // a truthy STRING must not enable it — that would opt an unverified endpoint in
+    expect(fallbacks[1]?.promptCacheKey).toBeUndefined();
+  });
+});

@@ -96,6 +96,43 @@ Three regression tests, each verified to **fail without the fix and pass with it
 Plus an over-large `ephemeralCount` still marking the system prefix. 823 tests green, tsc and biome
 clean.
 
+## Coverage across all three wires
+
+Vendor docs read 2026-08-03. The three paths cache by **different mechanisms**, which is why one
+bug hit only one of them.
+
+| Wire | Mechanism | What Delta sends | State |
+| --- | --- | --- | --- |
+| **anthropic-native** (`/v1/messages`) | explicit `cache_control`, max 4 breakpoints | 1 system (1h when `DELTA_CACHE_TTL=1h`) + 2 rolling = 3 of 4 | **fixed here** |
+| **openai-native** (`/responses`) | automatic prefix caching + `prompt_cache_key` routing | `prompt_cache_key` (session id, 64-char clamp) | already correct |
+| **openai-compatible** (OpenRouter, chat-completions) | Anthropic models → `cache_control`; OpenAI/Gemini → automatic + routing key | `cache_control` for Anthropic models (**fixed here**) + `prompt_cache_key` on documented hosts (**added here**) | fixed here |
+
+Two facts drove the compatible-wire change:
+
+- `prompt_cache_key` is a **Chat Completions** field, not Responses-only, and OpenAI states it is
+  **required for reliable matching on GPT-5.6+**. OpenRouter forwards it as its sticky routing key.
+  Delta sent it on the Responses wire only.
+- The fleet had already paid for this: the same model family averaged **56.7%** cache hit natively
+  (1,237 calls) against **24.6%** over the compatible wire (184 calls).
+
+**Gated by host, not sent blindly.** An unknown top-level field is a legitimate 400 on a strict
+OpenAI-compatible server, and a plain 4xx is *not* failover-worthy in this codebase — so guessing
+would turn an arbitrary `MODEL_BASE_URL` from "uncached" into "unusable", and would block reaching
+an OpenRouter fallback (codex P1). `acceptsPromptCacheKey` matches the parsed **hostname** against
+`openrouter.ai` and `openai.com` only, so a lookalike host cannot opt itself in, with an explicit
+`promptCacheKey` provider override for a custom proxy someone has actually verified.
+
+Deliberately unchanged:
+
+- **Gemini via OpenRouter gets no `cache_control`.** Gemini 2.5 caches implicitly with no
+  breakpoints, and where explicit markers are used only the last one applies. The routing key is
+  the useful part and it now gets that.
+- **Anthropic via OpenRouter now receives both** `cache_control` and `prompt_cache_key`. The key is
+  top-level routing metadata, orthogonal to breakpoints, and does not consume the 4-breakpoint
+  budget.
+- Minimum cacheable prefix is **1,024 tokens** on GPT-5.6+, so short turns will not cache at all on
+  those models regardless of what we send. Not a bug.
+
 ## Live verification
 
 The measurement to beat is the table at the top: cache reads pinned at 6,507 while input grows. A

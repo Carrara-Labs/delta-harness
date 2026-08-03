@@ -210,6 +210,14 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     ...(env.MODEL_API === "anthropic" || env.MODEL_API === "responses"
       ? { api: env.MODEL_API as "anthropic" | "responses" }
       : {}),
+    // Force `prompt_cache_key` on/off for a custom OpenAI-compatible proxy. Unset = auto-detect
+    // from the host, which is the safe default: an unknown top-level field is a legitimate 400
+    // on a strict endpoint and a plain 4xx is not failover-worthy.
+    ...(env.DELTA_PROMPT_CACHE_KEY === "1"
+      ? { promptCacheKey: true }
+      : env.DELTA_PROMPT_CACHE_KEY === "0"
+        ? { promptCacheKey: false }
+        : {}),
     ...(speed ? { speed } : {}),
     ...(modelHeaders ? { headers: modelHeaders } : {}),
     // Subscription path: mint the bearer from the control plane's broker endpoint
@@ -650,6 +658,10 @@ function parseFallbackProviders(
       ...(p.api === "anthropic" || p.api === "responses"
         ? { api: p.api as "anthropic" | "responses" }
         : {}),
+      // Opt a custom proxy in (or a documented host out) of `prompt_cache_key`. Booleans only:
+      // a truthy string would silently enable it on an endpoint nobody verified, which is the
+      // failure this flag exists to prevent (codex P2 — it was advertised but unreachable here).
+      ...(typeof p.promptCacheKey === "boolean" ? { promptCacheKey: p.promptCacheKey } : {}),
     };
     if (typeof p.brokerMintUrl === "string") {
       // Same allowlist guard as the primary (codex H3): a subscription token may only go to a

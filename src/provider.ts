@@ -87,6 +87,12 @@ export type ProviderConfig = {
    * API (/v1/messages). "responses" = the OpenAI Responses API (/responses) —
    * the ChatGPT/Codex subscription backend the broker token targets (§C). */
   api?: "openai" | "anthropic" | "responses";
+  /** Force `prompt_cache_key` on the OpenAI-compatible wire for a custom proxy known to accept
+   * it. Off by default and auto-enabled only for hosts documented to support the field — an
+   * unknown top-level field is a legitimate 400 on a strict endpoint, and a plain 4xx is NOT
+   * failover-worthy here, so guessing would make an arbitrary MODEL_BASE_URL unusable rather
+   * than merely uncached (codex P1). */
+  promptCacheKey?: boolean;
   /** Static extra headers merged into every request to this provider, at LOWEST
    * precedence (content-type / authorization / the credential's own headers always
    * win). Product-neutral seam: the engine carries arbitrary headers; the bundle
@@ -279,7 +285,8 @@ export type ChatRequest = {
   ephemeralCount?: number;
   /** Cache-affinity key (the session id). Anthropic paths get rolling cache_control
    * breakpoints; the OpenAI Responses backend caches by prefix + this routing key
-   * (`prompt_cache_key`, clamped to 64 chars). */
+   * (`prompt_cache_key`, clamped to 64 chars). The OpenAI-compatible wire sends the same field,
+   * but only to hosts documented to accept it — see `acceptsPromptCacheKey`. */
   cacheKey?: string;
   /** Reasoning effort when the model supports extended thinking. Mapped per wire:
    * OpenAI-Responses (subscription) + OpenRouter → `reasoning.effort`; a direct
@@ -711,6 +718,25 @@ type Chunk = {
 //      a documented provider-caching technique.)
 // OpenAI-family models cache automatically; only cache metadata is Anthropic-specific.
 // Tool-result framing applies on every wire path.
+/** May this endpoint be sent `prompt_cache_key` on the OpenAI-compatible wire? Only hosts
+ * documented to accept it, matched on the parsed HOSTNAME so `openrouter.ai.attacker.test`
+ * cannot opt itself in, plus an explicit per-provider override for a custom proxy. Everything
+ * else is left alone: losing cache hits is cheap, a terminal 400 on every call is not. */
+export function acceptsPromptCacheKey(cfg: { baseUrl: string; promptCacheKey?: boolean }): boolean {
+  if (cfg.promptCacheKey !== undefined) return cfg.promptCacheKey;
+  let host = "";
+  try {
+    // One trailing dot is a valid absolute DNS spelling of the same host (codex P3).
+    host = new URL(cfg.baseUrl).hostname.toLowerCase().replace(/\.$/, "");
+  } catch {
+    return false;
+  }
+  // Only what the vendor docs were actually read for. Azure and other gateways stay off until
+  // someone verifies them rather than assumes.
+  const known = ["openrouter.ai", "openai.com"];
+  return known.some((d) => host === d || host.endsWith(`.${d}`));
+}
+
 /** Highest index a ROLLING cache breakpoint may land on: everything after it is a derived
  * per-turn block. Shared by BOTH wire serializers — they build different shapes but must agree
  * on eligibility, and the first version of this fix shipped it to only one of them (codex P1),
@@ -807,6 +833,15 @@ async function streamOnce(
     stream_options: { include_usage: true },
   };
   if (openrouter) body.usage = { include: true }; // adds cost to the final usage chunk
+  // Sticky cache routing for the auto-caching families (OpenAI; Gemini's implicit cache). It is
+  // top-level ROUTING metadata, orthogonal to Anthropic's cache_control breakpoints — sending
+  // both to an Anthropic model over OpenRouter is harmless and does not touch the 4-breakpoint
+  // budget. A documented Chat Completions field (not Responses-only) that OpenAI states is
+  // REQUIRED for reliable matching on GPT-5.6+, and that OpenRouter forwards as its sticky
+  // routing key. We were sending it on the Responses wire only, and the fleet shows the cost:
+  // the same model family averaged 56.7% cache hit native (1,237 calls) against 24.6% over the
+  // compatible wire (184 calls). Gated by host — see acceptsPromptCacheKey.
+  if (req.cacheKey && acceptsPromptCacheKey(cfg)) body.prompt_cache_key = req.cacheKey.slice(0, 64);
   if (req.tools?.length) body.tools = req.tools;
   if (req.maxTokens) body.max_tokens = req.maxTokens;
   // Reasoning effort: OpenRouter takes a unified `reasoning: {effort}` (it normalizes

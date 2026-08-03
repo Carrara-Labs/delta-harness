@@ -5,6 +5,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { BAKED_PRICES, resolvePrice } from "../src/pricing";
 import {
+  acceptsPromptCacheKey,
   type ChatMsg,
   type ChatRequest,
   chat,
@@ -229,6 +230,48 @@ describe("rolling cache breakpoint", () => {
     expect(rollingScanFrom(10, Number.NaN)).toBe(9); // non-finite → exclude nothing
     expect(rollingScanFrom(10, Number.POSITIVE_INFINITY)).toBe(9);
     expect(rollingScanFrom(10, undefined)).toBe(9);
+  });
+
+  // OpenAI documents prompt_cache_key on Chat Completions (not Responses-only) and says it is
+  // REQUIRED for reliable matching on GPT-5.6+. OpenRouter forwards it as its sticky routing
+  // key. We were sending it on the Responses wire only.
+  test("openai-compat path: prompt_cache_key is sent when the endpoint accepts it", async () => {
+    const key = `sess_${"y".repeat(100)}`;
+    await chat(
+      { baseUrl: base, apiKey: "t", models: ["gpt-5.5"], maxRetries: 0, promptCacheKey: true },
+      { messages: history, cacheKey: key },
+    );
+    expect(captured.prompt_cache_key).toBe(key.slice(0, 64));
+  });
+
+  // codex P1: an unknown top-level field is a legitimate 400 on a strict OpenAI-compatible
+  // server, and a plain 4xx is NOT failover-worthy here — so guessing would turn an arbitrary
+  // MODEL_BASE_URL from "uncached" into "completely unusable". Absence is the safety property.
+  test("openai-compat path: an unknown endpoint is never sent prompt_cache_key", async () => {
+    await chat(
+      { baseUrl: base, apiKey: "t", models: ["gpt-5.5"], maxRetries: 0 },
+      { messages: history, cacheKey: "sess_abc" },
+    );
+    expect("prompt_cache_key" in captured).toBe(false);
+  });
+
+  test("acceptsPromptCacheKey gates on the parsed hostname, not a substring", () => {
+    expect(acceptsPromptCacheKey({ baseUrl: "https://openrouter.ai/api/v1" })).toBe(true);
+    expect(acceptsPromptCacheKey({ baseUrl: "https://api.openai.com/v1" })).toBe(true);
+    // a lookalike host must not opt itself in
+    expect(acceptsPromptCacheKey({ baseUrl: "https://openrouter.ai.attacker.test/v1" })).toBe(
+      false,
+    );
+    expect(acceptsPromptCacheKey({ baseUrl: "https://notopenai.com/v1" })).toBe(false);
+    expect(acceptsPromptCacheKey({ baseUrl: "http://127.0.0.1:8080" })).toBe(false);
+    expect(acceptsPromptCacheKey({ baseUrl: "not a url" })).toBe(false);
+    // explicit override wins in both directions
+    expect(acceptsPromptCacheKey({ baseUrl: "http://proxy.internal", promptCacheKey: true })).toBe(
+      true,
+    );
+    expect(
+      acceptsPromptCacheKey({ baseUrl: "https://api.openai.com/v1", promptCacheKey: false }),
+    ).toBe(false);
   });
 
   test("responses path: prompt_cache_key carries the session id, clamped to 64", async () => {
