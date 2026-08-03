@@ -133,6 +133,51 @@ Deliberately unchanged:
 - Minimum cacheable prefix is **1,024 tokens** on GPT-5.6+, so short turns will not cache at all on
   those models regardless of what we send. Not a bug.
 
+## Live verification — four arms against real provider APIs
+
+A local daemon, real APIs, real conversations, cache numbers read from the daemon's own DB. The
+workspace reproduces the failure condition: a `PROMPT_CONTEXT.md` carrying `{{now.iso}}` plus a
+local skill, so two derived blocks are appended every turn.
+
+| Arm | Wire | Auth | Result |
+| --- | --- | --- | --- |
+| OpenRouter + Sonnet 5 | compat, `cache_control` | static key | **100%** (28,768 / 28,856) |
+| OpenRouter + GPT-5.5 | compat, `prompt_cache_key` | static key | 97/96% once warm, no 400 |
+| Anthropic direct | native, `cache_control` | static key | cold, then **100 / 100 / 99%** |
+| **chatgpt.com/backend-api/codex + gpt-5.6-sol** | **native Responses** | **Codex sign-in via CP broker** | 11 calls, tools, **56%** |
+
+The Codex arm minted a real subscription token from the control-plane broker
+(`/api/broker/openai-token`) with no static key configured, and every call reported
+`provider: primary` — so it genuinely ran the subscription, not the OpenRouter fallback. 56% matches
+the fleet's independently-measured 56.7% for `gpt-5.6-sol`. The broker token was held only in
+process env and deleted afterwards; it was never written to a transcript.
+
+### What the lab could NOT reproduce
+
+Pre-fix code with the same two derived blocks still cached at **98%** on a text-only conversation.
+The failure needs more than the derived blocks:
+
+- with **one** derived block only one of the two rolling marks is wasted, and the survivor still
+  lands on real transcript;
+- without **tool calls** the transcript grows too gently for the marks to drift out of Anthropic's
+  ~20-block lookback.
+
+Adding large tool results reproduced degradation, and the fix removed it:
+
+| | calls | overall |
+| --- | --- | --- |
+| pre-fix, tool-heavy | 95, 94, **18**, 99, **71**, 99, **77**, 100 | 81% |
+| fixed, same script | 97, 89, 18, 99, **99, 99, 98, 99** | 86% |
+
+The post-tool-result dips are gone. Total input differed between the two runs (204k vs 151k)
+because the model made different tool calls, so that pair is **not** a clean cost comparison.
+
+**Honest limit:** the fix is correct and measurably helps in both the lab and on Ferni, but the
+*severity* on Ferni (reads pinned at 6,507 while input reached 59k) was never reproduced in the lab.
+Something about its scale — 20-27KB tool results, Opus 5, more blocks per turn — amplifies it.
+Codex's P2 (the ~20-block lookback being blown past by parallel tool calls) is the leading candidate
+and remains unfixed.
+
 ## Live verification
 
 The measurement to beat is the table at the top: cache reads pinned at 6,507 while input grows. A
