@@ -7,6 +7,27 @@ else is low-risk and sequences freely. Shipped items at the bottom for context.
 
 The security track (the vault + secure intake) shipped 2026-08-01. Next work is P1 below.
 
+## Filed (NOT scheduled) — Aperture field report on 0.2.11
+
+`docs/backlog-aperture-field-report-0211.md`, captured 2026-08-03 from the Aperture engineer after
+he verified 0.2.11 on the QS lab lane and rolled all 8 lanes the same day (PASS on all four
+criteria). Source reply kept verbatim in the appendix. Three findings, all verified against our
+source:
+
+- **The self-write breaker latches on CONVERGING `self_cap` attempts.** `STORM_CLASSES` keys every
+  cap refusal to one constant, so it cannot tell an agent binary-searching under the cap from a
+  grinding storm. One run was 45 bytes short and shrinking when it was cut off. Same bug class as
+  the compaction bug 0.2.11 just fixed: progress measured by a proxy, not by the quantity that
+  matters. Fix should be MATERIAL convergence with a hard attempt ceiling, NOT their proposed
+  monotone exemption (unbounded: one byte per try would grind forever).
+- **Self-file fullness is invisible on `/v1/status`.** The data already exists at `run.ts:313`, but
+  status is served from the boot snapshot so it needs a live read like `vault` does.
+- **`/v1/status` returns the raw profile alias** (`src/server.ts:430` returns `c.profile` verbatim)
+  where the docs say the canonical name. One-line.
+
+Also: one bounded-lookback cache miss in 357 calls, which KEEPS that caveat on the backlog rather
+than promoting it.
+
 ## Observing (NOT scheduled) — Ferni field report #2
 
 `docs/backlog-ferni-field-report-2.md`, captured 2026-08-01. Dogfooding continues; we want more
