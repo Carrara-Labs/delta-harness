@@ -1,4 +1,4 @@
-# Delta shipping list (as of 2026-08-01)
+# Delta shipping list (as of 2026-08-03)
 
 Prioritized across both packages. Two security releases stay isolated + codex-gated; everything
 else is low-risk and sequences freely. Shipped items at the bottom for context.
@@ -15,11 +15,22 @@ data before shipping any of it.
 - **Prompt caching collapses on long threads.** 9% cache hit across a $49.26 day on one agent;
   the rolling breakpoints land on per-turn ephemeral blocks, so only the spine is ever re-read.
   Candidate fix identified. Needs a controlled A/B on a lab agent before it is written.
+- **Compaction cannot get under the budget.** Ferni logs `context_irreducible` on every turn since
+  the 0.5.0 deploy: the assembled request still exceeds the context budget after compaction ran.
+  Same root as the spill problem seen from the other end, and a second independent signal for the
+  0.2.11 batch.
 - **`list_secrets` / `vault.declared` conflate "in the vault" with "available to the agent".**
   Found by Ferni itself while self-diagnosing. One coherent fix covers both.
 - **Operator actions are invisible to the agent** — a credential removed behind its back produced
   a confident wrong diagnosis. The arrival case is now handled; removal is not.
 - Smaller: `spawn_subagent` running 300s, the `code` CLI missing from the Ferni image.
+
+## Next release — Harness 0.2.11 "Context economics" (proposed)
+
+Bundles the two P1 harness items below with the vault-polish fix and, if its A/B confirms it, the
+cache-breakpoint fix. Three of the four are ready to write; the cache item is not, and it is the
+expensive one, so **open the release with the A/B on a lab agent rather than with code**. It either
+promotes that item into the batch or kills it, and until it runs the scope is a guess.
 
 ## P1 — leapfrog + robustness fast-follows
 
@@ -54,8 +65,14 @@ data before shipping any of it.
   to survive heavy loads from day one (async delivery, utility model, heavy-run POLICY, compaction
   tuning, the subagent caveat), and now the vault + intake wiring.
 - **Semver drift.** `src/version.ts` documents additive = MINOR, but 0.2.7 through 0.2.10 all
-  shipped additive work as third-digit bumps. Either the doc or the practice should move; the
-  release counter is currently the de-facto convention.
+  shipped additive work as third-digit bumps. Connect has since gone the other way, taking 0.5.0
+  for an additive release, so the two packages now disagree with each other as well as with the
+  doc. Either the doc or the practice should move.
+- **`npm deprecate` @carrara-labs/delta-connect@0.4.0 and @0.4.1.** Needs Nic's npm auth. Never
+  `unpublish`.
+- **Struck as stale:** "harness v4 live smoke, never run against a live daemon." That lineage
+  landed - `retrieval.ts`, `research.ts` and `compaction.ts` are in `main` and Ferni has exercised
+  them in production since 0.2.10.
 
 ## Recently shipped (context)
 
