@@ -429,7 +429,44 @@ row count and identifier completeness.
 calls indicating the agent lost track of its work; turn-1 cost on small runs, which must be
 unchanged.
 
-## 11. Open, before implementation
+## 11. Implementation checklist (codex round 3, PROCEED WITH CHANGES)
+
+Things that must be right in code, not in prose.
+
+1. **A recalled body must never become a spill file.** `recall(artifact)` output passes through
+   `capAndSpill` like any tool result, so a large body would write an unswept file into a durable
+   session, and repeated recalls would duplicate it. Return the body in chunks below the effective
+   result cap with a cursor, and guarantee this mode never spills.
+2. **Bound the TOTAL, not just each value.** A per-value threshold still admits an arbitrarily large
+   object of sub-threshold values, and many oversized fields produce an arbitrarily large manifest.
+   After top-level elision, enforce a total serialized-byte and marker-count bound: elide the next
+   largest values as needed, and if keys plus markers still exceed it, collapse to ONE root marker
+   carrying total bytes and field count.
+3. **Bound the discovery window physically.** The existing `(session_id, active, id)` index cannot
+   range on `id` without constraining `active`, so the scan is not actually bounded. Add
+   `(session_id, id)` and verify the query plan. Journal access is always exact `(run_id, call_id)`
+   plus session binding, never `LIKE journal.args`.
+4. **Identities and ordering.** Enumeration dedupes by `(run_id, call_id, field)`; keyword hits dedupe
+   by `(run_id, call_id)`. Existing assistant dedupe by role+text is insufficient. Search the
+   transcript first and fill the remaining limit from archived hits, so archived results cannot
+   starve live ones. Include inactive rows: compaction copies create duplicates and a failed finalize
+   only deactivates.
+5. **Structured artifact reference.** `"<run_seq>:<call_id>:<field>"` is ambiguous - provider call ids
+   and JSON keys can contain colons. Use `{run_seq, call_id, field}`. Resolve the run inside the
+   current session, verify a marker exists for that exact field, then read by primary key, so a
+   forged marker can never yield a claimed body.
+6. **Elision is pure and atomic.** Pass the already-parsed execution object to a synchronous helper.
+   Keep the raw arguments in `journal`. Leave the message byte-identical when nothing changes. Treat
+   a serialization failure as a no-op. Commit the marker rewrite, the journal completion and the tool
+   result in ONE transaction. Guard config with `Number.isFinite`; `0` disables, invalid uses default.
+7. **S9 exactly as formulated**, and note a journal `done` row with no tool message must still flow
+   through `execCall` so the missing result row is materialized.
+8. **Leanness.** Drop `field` from the marker - the enclosing key already supplies it. No digest, no
+   table, no retention exception, no argument file. **Land S9 separately.** And **S8 is not a one-line
+   compaction change** - the serializers add cache breakpoints automatically, so it belongs in its own
+   cache patch.
+
+## 12. Open, before implementation
 
 1. **Argument-size distribution** across Aperture's five workspaces, to derive §5.5 from data.
 2. **`alpha-school` at 6,309B against a 6,400B cap** - operator decision, not engine.
