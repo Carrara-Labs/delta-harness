@@ -360,8 +360,8 @@ export async function maybeCompact(
       kept: kept.length,
       demoted_only: true,
       demoted: true,
-      tail_bytes_before: activeBytes,
-      tail_bytes_after: demotedBytes,
+      tail_bytes_before: tail.reduce((n, r) => n + bytes(r.msg), 0),
+      tail_bytes_after: kept.reduce((n, r) => n + bytes(r.msg), 0),
       summary_tokens: 0,
       summary_cost_usd: 0,
       identifiers_audited: 0,
@@ -514,8 +514,10 @@ export async function maybeCompact(
     // whether a tail-shrinking change worked, and Aperture could not read it.
     demoted_only: false,
     demoted: demotedAny,
-    tail_bytes_before: rows.reduce((n, r) => n + bytes(r.msg), 0),
-    tail_bytes_after: newBytes,
+    // The RETAINED TAIL only. Measuring the whole active set (or including the new summary) lets
+    // the prefix-to-summary reduction dominate and hides the tail change this is meant to score.
+    tail_bytes_before: tail.reduce((n, r) => n + bytes(r.msg), 0),
+    tail_bytes_after: kept.reduce((n, r) => n + bytes(r.msg), 0),
     summary_tokens: sumUsage.output,
     summary_cost_usd: sumUsage.costUsd,
     identifiers_audited: ids.length,

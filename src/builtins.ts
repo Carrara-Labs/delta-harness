@@ -575,6 +575,8 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
       const ref = args.artifact as
         | { run_seq?: unknown; call_id?: unknown; field?: unknown }
         | undefined;
+      if (args.artifact !== undefined && (typeof ref !== "object" || ref === null))
+        return "[tool error] artifact must be an object {run_seq, call_id, field} — list them by calling recall with no arguments";
       if (ref && typeof ref === "object") {
         if (
           typeof ref.run_seq !== "number" ||
@@ -585,6 +587,7 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
         const page = ctx.history?.read(
           { runSeq: ref.run_seq, callId: ref.call_id, field: ref.field },
           Number(args.offset) || 0,
+          ctx.resultCap ?? 20_000,
         );
         if (!page)
           return "(no such artifact in this thread — call recall with no arguments to list them)";

@@ -42,6 +42,9 @@ export type TodoItem = { text: string; status: TodoStatus };
 export type ToolCtx = {
   /** Workspace root for file tools; absolute path. */
   workspace: string;
+  /** This run's tool-result cap. A tool that returns bounded pages sizes them from this, so its
+   * output can never itself trip `capAndSpill` and write a spill file (0.2.12). */
+  resultCap?: number;
   /** Pull more tools into this run's active set (search_tools uses this). */
   activate: (names: string[]) => void;
   /** Search THIS thread's message history — including rows compacted out of the active
@@ -56,6 +59,7 @@ export type ToolCtx = {
     read: (
       ref: { runSeq: number; callId: string; field: string },
       offset: number,
+      maxChars: number,
     ) => ArtifactPage | null;
   };
   /** The `todo` tool's hands: read / replace THIS thread's working plan (W3). Session-bound so a
@@ -203,21 +207,30 @@ export function elideArgs(args: Record<string, unknown>, cap: number): string | 
   };
   const size = (v: unknown): number => (typeof v === "string" ? bytes(v) : bytes(ser(v) ?? "null"));
 
-  let out = ser(args);
-  if (out === null || bytes(out) <= cap) return null;
+  const first = ser(args);
+  if (first === null || bytes(first) <= cap) return null;
 
-  // Largest values first, so the fewest fields are lost to reach the bound.
+  // Largest values first, so the fewest fields are lost to reach the bound. Track the serialized
+  // size INCREMENTALLY rather than re-serializing the whole object per field: re-serializing is
+  // O(n²) and codex measured 7.2s synchronously on a 20,000-field object, on the commit path.
   const order = Object.entries(args)
     .map(([k, v]) => [k, size(v)] as const)
     .sort((a, b) => b[1] - a[1]);
   const next: Record<string, unknown> = { ...args };
+  let total = bytes(first);
   for (const [k, n] of order) {
+    const before = bytes(ser(next[k]) ?? "null");
     next[k] = { [ELIDED_KEY]: { bytes: n } };
-    out = ser(next);
-    if (out === null) return null;
-    if (bytes(out) <= cap) return out;
+    total += bytes(ser(next[k]) ?? "null") - before;
+    if (total <= cap) {
+      const out = ser(next);
+      // The incremental figure is an estimate of the same quantity; confirm before returning it.
+      if (out !== null && bytes(out) <= cap) return out;
+    }
   }
-  // Every value elided and still over — a pathological key count. Collapse to one root marker.
+  // Every value elided and still over — a pathological key count. Collapse to ONE root marker.
+  // `fields` keeps the manifest honest about how much was lost. This is the only shape that can
+  // exceed `cap`, and only when `cap` is smaller than the marker itself.
   return ser({ [ELIDED_KEY]: { bytes: size(args), fields: order.length } });
 }
 

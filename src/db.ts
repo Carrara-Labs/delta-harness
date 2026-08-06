@@ -16,7 +16,7 @@ type AssistantToolCall = { id: string; function: { name: string; arguments: stri
 
 import { HARNESS_VERSION } from "./version";
 
-const MIGRATIONS: string[] = [
+export const MIGRATIONS: string[] = [
   `
   CREATE TABLE sessions (
     id TEXT PRIMARY KEY,
@@ -294,6 +294,14 @@ const MIGRATIONS: string[] = [
     updated_at INTEGER NOT NULL
   );
   `,
+  // 0.2.12: the artifact-manifest scan needs a bounded id range within a session, and so does its
+  // floor query. `messages_session(session_id, active, id)` cannot serve `MAX(id)` or an ORDER BY
+  // without a temp b-tree, so a long durable session paid a full-range scan to compute the floor
+  // before the bounded scan even began (codex P1). IF NOT EXISTS so replaying migrations over a
+  // database that already has it is a no-op.
+  `
+  CREATE INDEX IF NOT EXISTS messages_session_id ON messages(session_id, id);
+  `,
 ];
 
 export function openDb(path: string): Database {
@@ -422,7 +430,11 @@ export function searchHistory(
     if (idx < 0) continue; // matched JSON scaffolding, not readable content — skip
     if (m.role === "tool")
       matched.add(`${row.run_id}:${(m as { tool_call_id: string }).tool_call_id}`);
-    for (const c of m.tool_calls ?? []) matched.add(`${row.run_id}:${c.id}`);
+    // Only the call whose VISIBLE arguments carry the term is covered by this hit. Marking every
+    // call on a multi-call assistant would let a match in call A suppress the archived body of
+    // call B, which is a silent loss rather than a dedupe (codex P1).
+    for (const c of m.tool_calls ?? [])
+      if (c.function.arguments.toLowerCase().includes(ql)) matched.add(`${row.run_id}:${c.id}`);
     const key =
       m.role === "tool"
         ? `tool:${row.run_id}:${(m as { tool_call_id: string }).tool_call_id}`
@@ -474,8 +486,10 @@ function searchArchive(
 ): RecallHit[] {
   const ql = query.toLowerCase();
   const out: RecallHit[] = [];
+  const emitted = new Set<string>(); // one hit per (run, call): two elided fields are one finding
   for (const ref of listArtifacts(db, sessionId)) {
     if (out.length >= limit) break;
+    if (emitted.has(`${ref.runId}:${ref.callId}`)) continue;
     // Deduped against the transcript by (run_id, call_id): a term visible in a SURVIVING field of
     // the same call already produced a live hit, and one call should yield one hit.
     if (matched.has(`${ref.runId}:${ref.callId}`)) continue;
@@ -492,6 +506,7 @@ function searchArchive(
     const text = typeof value === "string" ? value : (JSON.stringify(value) ?? "");
     const idx = text.toLowerCase().indexOf(ql);
     if (idx < 0) continue;
+    emitted.add(`${ref.runId}:${ref.callId}`);
     const start = Math.max(0, idx - 400);
     const end = Math.min(text.length, idx + ql.length + 400);
     out.push({
@@ -535,9 +550,10 @@ export type ArtifactRef = {
  * archive-search probe set. */
 const ARTIFACT_MAX = 200;
 
-/** Bytes of an archived body returned per `recall` read. Deliberately below the smallest sane
- * `toolResultCap` so a readback can never itself trip `capAndSpill` and write a spill file into a
- * durable session (codex P1) — the agent pages through with `offset` instead. */
+/** Default bytes of an archived body per `recall` read. The CALLER passes the run's real result cap
+ * so the page can never itself trip `capAndSpill` and write a spill file into a durable session
+ * (codex P1) — a fixed 8KB was wrong the moment an operator set a smaller cap. The agent pages
+ * through with `offset` instead. */
 export const ARTIFACT_CHUNK = 8_000;
 
 /** The manifest for THIS session: every elided argument value still named in the transcript,
@@ -563,7 +579,7 @@ export function listArtifacts(
     .query(
       `SELECT m.msg AS msg, m.run_id AS run_id, r.seq AS seq
          FROM messages m JOIN runs r ON r.id = m.run_id
-        WHERE m.session_id = ? AND m.active IN (0, 1) AND m.id > ? AND m.msg LIKE ? ESCAPE '\\'
+        WHERE m.session_id = ? AND m.id > ? AND m.msg LIKE ? ESCAPE '\\'
         ORDER BY m.id DESC`,
     )
     .all(sessionId, floor, `%\\${ELIDED_KEY}%`) as Array<{
@@ -588,10 +604,26 @@ export function listArtifacts(
         continue;
       }
       if (!args || typeof args !== "object" || Array.isArray(args)) continue;
+      // The whole-object collapse: `elideArgs` returns ONE root marker when the key count alone
+      // blows the cap. Without this it would be invisible to enumeration, search and readback.
+      const rootBytes = elidedBytes(args);
+      if (rootBytes !== null) {
+        const key = JSON.stringify([row.run_id, call.id, ""]);
+        if (!seen.has(key) && seen.size < limit)
+          seen.set(key, {
+            runId: row.run_id,
+            runSeq: row.seq ?? null,
+            callId: call.id,
+            tool: call.function.name,
+            field: "", // the whole argument object
+            bytes: rootBytes,
+          });
+        continue;
+      }
       for (const [field, value] of Object.entries(args)) {
         const bytes = elidedBytes(value);
         if (bytes === null) continue;
-        const key = `${row.run_id}:${call.id}:${field}`;
+        const key = JSON.stringify([row.run_id, call.id, field]); // colons occur in call ids AND field names
         if (seen.has(key) || seen.size >= limit) continue;
         seen.set(key, {
           runId: row.run_id,
@@ -628,6 +660,7 @@ export function readArtifact(
   sessionId: string,
   ref: { runSeq: number; callId: string; field: string },
   offset = 0,
+  maxChars = ARTIFACT_CHUNK,
 ): { text: string; offset: number; total: number; more: boolean; retained: boolean } | null {
   const named = listArtifacts(db, sessionId).find(
     (a) => a.runSeq === ref.runSeq && a.callId === ref.callId && a.field === ref.field,
@@ -642,15 +675,20 @@ export function readArtifact(
   if (!row) return { text: "", offset: 0, total: named.bytes, more: false, retained: false };
   let value: unknown;
   try {
-    value = (JSON.parse(row.args) as Record<string, unknown>)[ref.field];
+    const parsed = JSON.parse(row.args) as Record<string, unknown>;
+    value = ref.field === "" ? parsed : parsed[ref.field];
   } catch {
     return { text: "", offset: 0, total: named.bytes, more: false, retained: false };
   }
-  if (value === undefined)
+  // A marker-shaped value in the JOURNAL means the model itself sent one — nothing was elided here,
+  // so there is no body to hand back and claiming otherwise would be a false artifact.
+  if (value === undefined || elidedBytes(value) !== null)
     return { text: "", offset: 0, total: named.bytes, more: false, retained: false };
   const text = typeof value === "string" ? value : (JSON.stringify(value) ?? "");
   const start = Math.max(0, Math.floor(offset) || 0);
-  const slice = text.slice(start, start + ARTIFACT_CHUNK);
+  // Leave room for the tool's own framing line, which is also counted against the result cap.
+  const room = Math.max(200, Math.min(ARTIFACT_CHUNK, Math.floor(maxChars * 0.6)));
+  const slice = text.slice(start, start + room);
   return {
     text: slice,
     offset: start,

@@ -138,6 +138,17 @@ describe("elideArgs", () => {
     expect(parsed.mid).toBe(big(1_200)); // untouched — dropping `huge` was already enough
   });
 
+  test("a pathological key count does not take seconds on the commit path", () => {
+    // Re-serializing the whole object per field is O(n²); codex measured 7.2s synchronously on
+    // 20,000 fields, inside the transaction that commits a tool result.
+    const args: Record<string, unknown> = {};
+    for (let i = 0; i < 20_000; i++) args[`field_number_${i}`] = i;
+    const t0 = performance.now();
+    const out = elideArgs(args, CAP) as string;
+    expect(performance.now() - t0).toBeLessThan(1_000);
+    expect(JSON.parse(out)[ELIDED_KEY].fields).toBe(20_000);
+  });
+
   test("survives an unserializable value without throwing on the commit path", () => {
     const circular: Record<string, unknown> = { rows: big(90_000) };
     circular.self = circular;

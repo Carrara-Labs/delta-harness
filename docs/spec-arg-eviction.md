@@ -268,7 +268,7 @@ it costs a lookup. A known limit, not designed around.
 
 ### 5.5 Thresholds
 
-`DELTA_TOOL_ARG_VALUE_MAX_BYTES`, default **4096**, `0` disables. UTF-8 bytes (`.length` is UTF-16 -
+`DELTA_TOOL_ARG_MAX_BYTES`, default **4096**, `0` disables. UTF-8 bytes (`.length` is UTF-16 -
 the 0.2.11 lesson).
 
 Below the 20KB result cap on purpose: a result is read once by the next turn, arguments are replayed

@@ -433,6 +433,7 @@ export async function executeRun(
   });
   const ctx: ToolCtx = {
     workspace: resolve(deps.workspace),
+    ...(deps.toolResultCap !== undefined ? { resultCap: deps.toolResultCap } : {}),
     activate,
     owner: runOwner,
     // `recall` reads THIS thread's history, active + compacted-out. Session bound here so a
@@ -442,7 +443,7 @@ export async function executeRun(
       // The elided-argument manifest + archive (0.2.12), session-bound the same way.
       artifacts: (limit) =>
         listArtifacts(db, run.session_id, limit).map(({ runId: _runId, ...a }) => a),
-      read: (ref, offset) => readArtifact(db, run.session_id, ref, offset),
+      read: (ref, offset, maxChars) => readArtifact(db, run.session_id, ref, offset, maxChars),
     },
     // `todo` reads/replaces THIS thread's working plan (W3), session-bound the same way.
     todo: {
@@ -1475,7 +1476,12 @@ async function execCall(
       name,
       callId: call.id,
       categorical: breakerKey(result),
-      ...(selfCapGap(result) !== undefined ? { gap: selfCapGap(result) } : {}),
+      // ONLY for `remember`: `toolErrorClass` matches the refusal SHAPE, so any MCP tool could
+      // otherwise return shrinking fake "DELTA.md would be …" text and buy itself the converging
+      // allowance instead of latching at three (codex P2).
+      ...(name === "remember" && selfCapGap(result) !== undefined
+        ? { gap: selfCapGap(result) }
+        : {}),
     });
     // Cap oversized output at the source — it's persisted AND re-sent every turn, and a single
     // giant payload is the top cause of a mid-run context-window overflow. Spill keeps it re-readable.

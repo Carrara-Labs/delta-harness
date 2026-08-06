@@ -283,12 +283,21 @@ export async function runResearch(
   // same way), each child targets ~remaining/(N+1), so the batch stays near the parent's remaining
   // rather than N× over it. Reject a batch too small to do useful work — or with no dollar budget
   // left — rather than launching zero-budget children (codex).
-  const rem = ctx.remainingBudget?.() ?? { maxTokens: 200_000, maxCostUsd: 10 };
-  const perChildTokens = Math.floor(rem.maxTokens / (picked.length + 1));
-  if (rem.maxCostUsd <= 0)
+  // 0.2.12: CLAIM the batch's share from the run's live pool rather than reading the gross
+  // remainder. Reading it meant a turn holding both a research batch and a spawn_subagent could
+  // admit ~75% + 50% of the SAME remainder before either charged usage, so the ceiling was still
+  // exceedable (codex P1). N/(N+1) preserves the parent-synthesis reserve this already had.
+  const claim = ctx.reserveBudget?.(picked.length / (picked.length + 1));
+  const rem = claim ?? ctx.remainingBudget?.() ?? { maxTokens: 200_000, maxCostUsd: 10 };
+  const perChildTokens = Math.floor(rem.maxTokens / picked.length);
+  if (rem.maxCostUsd <= 0) {
+    claim?.release();
     return "[tool error] no cost budget left for research — the run is at its dollar ceiling";
-  if (perChildTokens < MIN_CHILD_TOKENS)
+  }
+  if (perChildTokens < MIN_CHILD_TOKENS) {
+    claim?.release();
     return `[tool error] not enough token budget left for research (${rem.maxTokens} remaining) — narrow the task or run fewer`;
+  }
 
   // The child ctx carries a READ-ONLY slice of the parent's capabilities (see childTools):
   // no delegation (no recursion), no parent-thread-bound hands (history/todo → a child is
@@ -304,14 +313,21 @@ export async function runResearch(
     ...(ctx.vision !== undefined ? { vision: ctx.vision } : {}),
   };
 
-  const settled = await Promise.allSettled(
-    picked.map((task) =>
-      researchOne(task, child, chat, baseCtx, {
-        maxTokens: perChildTokens,
-        ...(ctx.signal ? { signal: ctx.signal } : {}),
-      }),
-    ),
-  );
+  let settled: PromiseSettledResult<Awaited<ReturnType<typeof researchOne>>>[];
+  try {
+    settled = await Promise.allSettled(
+      picked.map((task) =>
+        researchOne(task, child, chat, baseCtx, {
+          maxTokens: perChildTokens,
+          ...(ctx.signal ? { signal: ctx.signal } : {}),
+        }),
+      ),
+    );
+  } finally {
+    // The children's real spend is charged below; holding the claim past that would shrink the
+    // parent's own budget for the rest of the turn.
+    claim?.release();
+  }
 
   const total = zero();
   const blocks: string[] = [];
