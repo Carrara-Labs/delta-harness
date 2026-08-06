@@ -40,7 +40,15 @@ import { retrieveSkills } from "./retrieval";
 import { redactSecretValues, scrubText } from "./scrub";
 import { type Charter, currentSelf, loadSelf, parseCharterMarkdown, writeSelf } from "./self";
 import { buildSpine } from "./spine";
-import { capAndSpill, elide, type ToolCtx, type ToolDef, type Tools, toolSpecs } from "./tools";
+import {
+  capAndSpill,
+  elide,
+  evictArgs,
+  type ToolCtx,
+  type ToolDef,
+  type Tools,
+  toolSpecs,
+} from "./tools";
 import type { Vault } from "./vault";
 import { NEUTRAL_VOCAB, type Vocab } from "./vocab";
 
@@ -166,6 +174,7 @@ export type Deps = {
   /** Max chars of a tool result kept inline before it's spilled to a re-readable file.
    * Bounds the single biggest cause of a mid-run context-window overflow. */
   toolResultCap?: number;
+  toolArgsCap?: number;
   /** Cockpit true-to-life capture (DELTA_CAPTURE_CALLS): snapshot the exact assembled
    * request (system spine + full messages + tool schemas) and response for each model
    * call into the `calls` table, so the dev UI can show precisely what the model saw.
@@ -1397,6 +1406,21 @@ async function execCall(
     });
   }
 
+  // Bound what the MODEL writes (0.2.12). `capAndSpill` above bounds the result; nothing has ever
+  // bounded the ARGUMENTS, which live in the assistant message and are replayed on every later
+  // turn. Evicting HERE is what makes it free and safe:
+  //   • the call has SUCCEEDED, so `pendingCalls` will never re-fire it and a resume never needs
+  //     the arguments again (stubbing on arrival, the seam the mechanism's shape suggests, would
+  //     break exactly that);
+  //   • this assistant row was written THIS turn and is not sent to a provider until the NEXT
+  //     call, so rewriting it now costs zero prefix-cache churn — the same reasoning that put
+  //     `demoteSpilled` at the compaction commit, one turn earlier.
+  // A failed/interrupted call keeps its arguments: the model needs to see what it sent to fix it.
+  const succeeded = !result.startsWith("[tool error]") && !result.startsWith("[interrupted]");
+  const stub = succeeded
+    ? await evictArgs(call.function.arguments, ctx.workspace, run.id, call.id, deps.toolArgsCap ?? 0)
+    : null;
+
   db.transaction(() => {
     db.query(
       `INSERT INTO journal (run_id, call_id, tool, args, status, result, created_at, finished_at)
@@ -1404,8 +1428,41 @@ async function execCall(
        ON CONFLICT (run_id, call_id) DO UPDATE SET status='done', result=excluded.result, finished_at=excluded.finished_at`,
     ).run(run.id, call.id, name, call.function.arguments, result, Date.now(), Date.now());
     insertMessage(db, run, { role: "tool", tool_call_id: call.id, content: result });
+    // Inside the transaction on purpose: this is a read-modify-write of a row that the OTHER calls
+    // in the same `Promise.all` batch share (one assistant message carries every tool_call), and a
+    // synchronous block cannot interleave, so no sibling's edit is lost.
+    if (stub) stubStoredArgs(db, run.id, call.id, stub);
     persistActive(); // tool activations commit atomically with the result
   })();
+  if (stub)
+    events.emit("args.evicted", spine, {
+      "gen_ai.tool.name": name,
+      "gen_ai.tool.call.id": call.id,
+      bytes: Buffer.byteLength(call.function.arguments, "utf8"),
+    });
+}
+
+/** Replace ONE call's stored arguments with an eviction stub, leaving the call, its name and its
+ * result untouched so the transcript stays honest and the model still knows what it did. Scoped to
+ * this run's ACTIVE rows and matched on the call id, so an interleaved history can't be rewritten
+ * at the wrong message. Must be called from inside a transaction (see the call site). */
+function stubStoredArgs(db: Database, runId: string, callId: string, stub: string): void {
+  const rows = db
+    .query("SELECT id, msg FROM messages WHERE run_id = ? AND active = 1 ORDER BY id DESC")
+    .all(runId) as { id: number; msg: string }[];
+  for (const row of rows) {
+    let m: AssistantMsg;
+    try {
+      m = JSON.parse(row.msg) as AssistantMsg;
+    } catch {
+      continue;
+    }
+    const target = m.tool_calls?.find((c) => c.id === callId);
+    if (!target) continue;
+    target.function.arguments = stub;
+    db.query("UPDATE messages SET msg = ? WHERE id = ?").run(JSON.stringify(m), row.id);
+    return;
+  }
 }
 
 /** The driver-compatible Responses payload. Every terminal state gets one —

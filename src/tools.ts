@@ -105,10 +105,65 @@ export function elide(text: string, max = 20_000): string {
  *  tool_call_id instead of trusting a path parsed out of model-visible content, so a hostile tool
  *  result cannot point a pointer-stub at an arbitrary file (codex P1).
  *  callId comes from the PROVIDER — sanitize both ids so a hostile `../`-laden id can never escape
- *  the spill dir and overwrite an arbitrary path (codex #4). */
-export function spillPathFor(workspace: string, runId: string, callId: string): string {
+ *  the spill dir and overwrite an arbitrary path (codex #4).
+ *  `kind` splits the two spills a single call can produce. They are keyed on the SAME
+ *  (runId, callId), so without the suffix an evicted-arguments spill and an oversize-result spill
+ *  would overwrite each other, and `demoteSpilled` — which derives this path from row identity to
+ *  decide what it may stub — could be pointed at the wrong body. */
+export function spillPathFor(
+  workspace: string,
+  runId: string,
+  callId: string,
+  kind: "result" | "args" = "result",
+): string {
   const safe = (s: string) => s.replace(/[^\w-]/g, "_").slice(0, 80);
-  return `${workspace}/.delta/spill/${safe(runId)}.${safe(callId)}.txt`;
+  const suffix = kind === "args" ? ".args" : "";
+  return `${workspace}/.delta/spill/${safe(runId)}.${safe(callId)}${suffix}.txt`;
+}
+
+/** Bound what the MODEL writes. A SUCCEEDED call's arguments have already done their job — the
+ * next turn reasons about the RESULT ("staged 12,431 chars, total 96,204"), never the payload —
+ * but they are persisted verbatim inside the assistant message and replayed on every subsequent
+ * turn, and no rail shrinks them: `capAndSpill` bounds results on arrival and `demoteSpilled`
+ * bounds them at compaction, and both ignore anything that isn't `role: "tool"`. So a sweep that
+ * writes its findings out page by page pays, forever, to re-read text it already banked.
+ *
+ * Returns a stub to store in place of the arguments, or null to leave them alone.
+ *
+ * Three properties this shape buys, each load-bearing:
+ *  • the stub is valid JSON — the Anthropic wire does `JSON.parse(arguments)` and falls back to
+ *    `{}` on failure, so a prose stub would silently hand the model a call with NO arguments and
+ *    no explanation, which is a worse trade than the tokens it saves;
+ *  • it reuses capAndSpill's exact "saved to <path>" phrasing, so `recall`'s pointer extractor and
+ *    compaction's artifact ledger both pick evicted arguments up with no new parsing;
+ *  • it fails closed — a spill that doesn't land means no eviction, because a stub promising a
+ *    file that isn't there is worse than the bytes it saves (`demoteSpilled`'s existing rule).
+ *
+ * Idempotent by SHAPE, not by a forgeable marker: a stub is far below any sane cap, so a second
+ * pass measures it and declines. */
+export async function evictArgs(
+  args: string,
+  workspace: string,
+  runId: string,
+  callId: string,
+  max: number,
+): Promise<string | null> {
+  const bytes = Buffer.byteLength(args, "utf8"); // UTF-8, like compaction — `.length` is UTF-16
+  if (max <= 0 || bytes <= max) return null;
+  const path = spillPathFor(workspace, runId, callId, "args");
+  try {
+    await Bun.write(path, args);
+  } catch {
+    return null; // fail closed: no file on disk, no eviction
+  }
+  return JSON.stringify({
+    _delta_evicted: {
+      bytes,
+      note:
+        `arguments of this SUCCEEDED call were dropped from context; ` +
+        `full arguments saved to ${path}; read that file if you need them back`,
+    },
+  });
 }
 
 export async function capAndSpill(

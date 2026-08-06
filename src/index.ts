@@ -88,6 +88,7 @@ function buildDeps(cfg: Config, dbPath: string): Deps {
     compactAtTokens: cfg.compactAtTokens,
     toolTimeoutMs: cfg.toolTimeoutMs,
     toolResultCap: cfg.toolResultCap,
+    toolArgsCap: cfg.toolArgsCap,
     hydrateTools: cfg.hydrateTools,
     ...(cfg.hydrateSearchTool ? { hydrateSearchTool: cfg.hydrateSearchTool } : {}),
     reflect: cfg.reflect,

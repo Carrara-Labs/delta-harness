@@ -117,6 +117,8 @@ export type Config = {
   streamIdleMs: number;
   toolTimeoutMs: number;
   toolResultCap: number;
+  /** Cap on a succeeded call's ARGUMENTS before eviction to a spill file (0.2.12). 0 disables. */
+  toolArgsCap: number;
   /** Cheap model for auxiliary calls (compaction/reflection/judging). Empty string disables
    * the lane (everything rides the main cascade). */
   utilityModel: string;
@@ -199,6 +201,13 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   // Inline cap before spill — 20k matches the old per-builtin elide, so the token budget is
   // unchanged; what's new is the full output now survives in a re-readable spill file.
   const toolResultCap = Number(env.DELTA_TOOL_RESULT_MAX_BYTES ?? 20_000);
+  // Cap on a SUCCEEDED call's arguments before they are evicted to a spill file (0.2.12). Lower
+  // than the result cap on purpose: a result is read once by the next turn, while arguments are
+  // replayed on EVERY subsequent turn, so they are worth more per byte. 4KB also has to be below
+  // the reported case — Aperture's roster sweep handed over a 143,905-char artifact in ~12.4KB
+  // chunks, and a 20KB cap would have evicted none of it. Nothing an agent types by hand reaches
+  // 4KB; what does is a payload it already banked. 0 disables.
+  const toolArgsCap = Number(env.DELTA_TOOL_ARGS_MAX_BYTES ?? 4_096);
   const leaseTtl = Number(env.DELTA_LEASE_TTL_MS ?? 30_000);
   const provider: ProviderConfig = {
     baseUrl: env.MODEL_BASE_URL ?? "https://openrouter.ai/api/v1",
@@ -327,6 +336,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     streamIdleMs,
     toolTimeoutMs,
     toolResultCap,
+    toolArgsCap,
     // Auxiliary-call model (Sprint 2): compaction summaries, reflection, eval_n judging are
     // summarize/pick tasks — haiku does them at 1/2–1/5 the price. DELTA_UTILITY_MODEL=""
     // disables the lane. Falls back to the main cascade per-call on any failure.
