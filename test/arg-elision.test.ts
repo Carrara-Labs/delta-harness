@@ -171,9 +171,16 @@ describe("elideArgs", () => {
     expect(elidedArgsRejection({ [ELIDED_KEY]: { bytes: 10 } })).toContain("whole argument object");
     // A STRING-valued echo is the shape a `content` parameter actually produces, and the live
     // rerun proved an object-only check sails straight past it.
-    const asText = JSON.stringify({ [ELIDED_KEY]: { bytes: 10_651, note: "engine placeholder" } });
+    const asText = JSON.stringify({ [ELIDED_KEY]: { bytes: 10_651 } });
     expect(elidedArgsRejection({ path: "p.json", content: asText })).toContain("content");
-    // and an ordinary call is untouched, including prose that merely MENTIONS the key
+    // NESTED and ARRAY echoes: elision only ever PRODUCES a top-level marker, but an echo can
+    // arrive anywhere, so the guard walks where the producer does not.
+    expect(elidedArgsRejection({ rows: [{ [ELIDED_KEY]: { bytes: 1 } }] })).toContain("rows");
+    expect(elidedArgsRejection({ a: { b: { [ELIDED_KEY]: { bytes: 1 } } } })).toContain("a");
+
+    // FALSE POSITIVES — every one of these is legitimate and must pass. The guard matches the
+    // engine's EXACT shape, not mere presence of the key, or an agent could never write
+    // documentation or save a test fixture about this very feature (codex).
     expect(elidedArgsRejection({ path: "a.json", content: "real" })).toBeNull();
     expect(
       elidedArgsRejection({
@@ -181,11 +188,31 @@ describe("elideArgs", () => {
         content: `the ${ELIDED_KEY} marker is engine-authored`,
       }),
     ).toBeNull();
+    // a real config carrying the key with a different shape
+    expect(
+      elidedArgsRejection({ content: JSON.stringify({ [ELIDED_KEY]: { enabled: true } }) }),
+    ).toBeNull();
+    // our own docs saved as a fixture: the key alongside other content
+    expect(
+      elidedArgsRejection({
+        content: JSON.stringify({ [ELIDED_KEY]: { bytes: 5 }, note: "how the marker works" }),
+      }),
+    ).toBeNull();
   });
 
-  test("the marker tells the model not to send it", () => {
-    const m = JSON.parse(elideArgs({ rows: big(90_000) }, CAP) as string).rows[ELIDED_KEY];
-    expect(m.note).toContain("never send this shape");
+  test("the marker stays tiny, because every marker byte costs a real field", () => {
+    // A 135-byte explanatory marker collapsed a 30-field object to a single root marker where a
+    // 33-byte one preserved 17 real fields. The cap is both per-value AND total (codex).
+    const out = elideArgs({ rows: big(90_000) }, CAP) as string;
+    const marker = JSON.stringify(JSON.parse(out).rows);
+    expect(Buffer.byteLength(marker, "utf8")).toBeLessThan(45);
+
+    const many: Record<string, unknown> = {};
+    for (let i = 0; i < 30; i++) many[`f${i}`] = big(200);
+    const parsed = JSON.parse(elideArgs(many, CAP) as string);
+    // structure survives: this must NOT collapse to a single root marker
+    expect(parsed[ELIDED_KEY]).toBeUndefined();
+    expect(Object.values(parsed).filter((v) => typeof v === "string").length).toBeGreaterThan(10);
   });
 
   test("survives an unserializable value without throwing on the commit path", () => {

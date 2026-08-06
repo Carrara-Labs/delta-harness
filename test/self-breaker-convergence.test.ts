@@ -111,6 +111,36 @@ describe("self-write breaker convergence", () => {
     deps.db.close();
   });
 
+  test("repeated placeholder echoes never quarantine the tool", async () => {
+    // The guard works by refusing and asking again, so it MUST stay retryable. Today the message
+    // dodges the categorical regex by luck of wording; `tool_args_elided` makes it a contract, and
+    // this is the test that holds the contract (codex).
+    let call = 0;
+    const echoing: ToolDef = {
+      name: "write_file",
+      description: "write",
+      parameters: { type: "object", properties: {} },
+      idempotent: true,
+      execute: async () => "written",
+    };
+    const deps = makeDeps(
+      async () => {
+        call++;
+        return call <= 5
+          ? toolCallResult("write_file", { content: { _delta_elided: { bytes: 900 } } }, `c${call}`)
+          : textResult("done");
+      },
+      new Map([["write_file", echoing]]),
+    );
+    const queue = new Queue(deps);
+    await queue.wait(queue.enqueue({ input: "go", metadata: { profile: "trusted" } }).id);
+    const latched = (
+      deps.db.query("SELECT msg FROM messages WHERE msg LIKE '%[norm]%'").all() as { msg: string }[]
+    ).length;
+    expect(latched).toBe(0); // five echoes in a row, tool still alive
+    deps.db.close();
+  });
+
   test("even a converging run stops at the hard ceiling", async () => {
     // Halving the gap every turn converges forever in principle; the attempt ceiling ends it.
     const { tools } = rememberWith([

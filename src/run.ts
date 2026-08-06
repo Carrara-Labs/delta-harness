@@ -1249,6 +1249,10 @@ export function toolErrorClass(result: string): string | undefined {
     return "tool_args_truncated";
   if (result.includes("arguments failed to parse")) return "tool_args_invalid";
   if (/DELTA\.md would be \d+ bytes \(cap /.test(result)) return "self_cap";
+  // The echo guard (0.2.12). Classified explicitly so its retryability is a CONTRACT: today it
+  // dodges the categorical regex by luck of wording, and adding "invalid arguments" or "schema" to
+  // that message later would quarantine a perfectly good tool after three echoes (codex).
+  if (result.includes("contains an engine placeholder")) return "tool_args_elided";
   if (result.includes("DELTA.md was updated by another run")) return "self_conflict";
   if (result.includes("looks like your whole system prompt")) return "self_spine_echo";
   if (result.includes("refusing to write an empty DELTA.md")) return "self_empty";
@@ -1285,7 +1289,10 @@ export function breakerKey(result: string): string | null {
     cls === "transient" ||
     cls === "timeout" ||
     cls === "tool_args_invalid" ||
-    cls === "tool_args_truncated"
+    cls === "tool_args_truncated" ||
+    // An echoed placeholder is ALWAYS retryable: the model is told exactly what to send instead,
+    // and it self-corrects. Latching here would kill a working tool for the rest of the run.
+    cls === "tool_args_elided"
   )
     return null;
   if (cls && STORM_CLASSES.has(cls)) return `[class] ${cls}`;

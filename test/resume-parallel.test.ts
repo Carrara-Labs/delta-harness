@@ -94,6 +94,76 @@ describe("parallel sub-turn resume", () => {
     deps.db.close();
   });
 
+  test("two sequential batches both complete", async () => {
+    // The newest active tool-calling assistant must be the one reconciled, so a SECOND batch is
+    // never mistaken for the first (codex asked for this shape explicitly).
+    const ran: string[] = [];
+    const tools: Tools = new Map([
+      ["alpha", tool("alpha", ran)],
+      ["beta", tool("beta", ran)],
+    ]);
+    let calls = 0;
+    const deps = makeDeps(async () => {
+      calls++;
+      if (calls === 1) return twoCalls();
+      if (calls === 2)
+        return ok({
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            { id: "call_c", type: "function", function: { name: "alpha", arguments: "{}" } },
+          ],
+        });
+      return textResult("done");
+    }, tools);
+    const queue = new Queue(deps);
+    const done = await queue.wait(queue.enqueue({ input: "go", metadata: { profile: "work" } }).id);
+    expect(done?.status).toBe("done");
+    expect(ran.sort()).toEqual(["alpha", "alpha", "beta"]); // both batches ran, nothing re-fired
+    expect(calls).toBe(3);
+    deps.db.close();
+  });
+
+  test("a tool tail left by compaction does not re-open a finished batch", async () => {
+    // Compaction can leave the last ACTIVE row as a tool result even though the batch completed.
+    // Reconciling must find nothing pending and fall through, not re-execute (codex).
+    const ran: string[] = [];
+    const tools: Tools = new Map([
+      ["alpha", tool("alpha", ran)],
+      ["beta", tool("beta", ran)],
+    ]);
+    const deps = makeDeps(async () => textResult("done"), tools);
+    const queue = new Queue(deps);
+    const run = queue.enqueue({ input: "go", metadata: { profile: "work" } });
+    const now = Date.now();
+    // a COMPLETE batch: assistant + both results, both journalled done
+    deps.db
+      .query("INSERT INTO messages (run_id, session_id, msg, created_at) VALUES (?,?,?,?)")
+      .run(run.id, run.session_id, JSON.stringify(batchMsg), now);
+    for (const [id, name] of [
+      ["call_a", "alpha"],
+      ["call_b", "beta"],
+    ] as const) {
+      deps.db
+        .query(
+          "INSERT INTO journal (run_id, call_id, tool, args, status, result, created_at, finished_at) VALUES (?,?,?,?,'done',?,?,?)",
+        )
+        .run(run.id, id, name, "{}", `${name} ok`, now, now);
+      deps.db
+        .query("INSERT INTO messages (run_id, session_id, msg, created_at) VALUES (?,?,?,?)")
+        .run(
+          run.id,
+          run.session_id,
+          JSON.stringify({ role: "tool", tool_call_id: id, content: `${name} ok` }),
+          now,
+        );
+    }
+    const result = await queue.wait(run.id);
+    expect(result?.status).toBe("done");
+    expect(ran).toEqual([]); // nothing re-executed
+    deps.db.close();
+  });
+
   test("an ordinary batch followed by a final answer still finalizes on the first pass", async () => {
     // The regression the naive fix causes: reaching back to the last TOOL-CALLING assistant would
     // re-open a finished exchange and spend another model call instead of finalizing.

@@ -215,9 +215,14 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   // elided none of it. Nothing an agent types by hand reaches 4KB; what does is a banked payload.
   // Number.isFinite, not Number(): a typo'd env var yields NaN, and every `<=` against NaN is
   // false, which would elide EVERYTHING (codex P2). 0 disables.
+  // OPT-IN for its first cycle (default 0 = off). The rail itself is sound and measured, but the
+  // guard that stops a model echoing the marker back is new, was written in response to a live
+  // data-loss bug, and cannot be proven complete against arbitrary MCP argument schemas. A
+  // consumer who wants the win turns it on knowingly and canaries it; nobody else's transcripts
+  // change on upgrade. Every other fix in this release is unconditional.
   // 0 disables entirely; anything else must clear the floor, so the root marker can always fit
   // inside the bound it promises.
-  const rawArgCap = Number(env.DELTA_TOOL_ARG_MAX_BYTES ?? 4_096);
+  const rawArgCap = Number(env.DELTA_TOOL_ARG_MAX_BYTES ?? 0);
   const toolArgCap =
     rawArgCap === 0 ? 0 : Number.isFinite(rawArgCap) && rawArgCap >= CAP_FLOOR ? rawArgCap : 4_096;
   const leaseTtl = Number(env.DELTA_LEASE_TTL_MS ?? 30_000);

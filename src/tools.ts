@@ -222,16 +222,12 @@ export function elideArgs(args: Record<string, unknown>, cap: number): string | 
   let total = bytes(first);
   for (const [k, n] of order) {
     const before = bytes(ser(next[k]) ?? "null");
-    next[k] = {
-      [ELIDED_KEY]: {
-        bytes: n,
-        // Addressed to the MODEL. A marker sitting in an argument position reads as a legal value
-        // to send, and a live 10-turn run proved it: the agent copied this shape into a LATER
-        // write_file and silently filed 4 of 10 pages as the placeholder. The note is the polite
-        // half of the fix; `elidedArgsRejection` on ingress is the half that actually holds.
-        note: "engine placeholder for a value you already sent successfully; never send this shape yourself",
-      },
-    };
+    // Kept deliberately TINY. The cap is both the per-value threshold and the total ceiling, so
+    // every byte of marker is a byte of real field that cannot survive: a 135-byte explanatory
+    // marker collapsed a 30-field object to a single root marker where a 33-byte one preserved 17
+    // real fields (codex). The model-facing warning lives in `elidedArgsRejection`, which fires
+    // exactly when it is needed and costs nothing the rest of the time.
+    next[k] = { [ELIDED_KEY]: { bytes: n } };
     total += bytes(ser(next[k]) ?? "null") - before;
     if (total <= cap) {
       const out = ser(next);
@@ -255,25 +251,50 @@ export function elideArgs(args: Record<string, unknown>, cap: number): string | 
  * Returns the error text, or null when the call is clean. Checks top level AND the root, matching
  * exactly the two positions `elideArgs` can produce. */
 export function elidedArgsRejection(args: Record<string, unknown>): string | null {
-  const isMarker = (v: unknown): boolean => {
+  /** Our EXACT shape, not merely the key: `{_delta_elided:{bytes:number[,fields:number]}}` and
+   * nothing else. Key presence alone would reject a legitimate JSON document that happens to
+   * contain it — an agent writing documentation about this very feature, or saving a fixture
+   * (codex). Matching the engine's own output keeps the false-positive surface at essentially
+   * nothing while still catching every form the model can copy. */
+  const isMarker = (v: unknown, depth = 0): boolean => {
+    if (depth > 4) return false; // bounded: a hostile payload cannot make this walk forever
     if (typeof v === "string") {
-      // The live rerun caught this: a `content` parameter takes a STRING, so the model echoes the
-      // marker as serialized JSON rather than as an object, and an object-only check sails past it.
-      // Parse rather than substring-match, so prose that merely mentions the key is not rejected.
-      if (!v.trimStart().startsWith("{") || !v.includes(ELIDED_KEY)) return false;
+      // A `content` parameter takes a STRING, so the model echoes SERIALIZED json and an
+      // object-only check sails straight past it. Parse rather than substring-match, so prose
+      // mentioning the key is untouched.
+      if (!v.includes(ELIDED_KEY)) return false;
+      const t = v.trimStart();
+      if (!t.startsWith("{") && !t.startsWith("[")) return false;
       try {
-        return isMarker(JSON.parse(v));
+        return isMarker(JSON.parse(v), depth + 1);
       } catch {
         return false;
       }
     }
-    return !!v && typeof v === "object" && !Array.isArray(v) && ELIDED_KEY in (v as object);
+    // Arrays and nested objects: elision only ever produces a marker at the top level, but an
+    // ECHO can arrive anywhere, so the guard walks where the producer does not.
+    if (Array.isArray(v)) return v.some((x) => isMarker(x, depth + 1));
+    if (!v || typeof v !== "object") return false;
+    const o = v as Record<string, unknown>;
+    const mark = o[ELIDED_KEY];
+    if (mark && typeof mark === "object" && !Array.isArray(mark)) {
+      const m = mark as Record<string, unknown>;
+      const keys = Object.keys(m);
+      if (
+        typeof m.bytes === "number" &&
+        keys.every((k) => k === "bytes" || k === "fields") &&
+        Object.keys(o).length === 1
+      )
+        return true;
+    }
+    return Object.values(o).some((x) => isMarker(x, depth + 1));
   };
   const bad = isMarker(args)
-    ? ["(whole argument object)"]
-    : Object.entries(args)
+    ? Object.entries(args)
         .filter(([, v]) => isMarker(v))
-        .map(([k]) => k);
+        .map(([k]) => k)
+    : [];
+  if (!bad.length && isMarker(args)) bad.push("(whole argument object)");
   if (!bad.length) return null;
   return (
     `[tool error] ${bad.join(", ")} contains an engine placeholder (${ELIDED_KEY}) instead of a real value. ` +
