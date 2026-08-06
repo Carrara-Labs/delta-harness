@@ -241,53 +241,69 @@ export function elideArgs(args: Record<string, unknown>, cap: number): string | 
   return ser({ [ELIDED_KEY]: { bytes: size(args), fields: order.length } });
 }
 
-/** Reject a tool call that echoes back an elision marker THIS session actually emitted (0.2.12).
+/** Reject a tool call carrying an engine elision marker (0.2.12).
  *
  * The failure: the engine replaces an over-budget argument value with a marker, the model sees that
  * marker in its own history where a value goes, and copies it into a LATER call. The tool then
  * persists the placeholder. A live 10-turn session filed 4 of 10 pages as the marker while the run
  * merely looked cheaper.
  *
- * `emitted` is the set of markers this session produced (their exact serialized form). Matching
- * against it rather than against a SHAPE is what makes the guard safe to run unconditionally:
- *  • no false positives by construction — an agent writing documentation about this feature, or
- *    saving a fixture, produces a marker the engine never emitted, so it is not ours to reject;
- *  • it stays inert for a consumer who never enabled elision — an empty set rejects nothing, which
- *    is what "default off" has to mean (codex);
- *  • a bytes count the engine never wrote cannot be forged into a rejection.
+ * MATCHES BY SHAPE, and deliberately so. An earlier version authenticated against the set of markers
+ * this daemon had actually emitted, which sounds stronger and is weaker: the set is in-memory, so a
+ * restart left every persisted marker unauthenticated; eviction did the same to a still-live marker;
+ * a reordered key defeated the comparison; and a daemon-wide set let one tenant authenticate
+ * another's (codex). Every one of those fails OPEN, and the two directions are not equal:
  *
- * Walks arrays, nested objects and parsed JSON strings: elision only ever PRODUCES a top-level
- * marker, but an echo can arrive anywhere, and a `content` parameter takes a string, so the model
- * echoes serialized json. Returns the offending top-level field names, or null when clean. */
-export function elidedArgsRejection(
-  args: Record<string, unknown>,
-  emitted: ReadonlySet<string>,
-): string | null {
-  if (emitted.size === 0) return null; // nothing emitted → nothing to echo → never in the way
-  const seen = (v: unknown, depth = 0): boolean => {
-    if (depth > 6) return false;
+ *   • a missed echo is SILENT data loss and unrecoverable;
+ *   • a wrongly rejected call is one loud retry, with the model told exactly what to send instead.
+ *
+ * So this is stateless and fails closed. The residual false positive — a value that is EXACTLY our
+ * marker and nothing else — is an agent writing about this feature or saving a fixture, which is
+ * rare and self-correcting.
+ *
+ * Recognises the marker at the root, on any value, inside arrays and nested objects, and inside a
+ * JSON string (a `content` parameter takes text, so the model echoes SERIALIZED json — the live
+ * rerun proved an object-only check sails straight past that). */
+export function elidedArgsRejection(args: Record<string, unknown>): string | null {
+  /** Our EXACT emitted shape: `{_delta_elided:{bytes:number[,fields:number]}}`, one key, nothing
+   * else. Key PRESENCE alone would refuse a legitimate document that merely mentions it. */
+  const isMarker = (v: unknown): boolean => {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+    const o = v as Record<string, unknown>;
+    if (Object.keys(o).length !== 1) return false;
+    const m = o[ELIDED_KEY];
+    if (!m || typeof m !== "object" || Array.isArray(m)) return false;
+    const mm = m as Record<string, unknown>;
+    if (typeof mm.bytes !== "number") return false;
+    // `fields` is the only other key we ever emit (the root collapse), and it is a number.
+    return Object.keys(mm).every(
+      (k) => k === "bytes" || (k === "fields" && typeof mm.fields === "number"),
+    );
+  };
+  const holds = (v: unknown, depth = 0): boolean => {
+    if (depth > 6) return false; // bounded; the producer only ever emits at depth 0 or 1
     if (typeof v === "string") {
-      // Cheap prefilter, then the authoritative check: is this EXACTLY something we emitted?
-      if (!v.includes(ELIDED_KEY)) return false;
-      if (emitted.has(v.trim())) return true;
+      if (!v.includes(ELIDED_KEY)) return false; // cheap prefilter, then parse — never substring
+      const t = v.trimStart();
+      if (!t.startsWith("{") && !t.startsWith("[")) return false;
       try {
-        return seen(JSON.parse(v), depth); // a parse is not a structural level
+        return holds(JSON.parse(v), depth + 1);
       } catch {
         return false;
       }
     }
-    if (Array.isArray(v)) return v.some((x) => seen(x, depth + 1));
+    if (isMarker(v)) return true;
+    if (Array.isArray(v)) return v.some((x) => holds(x, depth + 1));
     if (!v || typeof v !== "object") return false;
-    try {
-      if (emitted.has(JSON.stringify(v))) return true;
-    } catch {
-      return false;
-    }
-    return Object.values(v as Record<string, unknown>).some((x) => seen(x, depth + 1));
+    return Object.values(v as Record<string, unknown>).some((x) => holds(x, depth + 1));
   };
-  const bad = Object.entries(args)
-    .filter(([, v]) => seen(v))
-    .map(([k]) => k);
+  // The ROOT-collapse shape is a marker at `args` itself, which checking only the values misses
+  // entirely — a whole-object echo then executed as real input (codex).
+  const bad = isMarker(args)
+    ? ["(whole argument object)"]
+    : Object.entries(args)
+        .filter(([, v]) => holds(v))
+        .map(([k]) => k);
   if (!bad.length) return null;
   return (
     `[tool error] ${bad.join(", ")} contains an engine placeholder (${ELIDED_KEY}) instead of a real value. ` +

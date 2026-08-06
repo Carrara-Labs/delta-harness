@@ -516,7 +516,7 @@ function searchArchive(
       active: false,
       snippet:
         `[${ref.tool}.${ref.field}, ${ref.bytes} bytes, dropped from context — ` +
-        `read it back with recall({artifact:{run_seq:${ref.runSeq},call_id:"${ref.callId}",field:"${ref.field}"}})]\n` +
+        `read it back with recall({artifact:{run_seq:${ref.runSeq},call_id:${JSON.stringify(ref.callId)},field:${JSON.stringify(ref.field)}}})]\n` +
         `${start > 0 ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`,
     });
   }

@@ -162,43 +162,56 @@ describe("elideArgs", () => {
     // THE live finding. On a 10-turn session the agent saw the marker in its own history, copied
     // the shape into a later write_file, and silently filed 4 of 10 pages as the placeholder —
     // the run looked cheaper because it had thrown work away.
-    const elided = elideArgs({ rows: big(90_000) }, CAP) as string;
-    const marker = JSON.parse(elided).rows;
-    const emitted = new Set([JSON.stringify(marker)]);
-
-    // the object echo, and the string echo a `content` parameter actually produces
-    expect(elidedArgsRejection({ path: "p.json", content: marker }, emitted)).toContain("content");
-    expect(
-      elidedArgsRejection({ path: "p.json", content: JSON.stringify(marker) }, emitted),
-    ).toContain("content");
+    const marker = JSON.parse(elideArgs({ rows: big(90_000) }, CAP) as string).rows;
+    expect(elidedArgsRejection({ path: "p.json", content: marker })).toContain("content");
+    // the string form a `content` parameter actually produces
+    expect(elidedArgsRejection({ path: "p.json", content: JSON.stringify(marker) })).toContain(
+      "content",
+    );
     // nested and inside an array — an echo can arrive anywhere, though elision only ever
     // PRODUCES a top-level marker
-    expect(elidedArgsRejection({ rows: [marker] }, emitted)).toContain("rows");
-    expect(elidedArgsRejection({ a: { b: marker } }, emitted)).toContain("a");
+    expect(elidedArgsRejection({ rows: [marker] })).toContain("rows");
+    expect(elidedArgsRejection({ a: { b: marker } })).toContain("a");
   });
 
-  test("it authenticates against what was EMITTED, so it has no false positives", () => {
-    // Matching a SHAPE would refuse an agent writing documentation about this feature, or saving a
-    // regression fixture. Matching what the engine actually emitted cannot (codex).
-    const elided = elideArgs({ rows: big(90_000) }, CAP) as string;
-    const emitted = new Set([JSON.stringify(JSON.parse(elided).rows)]);
+  test("a WHOLE-OBJECT echo is rejected, not just a field one", () => {
+    // The root-collapse shape. Checking only the values missed it entirely, so a model could
+    // replay a whole-object placeholder and the tool executed it as real input (codex).
+    const args: Record<string, unknown> = {};
+    for (let i = 0; i < 3_000; i++) args[`f${i}`] = i;
+    const root = JSON.parse(elideArgs(args, CAP) as string);
+    expect(elidedArgsRejection(root)).toContain("whole argument object");
+    // and with the keys in the other order, since a model reproduces JSON however it likes
+    expect(elidedArgsRejection({ [ELIDED_KEY]: { fields: 3_000, bytes: 100 } })).toContain(
+      "whole argument object",
+    );
+  });
 
-    // a marker-shaped value this session never emitted — a fixture, or someone's config
-    const foreign = JSON.stringify({ [ELIDED_KEY]: { bytes: 999_999 } });
-    expect(elidedArgsRejection({ content: foreign }, emitted)).toBeNull();
-    // prose that merely mentions the key
+  test("it is stateless, so a restart cannot open a hole", () => {
+    // An earlier version authenticated against markers this DAEMON had emitted. That sounds
+    // stronger and fails OPEN: the set is in-memory, so every persisted marker went
+    // unauthenticated after a restart (codex). Shape matching has no such state.
+    const marker = JSON.parse(elideArgs({ rows: big(90_000) }, CAP) as string).rows;
+    expect(elidedArgsRejection({ content: marker })).toContain("content");
+  });
+
+  test("legitimate payloads that merely mention the key are untouched", () => {
+    // Matching PRESENCE of the key would refuse an agent writing documentation about this very
+    // feature. Matching the exact emitted shape does not.
+    expect(elidedArgsRejection({ path: "a.json", content: "real" })).toBeNull();
     expect(
-      elidedArgsRejection({ content: `the ${ELIDED_KEY} marker is engine-authored` }, emitted),
+      elidedArgsRejection({ content: `the ${ELIDED_KEY} marker is engine-authored` }),
     ).toBeNull();
-    // an ordinary call
-    expect(elidedArgsRejection({ path: "a.json", content: "real" }, emitted)).toBeNull();
-  });
-
-  test("it is inert when nothing has been emitted", () => {
-    // What "default off" has to MEAN: a consumer who never enabled elision cannot have a call
-    // rejected by a guard that exists for it (codex — this was the ship blocker).
-    const anything = JSON.stringify({ [ELIDED_KEY]: { bytes: 123 } });
-    expect(elidedArgsRejection({ content: anything }, new Set())).toBeNull();
+    // a config carrying the key with a different shape
+    expect(
+      elidedArgsRejection({ content: JSON.stringify({ [ELIDED_KEY]: { enabled: true } }) }),
+    ).toBeNull();
+    // the key alongside other content — not our shape, so not ours to refuse
+    expect(
+      elidedArgsRejection({
+        content: JSON.stringify({ [ELIDED_KEY]: { bytes: 5 }, note: "how it works" }),
+      }),
+    ).toBeNull();
   });
 
   test("the marker stays tiny, because every marker byte costs a real field", () => {

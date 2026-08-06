@@ -531,3 +531,64 @@ plausible thing to copy and cost bytes by construction. Reverted.
 The guard's retries cost ~8 extra model calls on a 10-turn session (20 → 28). The run is still
 cheaper on every other axis, and the alternative is silent data loss. Reducing the echo rate is a
 0.2.13 question, not a blocker.
+
+---
+
+## 14. OPEN REGRESSION — elision causes the agent to redo work (2026-08-06)
+
+Found on the fourth live run, after the echo guard was made stateless. It is not caused by the
+guard, and it invalidates the cost figures in §13.
+
+**Duplicate writes to the same path, ten-turn session, same prompt:**
+
+| arm | `write_file` calls for 10 pages | paths written more than once | worst path |
+|---|---|---|---|
+| elision OFF (0.2.11) | 10 | **0** | — |
+| elision ON, run A | 15 | 5 | `long-1.json` × 3 |
+| elision ON, run B | 18 | 4 | `long-1.json` × **10** |
+
+The control never re-writes. Both elision arms do. In run B the agent wrote the same page ten times
+while only **one** echo rejection occurred in that run, so the retries are not the guard asking
+again — they are the agent redoing work it had already completed.
+
+**The likely mechanism, stated as a hypothesis and not yet proven:** within the same run, the agent
+issues the write, elision fires at the commit, and on the very next model call the agent sees its own
+tool call carrying `content: {"_delta_elided": …}`. The tool result does say
+`wrote 9752 chars to pages/long-1.json`, but the agent appears to weigh the hollow-looking argument
+more heavily than the result, and writes again to be sure.
+
+If that is right, the design is eliding **too early**. The elision is correct and free at the commit
+seam for a call the agent will never revisit, and actively harmful for one it is still reasoning
+about in the same breath.
+
+### What this does NOT invalidate
+
+- the mechanism: five compactions with `tail_bytes_before == tail_bytes_after` is still the real
+  failure, and arguments are still the only unbounded thing in the window;
+- the quality gate: every arm delivered 10 pages and 0 corrupt files;
+- the other six slices, which are independent of this.
+
+### What it does invalidate
+
+**§13's cost numbers.** Run A measured -29.9% input tokens while silently doing 50% more writes;
+run B measured **+22.9%**. A single run per arm cannot separate this effect from model
+nondeterminism, and that is a flaw in the method, not just in the result.
+
+### Candidate fixes, in order of how lean they are
+
+1. **Elide at the compaction commit rather than at the tool-result commit.** Exactly where
+   `demoteSpilled` already acts, for exactly its reason: the prefix is being rewritten at that
+   instant anyway, so it still costs no cache churn, and a call the agent is actively reasoning
+   about keeps its arguments. Spec v1 rejected this as "too late"; the live data says the earlier
+   seam buys rework. This is the smallest change and the best-supported by evidence.
+2. **Age-gate the elision** — elide only calls older than N turns. More knobs, same effect as (1)
+   with worse ergonomics.
+3. **Make the marker read as success.** Attempted and REVERTED (§13): a bounded head made echoes
+   worse, 20 to 26, because it gave the model a more convincing thing to imitate.
+
+### The methodological correction
+
+One run per arm against a nondeterministic model is not a measurement. Every figure in §13 should
+have been reported with that caveat and was not. **Before any release claim, this needs repeated
+runs per arm with duplicate-write count as a first-class metric alongside compaction count** — which
+is precisely what Aperture's pinned fixture and bench rig exist for.

@@ -79,13 +79,26 @@ describe("subagent budget reservation", () => {
     // and overspend. The pool test alone cannot catch a missing wire (codex).
     const { runResearch } = await import("../src/research");
     let calls = 0;
+    // Each call keeps asking for a tool, so the child would keep going forever on tokens alone —
+    // the previous version of this test answered on call 1 and so passed WITHOUT enforcement
+    // (codex). Each call costs $0.10 against a claim well under that.
     const chat = async () => {
       calls++;
       return {
         ok: true as const,
         model: "m",
-        message: { role: "assistant" as const, content: "finding" },
-        finishReason: "stop" as const,
+        message: {
+          role: "assistant" as const,
+          content: null,
+          tool_calls: [
+            {
+              id: `c${calls}`,
+              type: "function" as const,
+              function: { name: "read_file", arguments: "{}" },
+            },
+          ],
+        },
+        finishReason: "tool_calls" as const,
         usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, total: 15, costUsd: 0.1 },
         latencyMs: 1,
       };
@@ -122,7 +135,9 @@ describe("subagent budget reservation", () => {
       "1",
     );
     expect(typeof out).toBe("string");
-    expect(calls).toBeLessThan(5); // stopped on cost, not on the 500k token budget
+    // The claim is 0.15 * (1/2) = $0.075. At $0.10 a call, the SECOND call must not happen: over
+    // budget is a hard stop, not "drop the tools and spend one more forcing an answer".
+    expect(calls).toBe(1);
   });
 
   test("an exhausted pool grants zero rather than a negative budget", () => {

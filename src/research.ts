@@ -118,6 +118,15 @@ type Outcome = { task: string; ok: boolean; text: string; usage: Usage };
 /** One bounded sub-agent loop (in-memory), with the parent's tools. Never throws — always returns an
  * Outcome carrying whatever usage was spent, so the parent charges every child exactly once. Starts
  * resident on `pinned` and self-serves the rest via `search_tools`, like the parent's own loop. */
+/** The most recent assistant text in a child's transcript, for a partial return. */
+function lastAssistantText(messages: ChatMsg[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role === "assistant" && typeof m.content === "string" && m.content) return m.content;
+  }
+  return "";
+}
+
 async function researchOne(
   task: string,
   child: ChildConfig,
@@ -173,7 +182,18 @@ async function researchOne(
       // reached the child, so a run with tokens left but almost no dollars left could still admit
       // several children and overspend the claim before any usage was charged back (codex P1).
       const overCost = opts.maxCostUsd !== undefined && usage.costUsd >= opts.maxCostUsd;
-      const overBudget = remaining <= 0 || overCost || toolCalls >= MAX_TOOLCALLS_TOTAL;
+      // Over the DOLLAR claim is a hard stop, not a "drop tools and answer": that forcing call is
+      // itself billable, and codex measured a $0.075 claim spending $0.20 across two calls. Tokens
+      // keep the softer treatment — they are the run's own soft-budget model — but dollars are the
+      // ceiling an operator actually set.
+      if (overCost)
+        return {
+          task,
+          ok: true,
+          text: lastAssistantText(messages) || "[research stopped: cost claim exhausted]",
+          usage,
+        };
+      const overBudget = remaining <= 0 || toolCalls >= MAX_TOOLCALLS_TOTAL;
       const res = await chat({
         messages,
         ...(overBudget ? {} : { tools: toolSpecs(tools) }), // out of budget → force a final answer

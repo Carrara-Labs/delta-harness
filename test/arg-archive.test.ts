@@ -233,6 +233,41 @@ describe("the elided-argument archive", () => {
     db.close();
   });
 
+  test("a REPAIRED argument is still readable back", () => {
+    // parseToolArgs deliberately repairs trailing commas and literal control characters, and the
+    // repaired object is what executes and gets elided. Storing the ORIGINAL malformed string in
+    // the journal meant readback could not parse it and reported a retained body as pruned
+    // (codex). The journal must hold what actually executed.
+    const db = openDb(":memory:");
+    const now = Date.now();
+    db.query(
+      "INSERT INTO sessions (id, user_id, created_at, updated_at) VALUES ('s',NULL,?,?)",
+    ).run(now, now);
+    db.query(
+      "INSERT INTO runs (id, session_id, seq, status, request, created_at) VALUES ('r','s',4,'running','{}',?)",
+    ).run(now);
+    const full = { path: "p.json", content: "A".repeat(9_000) };
+    const elided = elideArgs(full, CAP) as string;
+    db.query("INSERT INTO messages (run_id, session_id, msg, created_at) VALUES ('r','s',?,?)").run(
+      JSON.stringify({
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "c1", type: "function", function: { name: "write_file", arguments: elided } },
+        ],
+      }),
+      now,
+    );
+    // what execCall now stores: the REPAIRED/parsed object, re-serialized
+    db.query(
+      "INSERT INTO journal (run_id, call_id, tool, args, status, result, created_at) VALUES ('r','c1','write_file',?,'done','ok',?)",
+    ).run(JSON.stringify(full), now);
+    const page = readArtifact(db, "s", { runSeq: 4, callId: "c1", field: "content" });
+    expect(page?.retained).toBe(true);
+    expect(page?.total).toBe(9_000);
+    db.close();
+  });
+
   test("survives compaction deactivating the row that carries the manifest", () => {
     // A failed finalize and compaction both only DEACTIVATE, and the agent's record of what it
     // filed has to outlive both.
