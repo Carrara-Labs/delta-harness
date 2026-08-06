@@ -222,7 +222,16 @@ export function elideArgs(args: Record<string, unknown>, cap: number): string | 
   let total = bytes(first);
   for (const [k, n] of order) {
     const before = bytes(ser(next[k]) ?? "null");
-    next[k] = { [ELIDED_KEY]: { bytes: n } };
+    next[k] = {
+      [ELIDED_KEY]: {
+        bytes: n,
+        // Addressed to the MODEL. A marker sitting in an argument position reads as a legal value
+        // to send, and a live 10-turn run proved it: the agent copied this shape into a LATER
+        // write_file and silently filed 4 of 10 pages as the placeholder. The note is the polite
+        // half of the fix; `elidedArgsRejection` on ingress is the half that actually holds.
+        note: "engine placeholder for a value you already sent successfully; never send this shape yourself",
+      },
+    };
     total += bytes(ser(next[k]) ?? "null") - before;
     if (total <= cap) {
       const out = ser(next);
@@ -234,6 +243,43 @@ export function elideArgs(args: Record<string, unknown>, cap: number): string | 
   // `fields` keeps the manifest honest about how much was lost. This is the only shape that can
   // exceed `cap`, and only when `cap` is smaller than the marker itself.
   return ser({ [ELIDED_KEY]: { bytes: size(args), fields: order.length } });
+}
+
+/** Reject a tool call whose arguments carry an engine elision marker (0.2.12).
+ *
+ * The engine WRITES markers into history and never receives one back, so a marker on the way IN is
+ * always the model imitating what it saw — and the failure is silent: `write_file` happily persists
+ * the placeholder and the page is lost while the run merely looks cheaper. Found on a live 10-turn
+ * run where 4 of 10 pages were filed as the marker.
+ *
+ * Returns the error text, or null when the call is clean. Checks top level AND the root, matching
+ * exactly the two positions `elideArgs` can produce. */
+export function elidedArgsRejection(args: Record<string, unknown>): string | null {
+  const isMarker = (v: unknown): boolean => {
+    if (typeof v === "string") {
+      // The live rerun caught this: a `content` parameter takes a STRING, so the model echoes the
+      // marker as serialized JSON rather than as an object, and an object-only check sails past it.
+      // Parse rather than substring-match, so prose that merely mentions the key is not rejected.
+      if (!v.trimStart().startsWith("{") || !v.includes(ELIDED_KEY)) return false;
+      try {
+        return isMarker(JSON.parse(v));
+      } catch {
+        return false;
+      }
+    }
+    return !!v && typeof v === "object" && !Array.isArray(v) && ELIDED_KEY in (v as object);
+  };
+  const bad = isMarker(args)
+    ? ["(whole argument object)"]
+    : Object.entries(args)
+        .filter(([, v]) => isMarker(v))
+        .map(([k]) => k);
+  if (!bad.length) return null;
+  return (
+    `[tool error] ${bad.join(", ")} contains an engine placeholder (${ELIDED_KEY}) instead of a real value. ` +
+    "That marker only ever appears in your history to show that a value you ALREADY sent was dropped from context; " +
+    "it is not something to send. Reissue this call with the actual content."
+  );
 }
 
 export function toolSpecs(tools: Tools): ToolSpec[] {

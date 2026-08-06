@@ -4,7 +4,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { type ChatMsg, chat } from "../src/provider";
-import { ELIDED_KEY, elideArgs } from "../src/tools";
+import { ELIDED_KEY, elideArgs, elidedArgsRejection } from "../src/tools";
 
 /** Capture the real serialized request body, so the wire assertion tests the ACTUAL adapter
  * rather than an exported internal (the pattern untrusted-framing.test.ts uses). */
@@ -156,6 +156,36 @@ describe("elideArgs", () => {
     for (let i = 0; i < 3_000; i++) args[`field_number_${i}`] = i;
     const out = elideArgs(args, 512) as string;
     expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(512);
+  });
+
+  test("an echoed marker is rejected before the tool runs", () => {
+    // THE live finding. On a 10-turn session the agent saw the marker in its own history, copied
+    // the shape into a later write_file, and silently filed 4 of 10 pages as the placeholder —
+    // the run looked cheaper because it had thrown work away. The engine writes markers and never
+    // receives one, so a marker on the way IN is always this mistake.
+    const echoed = JSON.parse(elideArgs({ rows: big(90_000) }, CAP) as string);
+    const err = elidedArgsRejection({ path: "pages/long-3.json", ...echoed });
+    expect(err).toContain("engine placeholder");
+    expect(err).toContain("rows");
+    // the root-collapse shape is rejected too
+    expect(elidedArgsRejection({ [ELIDED_KEY]: { bytes: 10 } })).toContain("whole argument object");
+    // A STRING-valued echo is the shape a `content` parameter actually produces, and the live
+    // rerun proved an object-only check sails straight past it.
+    const asText = JSON.stringify({ [ELIDED_KEY]: { bytes: 10_651, note: "engine placeholder" } });
+    expect(elidedArgsRejection({ path: "p.json", content: asText })).toContain("content");
+    // and an ordinary call is untouched, including prose that merely MENTIONS the key
+    expect(elidedArgsRejection({ path: "a.json", content: "real" })).toBeNull();
+    expect(
+      elidedArgsRejection({
+        path: "doc.md",
+        content: `the ${ELIDED_KEY} marker is engine-authored`,
+      }),
+    ).toBeNull();
+  });
+
+  test("the marker tells the model not to send it", () => {
+    const m = JSON.parse(elideArgs({ rows: big(90_000) }, CAP) as string).rows[ELIDED_KEY];
+    expect(m.note).toContain("never send this shape");
   });
 
   test("survives an unserializable value without throwing on the commit path", () => {

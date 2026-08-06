@@ -44,6 +44,7 @@ import {
   capAndSpill,
   elide,
   elideArgs,
+  elidedArgsRejection,
   type ToolCtx,
   type ToolDef,
   type Tools,
@@ -1433,6 +1434,10 @@ async function execCall(
             `reissue valid arguments (use a smaller/chunked payload if they were cut)`,
         );
       const args = parsed.args;
+      // Refuse a call that echoes an engine placeholder back at us, BEFORE it executes. Silent
+      // acceptance means the tool persists the marker as if it were real content.
+      const echoed = elidedArgsRejection(args);
+      if (echoed) throw new Error(echoed.replace("[tool error] ", ""));
       executedArgs = args; // reused by the elision below — the object is parsed exactly once
       if (toolMs > 0) {
         // Compose the caller's cancel with a fresh timeout controller; the timer is cleared the
