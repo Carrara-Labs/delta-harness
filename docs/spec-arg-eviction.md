@@ -470,3 +470,62 @@ Things that must be right in code, not in prose.
 
 1. **Argument-size distribution** across Aperture's five workspaces, to derive §5.5 from data.
 2. **`alpha-school` at 6,309B against a 6,400B cap** - operator decision, not engine.
+
+---
+
+## 13. Live results (2026-08-06)
+
+Ten live tests on a real model (`anthropic/claude-haiku-4.5` via OpenRouter), two daemons, isolated
+workspaces, identical prompts, `DELTA_TOOL_ARG_MAX_BYTES=0` as the 0.2.11 control arm.
+
+**The quality gate is reported FIRST, because one arm failed it and the cost numbers from that run
+were worthless.**
+
+| 10-turn session | OFF (0.2.11) | ON (0.2.12) |
+|---|---|---|
+| pages / records / corrupt | 10 / 120 / 0 | 10 / 120 / 0 |
+| compactions | **5** | **0** |
+| total input tokens | 232,851 | 163,189 (**-29.9%**) |
+| peak call input | 15,269 | 11,268 (**-26.2%**) |
+| cost | $0.2404 | $0.1526 (**-36.5%**) |
+| model calls | 20 | 28 |
+
+The single-batch roster shape is sharper still: peak call input **34,034 → 9,605 (-72%)**, cache hit
+on the final call **13% → 88%**.
+
+### What the telemetry proved
+
+S7 earned its place immediately. All five OFF compactions report
+`tail_bytes_before == tail_bytes_after` with `demoted: false` — compaction ran, paid a model call,
+and shrank the retained tail by **nothing**, because the bulk is assistant arguments that
+`demoteSpilled` cannot touch. That is Aperture's `context_irreducible` signature, visible in
+telemetry for the first time.
+
+The roster arm also shows WHY: all eight writes land in ONE protocol unit, so compaction's
+`groups.length <= 1` guard means there is nothing it is even allowed to shed.
+
+### The bug only a live run could find
+
+**The model imitates the marker.** Seeing `_delta_elided` in its own history as a `content`
+argument, the agent copied the shape into a LATER `write_file`, and the tool persisted the
+placeholder: **4 of 10 pages filed as garbage** while the run merely looked cheaper. The
+pre-guard run's "-60%" was fraudulent - bought by throwing away 40% of the work.
+
+Fixed by rejecting an echoed marker on ingress: the engine writes markers and never receives one,
+so a marker arriving on a call is always this mistake. It became a loud, self-correcting retry.
+
+Two rounds were needed, and the second was also live-only: a `content` parameter takes a STRING, so
+the model echoes SERIALIZED json and an object-only check sails past it.
+
+### An improvement tested and rejected
+
+Keeping a bounded head of the original value in the marker (the `demoteSpilled` pattern), on the
+theory that the model copies the placeholder because it is the only example of the field it can see.
+Measured: echo rejections **20 → 26** and input tokens **163k → 202k**. It gave the model a more
+plausible thing to copy and cost bytes by construction. Reverted.
+
+### Known cost, to name in the release brief
+
+The guard's retries cost ~8 extra model calls on a 10-turn session (20 → 28). The run is still
+cheaper on every other axis, and the alternative is silent data loss. Reducing the echo rate is a
+0.2.13 question, not a blocker.
