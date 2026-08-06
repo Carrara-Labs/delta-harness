@@ -1,7 +1,8 @@
 # Spec: bound what the model writes
 
-Status: **v2, pre-implementation.** v1 was reviewed by codex and returned REDESIGN with seven P1s.
-Five of them traced to a single root cause, and v2 removes it. Written 2026-08-06 from Aperture's
+Status: **v3, pre-implementation.** Two codex rounds. v1 returned REDESIGN on seven P1s that shared
+one root cause; v2 removed it and returned REDESIGN on one that mattered. v3 answers it by giving
+up on something v1 and v2 both assumed. Written 2026-08-06 from Aperture's
 field measurements (`backlog-aperture-handoff.md`, `aperture-0.2.12-measurements.md`) and a source
 read of `~/delta/.refs/{openclaw,pi,hermes-agent}`.
 
@@ -129,139 +130,180 @@ to `PAYLOAD_EVENTS`, and `compaction` is not one, so compaction attributes alrea
 
 ## 5. Design - S1, structure-aware argument elision
 
-Two changes from v1, each closing a cluster of the above.
+### 5.0 The thing v1 and v2 both assumed, and v3 gives up
 
-### 5.1 The archive is the journal, not a file
+Both earlier drafts tried to guarantee that an evicted payload is retrievable **forever**. Codex
+showed why that cannot hold: durable sessions have no expiry, so any "pin the archive" rule turns
+bounded storage into unbounded storage. Its formulation is exact, and worth keeping:
 
-`execCall` already writes the full arguments to `journal(run_id, call_id, tool, args, …)` in the
-same transaction (`run.ts:~1402`). That row is:
+> Durable recall, no durable-session expiry, and a hard storage ceiling cannot all be true.
+
+v2 also made a factual error: it claimed the journal is "not on the disk that is under pressure".
+The journal is inside SQLite, on the same 1GB volume as the WAL and the workspace. v2 converted
+seven-day data into permanent data on the exact disk this batch is trying to protect.
+
+v3 gives up the third property, and splits the ask in two:
+
+| | what it answers | size | lifetime |
+|---|---|---|---|
+| **the manifest** | "what have I filed, and how much" | ~90 bytes per elision | as long as the message |
+| **the body** | "show me exactly what I sent on page 7" | the full payload | best-effort, existing journal retention |
+
+The manifest is what Aperture actually asked for when they said an agent must be able to *reconcile
+its own count*. It is small enough to keep forever without a policy. The body is large, genuinely
+rarely needed, and can be honestly absent.
+
+**And the manifest needs no new storage at all: it is the marker already sitting in the message
+row.** It lives exactly as long as the message it belongs to, is session-scoped by construction, and
+costs one line of retention policy: none.
+
+### 5.1 The archive is the journal, and retention does not change
+
+`execCall` already writes the full arguments to `journal(run_id, call_id, tool, args, …)` in the same
+transaction (`run.ts:~1402`), and codex confirmed the row is written before execution and never
+overwritten by the success upsert. That row is:
 
 - **keyed**, not named - no sanitization, no truncation, no collision;
 - **session-bound by construction** - `journal.run_id → runs.session_id`, so a lookup can be scoped
-  the way `searchHistory` already scopes itself, and cannot be aimed at another session;
+  the way `searchHistory` already scopes itself and cannot be aimed at another session;
 - **unforgeable** - the engine resolves `(run_id, call_id)` from the row it is rewriting; nothing is
   parsed out of model-visible text;
 - **queryable** - which is what restores keyword recall;
-- **not on the disk that is under pressure** - nine of ten Aperture lanes are on a 1GB volume shared
-  with the SQLite WAL, and this writes no new files at all.
+- **already bounded** - `retention.ts` prunes it at 7 days and 50k rows.
 
-v1 rejected the journal because `retention.ts` prunes it at 7 days and 50k rows. **That is a policy,
-not a law, and the policy is now wrong**: a journal row whose arguments have been evicted is no
-longer "pure local observability", it is the only copy. Retention learns one rule:
+**`retention.ts` is not modified.** No pinning rule, no exemption, no reference-counting, no
+directory sweep. This is the entire answer to codex's surviving P1, and it removes code rather than
+adding it.
 
-> A journal row is prunable unless its arguments have been evicted and a message row in its session
-> still references it - active or inactive, because `searchHistory` deliberately reads inactive rows.
+The cost is that a body is retrievable for as long as the journal keeps it, not forever. That is the
+right trade for the workload: a roster run lasts minutes, so the body is always present while the run
+is alive, which is the whole window in which "an agent that forgets what it filed" can bite. Across
+days, Aperture does not need it - the rows are banked in their product, which is the premise of the
+original ask.
 
-Retention keeps its age and count caps for every other row. Evicted-argument rows are bounded
-instead by the session lifecycle they belong to, which is the same contract the messages they
-support already live under.
-
-**This deletes S3's disk problem for arguments entirely.** Spill retention is still worth doing for
-oversize *results*, but it is no longer coupled to this slice and no longer gates it.
+**Absence must be honest, and this design makes it cheap.** The marker embeds no path and makes no
+promise about a file, so it cannot rot into a lie the way v1's pointer could. Retrieval reports
+availability: `recall` returns the body when the journal still has it, and says plainly that it was
+pruned when it does not.
 
 ### 5.2 Elide by structure, not by call
 
-v1 replaced the whole argument object. v2 keeps the object and replaces only the values that are
+v1 replaced the whole argument object. v3 keeps the object and replaces only the values that are
 actually large:
 
 ```json
 // before (91,204 bytes)
 {"buffer_id":"stg_7741","page":7,"rows":"[{\"name\":\"…\", … 90KB … }]"}
 
-// after (198 bytes)
-{"buffer_id":"stg_7741","page":7,"rows":{"_delta_elided":{"bytes":90731,"sha256":"9f2a…"}}}
+// after (188 bytes)
+{"buffer_id":"stg_7741","page":7,"rows":{"_delta_elided":{"bytes":90731,"field":"rows"}}}
 ```
 
-Rules:
+Rules, tightened after review:
 
-- parse the arguments as JSON; if they do not parse, leave them alone (the repair path at
-  `parseToolArgs` already owns malformed arguments);
-- walk **top-level values only** - no recursion, no cleverness. A nested walk is more code for a case
-  nobody has measured;
-- replace any **string or serialized value** exceeding `DELTA_TOOL_ARG_VALUE_MAX_BYTES` with the
-  marker object above; leave every other field verbatim;
-- if nothing was replaced, write nothing - the row is untouched and no journal row is pinned.
+- operate on the arguments **already parsed** by `parseToolArgs` for execution - never parse twice;
+- **only a non-array JSON object is eligible.** Root arrays, primitives and `null` are left alone,
+  matching what `parseToolArgs` already accepts (`run.ts:~1283`);
+- walk **top-level values only** - no recursion. A nested walk is more code for a case nobody has
+  measured;
+- measure a string value by its UTF-8 bytes, any other value by the UTF-8 bytes of
+  `JSON.stringify(value)`, and replace it with the marker when it exceeds the threshold;
+- if nothing was replaced, write nothing - the row is untouched.
 
-What this buys, directly against codex's two semantic P1s:
+**No digest.** v2 carried a `sha256` so recovery could prove it returned the right body. Recovery
+resolves by primary key from a table the engine wrote, so there is nothing to prove, and hashing
+every large argument on a hot path buys nothing. Dropped on leanness grounds.
+
+What this buys, against the two semantic P1s:
 
 - **semantics survive.** `send_email` keeps `to` and `subject` and loses only `body`. The model can
-  still see what it did, which is what stops duplicate side effects and re-queries.
-- **small identifiers stay searchable in place.** Only the genuinely huge value leaves the window, so
-  most of what `recall` finds today it still finds in the message row itself.
+  still see what it did, which is what prevents duplicate side effects and re-queries.
+- **top-level identifiers stay searchable in place.** Only genuinely huge values leave the window.
 - **it stays valid JSON on both wires.** The Anthropic adapter does `JSON.parse(arguments)` with
   `catch { input = {} }` (`provider.ts:1117`); a prose stub would hand the model an **empty argument
   object with no explanation** on the wire Aperture actually runs, invisible to them because they
-  test against the native adapter. An object-shaped marker is correct on both wires.
-- **idempotent by shape.** A marker object is ~90 bytes, far below any sane threshold, so a second
-  pass measures it and declines. `demoteSpilled` learned (codex P1) that a sentinel alone is
-  forgeable; size is not.
-- **the digest is engine-authored.** `sha256` lets the recovery path prove it returned the right
-  body, and gives the live test a cheap integrity assertion.
+  test against the native adapter.
+- **idempotent by shape.** A marker is ~60 bytes, far below any sane threshold, so a second pass
+  measures it and declines. `demoteSpilled` learned (codex P1) that a sentinel alone is forgeable;
+  size is not.
 
-### 5.3 The seam is unchanged, and codex confirmed it
+**Honest limits**, both raised by codex and both accepted rather than designed around:
 
-Eviction happens in the transaction at `run.ts:~1400` that commits the tool result. Codex checked
-this specifically and found it sound:
+- a **nested** identifier does not stay in the message. `{"payload":{"customer_id":"ABC-123","body":…}}`
+  loses both when `payload` exceeds the threshold. Archive search (§6) is the recovery path.
+- value **types** change: a string, array or object value all become a marker object. Acceptable for
+  a historical, already-completed call; the key structure is what the model reasons over.
+- a legitimate argument could itself contain `_delta_elided`. This is cosmetic rather than
+  exploitable: readback resolves from the journal by key and returns the real arguments, so a forged
+  marker can only produce a phantom enumeration entry, never a false body.
+
+### 5.3 The seam is unchanged, and codex confirmed it twice
+
+Eviction happens in the transaction at `run.ts:~1400` that commits the tool result.
 
 - **resume is safe** - `pendingCalls()` re-reads `assistant.tool_calls` only for calls with no
-  answer; here the call is answered, so those arguments can never be needed again. Evicting on
-  *arrival* - the seam the `DELTA_TOOL_RESULT_MAX_BYTES` analogy suggests, and what Aperture asked
-  for - would lose exactly what a crash-resume needs.
-- **zero prefix-cache churn** - the row is created from a provider response and stubbed before the
+  answer; here the call is answered. Evicting on *arrival* - the seam the
+  `DELTA_TOOL_RESULT_MAX_BYTES` analogy suggests, and what Aperture asked for - would lose exactly
+  what a crash-resume needs.
+- **zero prefix-cache churn** - the row is created from a provider response and elided before the
   next main-model request, so it only ever reaches a provider in elided form. Codex traced the
-  compaction and ephemeral paths and confirmed it. Given §2, this is not a detail.
-- **ordering is preserved** - the row is UPDATEd in place; `activeSessionMessages` is `ORDER BY id`,
-  so re-inserting a copy would sort the assistant message after the tool results it must precede.
+  compaction and ephemeral paths and confirmed it.
+- **ordering is preserved** - UPDATE in place; `activeSessionMessages` is `ORDER BY id`, so
+  re-inserting a copy would sort the assistant message after the tool results it must precede.
 - **the shared-row read-modify-write is safe** - the calls of one turn share one assistant row, and
-  Bun's `db.transaction` callback is synchronous, so no async continuation can interleave. The
-  awaited write happens before it. Codex verified this on Bun 1.3.13.
+  Bun's `db.transaction` callback is synchronous, so no async continuation can interleave. Verified
+  by codex on Bun 1.3.13.
+- **the output-capped path is ineligible** - it records full arguments as `done` with a synthetic
+  error result and never enters `execCall`, so arguments survive for reissue.
 
 ### 5.4 Eligibility
 
-Evict when the call **succeeded** (result does not begin `[tool error]` or `[interrupted]`) and at
-least one top-level value exceeds the threshold.
+The call **succeeded** (result does not begin `[tool error]` or `[interrupted]`) and at least one
+top-level value exceeds the threshold.
 
-Codex is right that prefix-sniffing is fail-open in both directions: a hostile result can open with
-`[tool error]` to suppress eviction, and a semantic failure that does not use the prefix is treated
-as success. v2 accepts this rather than refactoring the codebase's error convention, because the
-consequence is now small: the arguments are in the journal, the object's shape and small fields
-survive, and recall can retrieve the body. Under v1 a misclassification lost the payload; under v2
-it costs a lookup. Noted as a known limit, not designed around.
+Codex is right that prefix-sniffing is fail-open both ways. v3 accepts this rather than refactoring
+the codebase's error convention, because the consequence is now small: the object shape and small
+fields survive, and the body is in the journal. Under v1 a misclassification lost the payload; here
+it costs a lookup. A known limit, not designed around.
 
 ### 5.5 Thresholds
 
-`DELTA_TOOL_ARG_VALUE_MAX_BYTES`, default **4096**, `0` disables. Measured in **UTF-8 bytes**
-(`.length` is UTF-16 - the 0.2.11 lesson).
+`DELTA_TOOL_ARG_VALUE_MAX_BYTES`, default **4096**, `0` disables. UTF-8 bytes (`.length` is UTF-16 -
+the 0.2.11 lesson).
 
-Below the 20KB result cap on purpose: a result is read once by the next turn, while arguments are
-replayed every turn until compaction, so they are worth more per byte. And the default must sit
-below the reported case - Aperture handed over 143,905 chars in ~12.4KB chunks, and a 20KB cap would
-have evicted **none** of it.
+Below the 20KB result cap on purpose: a result is read once by the next turn, arguments are replayed
+every turn until compaction. And it must sit below the reported case - Aperture handed over 143,905
+chars in ~12.4KB chunks, and a 20KB cap would have evicted **none** of it.
 
-**Guard `NaN`** (codex P2): `Number("garbage")` is `NaN`, and `NaN <= 0` and `bytes <= NaN` are both
-false, so a typo'd env var would evict *everything*. Parse with an explicit finite check and fall
-back to the default.
-
-**Open, closed before implementation:** Aperture's real argument-size distribution across the five
-workspaces, so this is derived from data rather than one figure (§11).
+**Guard `NaN`** (codex P2): `Number("garbage")` is `NaN`, and both `NaN <= 0` and `bytes <= NaN` are
+false, so a typo'd env var would elide *everything*. Parse with an explicit finite check.
 
 ## 6. Design - S2, `recall` gains the archive and enumeration
 
-Two additions, and the first is now **required** rather than a convenience, because it is what keeps
-§4's keyword-recall regression from shipping.
+Required, not a convenience: it is what stops §4's keyword-recall regression from shipping.
 
-**Search the archive.** `searchHistory` gains a second source: journal rows in this session whose
-arguments were evicted, matched on `args`, returned as hits labelled `archived` alongside today's
-`live` / `compacted`. Same bounded id window, same session binding, same limit. An agent that
-banked a customer id inside a 12KB payload can still find it - which is the capability v1 removed.
+**Bounded by construction.** Codex's objection to v2 was that "search the journal" had no bounded
+candidate set. It does now, because discovery runs off the manifest: scan the **same bounded id
+window `searchHistory` already uses** for messages carrying `_delta_elided` markers, which yields a
+small, explicit set of `(run_id, call_id, field)` references. The journal is then hit by **primary
+key**, never scanned. Growth in the journal cannot slow this down.
 
-**Enumerate.** `query` becomes optional; an empty query lists this session's evicted artifacts -
-tool name, field, byte count, run seq, digest - newest first. This is Aperture's "index the agent can
-list, not just search", and it retires the count-reconciliation discipline they force through
-prompting today. No new tool.
+**Three modes on one tool, one new optional parameter:**
 
-**Read back.** A hit carries `(run_seq, call_id, field)`, and `recall` resolves the full value from
-the journal on request. No path, nothing parsed from prose, nothing another session can name.
+- `recall(query)` - as today, plus archived hits. A match inside an elided value is returned labelled
+  `archived`, alongside today's `live` / `compacted`.
+- `recall()` - enumerate this session's elisions: tool, field, bytes, run seq. Aperture's "index the
+  agent can list, not just search", which retires the count-reconciliation prompting they do today.
+- `recall(artifact: "<run_seq>:<call_id>:<field>")` - read one body back, or a plain statement that
+  the journal no longer holds it.
+
+**Dedupe** keys on `(run_id, call_id)`, exactly as tool rows already dedupe in `searchHistory`, so a
+term appearing in both the visible fields and the archived body yields one hit, and archived hits
+cannot crowd live transcript results out of the limit.
+
+Session binding is preserved by joining `journal → runs` and binding `runs.session_id`, the same
+discipline `searchHistory` uses today. Matching stays literal escaped `LIKE` plus `indexOf`, so the
+ReDoS-free guarantee is unchanged.
 
 ## 7. Design - S7, the instrument (ships first)
 
@@ -277,8 +319,8 @@ paths, and add `tail_bytes_before` / `tail_bytes_after`, which is what actually 
 
 ## 8. Design - S9, parallel sub-turn resume (new, found by this review)
 
-Codex found a **pre-existing** correctness bug while checking §5.3, confirmed directly against
-source and not present in any test.
+Codex found a **pre-existing** correctness bug while checking §5.3, confirmed directly against source
+and covered by no test.
 
 The loop reads `lastRunMessage` - the last *active row of the run* - and only reconciles pending
 calls when that row is the assistant message (`run.ts:660`). Once any tool result is inserted, it is
@@ -287,11 +329,25 @@ and B in flight, A committing and then a restart leaves the last row as A's tool
 is never computed, B never executes, and the next request carries an unanswered `tool_use` the
 provider rejects.
 
-Fix: reconcile against the last assistant message **carrying `tool_calls`**, not the last row. When
-nothing is pending the behaviour is byte-identical to today, so the non-crash path is unchanged.
+**The obvious fix is wrong**, and codex caught it in v2's wording. "Reconcile against the last
+assistant carrying `tool_calls`" would, on an ordinary run that finished a batch and then produced a
+final answer, select the *older* tool-calling assistant, find nothing pending, and fall through to
+another model call instead of finalizing. That changes the non-crash path.
 
-In scope because the resume guarantee is the thing this batch is not allowed to break, and because a
-partial parallel batch is exactly the shape argument eviction now interacts with.
+The safe formulation is narrower:
+
+- when the last active row is an **assistant**, behave exactly as today;
+- **only** when the last active row is a **tool result**, walk back to the latest active assistant
+  carrying `tool_calls` and reconcile that batch's calls against the journal and message rows;
+- when nothing is pending, fall through exactly as today.
+
+So the provider-visible non-crash path is byte-identical, and the mid-batch crash is repaired.
+
+Test both shapes, not just the crash: an ordinary tool batch followed by a final assistant answer
+must still finalize on the first pass.
+
+In scope because the resume guarantee is what this batch must not break, and because a partial
+parallel batch is the shape argument elision now interacts with.
 
 ## 9. Rejected alternatives
 
@@ -313,8 +369,15 @@ open silently. Structure-aware elision gets the semantic safety codex asked for 
 actively harmful on the Anthropic wire.
 
 **A new artifacts table.** Codex suggested a structured artifact registry, and it is the right shape
-- but the journal already *is* one, keyed on exactly `(run_id, call_id)`. Adding a table to hold
-what an existing table already holds fails the leanness test.
+- but the journal already *is* one, keyed on exactly `(run_id, call_id)`. Adding a table to hold what
+an existing table already holds fails the leanness test.
+
+**Pinning journal rows so an archive survives forever** (v2). §5.0. It converts bounded storage into
+unbounded storage on a 1GB volume, and no schema trick avoids that while durable sessions never
+expire. v3 keeps the *manifest* forever instead, which is ~90 bytes rather than ~90KB.
+
+**A content digest on the marker** (v2). Recovery resolves by primary key from a table the engine
+wrote, so there is nothing to verify, and hashing every large argument on a hot path buys nothing.
 
 ## 10. Test plan
 
@@ -330,11 +393,18 @@ what an existing table already holds fails the leanness test.
 - ordering: the assistant row still precedes its tool results after elision;
 - concurrency: three parallel calls on one shared assistant row, no lost update;
 - resume: crash before the result leaves arguments intact and `pendingCalls` re-fires;
-- **S9**: crash mid-batch with one of two calls committed, resume executes the second;
-- **recall**: an identifier inside an elided value is still found, labelled `archived`, and the full
-  value reads back with a matching digest;
-- **retention**: a journal row backing an elided argument survives its age cutoff while an ordinary
-  journal row of the same age is pruned.
+- **S9**: crash mid-batch with one of two calls committed, resume executes the second; AND an
+  ordinary batch followed by a final assistant answer still finalizes on the first pass (the
+  regression the naive fix would have caused);
+- root arrays, primitives and `null` arguments are left untouched;
+- **recall**: an identifier inside an elided value is found and labelled `archived`; the body reads
+  back by `artifact` reference; a term visible in BOTH a surviving field and the archived body yields
+  ONE deduped hit; archived hits cannot crowd live hits out of the limit;
+- **recall after pruning**: once the journal row is gone, readback says so plainly rather than
+  returning an empty or misleading body;
+- **enumeration** is discovered from markers in the bounded id window, so journal size does not
+  affect its cost;
+- a forged `_delta_elided` in a legitimate argument produces no false body on readback.
 
 ### 10.2 Integration
 
