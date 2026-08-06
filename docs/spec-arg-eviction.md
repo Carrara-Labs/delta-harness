@@ -592,3 +592,67 @@ One run per arm against a nondeterministic model is not a measurement. Every fig
 have been reported with that caveat and was not. **Before any release claim, this needs repeated
 runs per arm with duplicate-write count as a first-class metric alongside compaction count** — which
 is precisely what Aperture's pinned fixture and bench rig exist for.
+
+---
+
+## 15. The compaction seam: safe, and inert (2026-08-06)
+
+Built and live-tested. Three arms, same prompt, same model, ten-turn session.
+
+| | 0.2.11 | early seam | compaction seam |
+|---|---|---|---|
+| pages / records / corrupt | 10 / 120 / 0 | 10 / 121 / 0 | 10 / 120 / 0 |
+| `write_file` calls | 10 | **18** | **10** |
+| **duplicate writes** | 0 | **4** | **0** |
+| echo rejections | 0 | 5 | **0** |
+| model calls | 20 | **36** | **20** |
+| input tokens | 232,851 | 286,124 | 246,667 |
+| cost | $0.2404 | $0.2015 | $0.2444 |
+
+**The rework is gone.** Duplicate writes 4 → 0, `write_file` calls 18 → 10, model calls 36 → 20. The
+hypothesis in §14 was right: eliding a row the agent is still reasoning about is what made it redo
+work, and moving the seam past that point removes it entirely. The echo guard also became
+vestigial (5 → 0 rejections), exactly as predicted.
+
+**And it delivers nothing.** Elision fired **zero times** across the whole session. The tail-walk
+that demotes and elides only runs while `tailTokens > budget`, and the group-selection above it has
+already sized the tail to fit. So on this workload the loop never entered, and the arm is
+byte-for-byte 0.2.11 behaviour.
+
+### A correction to §13 and §14
+
+I reported "10 of 10 compactions shrank the tail by zero bytes" as evidence that compaction was
+broken and paying a model call for nothing. **That reading was wrong.** The tail did not shrink
+because it did not need to — compaction's job there was shedding the *prefix* into a summary, which
+it did. `tail_bytes_before == tail_bytes_after` is the expected reading whenever the tail already
+fits, not a failure.
+
+The metric is still worth having; I over-read it. The genuine failure it exposes is the narrower
+case where the tail *is* over budget and still cannot shrink, which is Aperture's
+`context_irreducible` shape and not this fixture.
+
+### What this leaves
+
+Two seams tested, neither shippable:
+
+| seam | rework | win |
+|---|---|---|
+| tool-result commit | **4-10 duplicate writes** | large (163k vs 232k on one run) |
+| compaction commit | none | **none — never fires** |
+
+The win comes from arguments leaving the ACTIVE WINDOW early, so every later turn is smaller. The
+rework comes from them leaving too early, while the agent is still reasoning about that turn. Those
+are the same lever at different settings, which points at the remaining candidate:
+
+**Age-gated elision.** Elide a call's arguments once it is N turns old — old enough that the agent
+has moved on, early enough that the window shrinks before compaction is reached. `N = 2` or `3` is
+the obvious starting point, and it is testable directly against these three arms.
+
+That is a smaller change than either seam tried so far: no new machinery, just a predicate on turn
+age at the point the window is assembled or at each turn's commit for the rows that have aged out.
+
+### Method note
+
+This is still one run per arm. The rework signal is structural and trustworthy (0 vs 4 duplicate
+writes, 10 vs 18 calls). The token and cost figures are not — three runs of the early seam produced
+163k, 286k and 202k on the same fixture. **No cost claim should be made from this table.**

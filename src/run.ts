@@ -876,7 +876,11 @@ export async function executeRun(
         deps.chatUtility ?? deps.chat, // summaries don't need the frontier model
         run.session_id,
         { ...spine, turn: stepCount },
-        { recentBudgetTokens: recentBudget, workspace: deps.workspace },
+        {
+          recentBudgetTokens: recentBudget,
+          workspace: deps.workspace,
+          argCap: deps.toolArgCap ?? 0,
+        },
       );
       if (cu) {
         addUsage(usage, cu.usage); // charge the summary call regardless of whether it shrank
@@ -981,7 +985,12 @@ export async function executeRun(
           { ...spine, turn: stepCount },
           // force: the provider already refused this prompt, so accept ANY shrink rather than
           // holding out for a material one and failing the turn instead.
-          { recentBudgetTokens: 0, force: true, workspace: deps.workspace },
+          {
+            recentBudgetTokens: 0,
+            force: true,
+            workspace: deps.workspace,
+            argCap: deps.toolArgCap ?? 0,
+          },
         );
         if (cu) {
           addUsage(usage, cu.usage); // charge the summary call whether or not it shed
@@ -1518,23 +1527,6 @@ async function execCall(
     });
   }
 
-  // Bound what the MODEL writes (0.2.12). Only a SUCCEEDED call: a failed or interrupted one keeps
-  // its arguments, because the model needs to see what it sent in order to fix it.
-  //
-  // This seam is why it is free AND safe. The call is answered, so `pendingCalls` can never re-fire
-  // it and a resume never needs these arguments again — evicting on ARRIVAL, the seam the
-  // `capAndSpill` analogy suggests, would lose exactly what a crash-resume reads. And this assistant
-  // row was written THIS turn and is not sent to any provider until the NEXT call, so it only ever
-  // goes over the wire elided: zero prefix-cache churn, which matters because the cache is the whole
-  // bill (Aperture measured 78% of a run's uncached input in five post-compaction reloads).
-  //
-  // The full arguments stay in `journal.args` — written before execution and NOT overwritten by the
-  // upsert below — which is what `recall` reads back. Retention keeps its existing bounds on that
-  // table; the permanent record is the ~60-byte marker in the message, not the body.
-  const succeeded = !result.startsWith("[tool error]") && !result.startsWith("[interrupted]");
-  const elidedArgs =
-    succeeded && executedArgs ? elideArgs(executedArgs, deps.toolArgCap ?? 0) : null;
-
   db.transaction(() => {
     db.query(
       `INSERT INTO journal (run_id, call_id, tool, args, status, result, created_at, finished_at)
@@ -1553,43 +1545,8 @@ async function execCall(
       Date.now(),
     );
     insertMessage(db, run, { role: "tool", tool_call_id: call.id, content: result });
-    // Inside the transaction on purpose: the calls of one turn SHARE one assistant row (a batch is
-    // one message with several tool_calls), so this is a read-modify-write on contended state. A
-    // synchronous transaction callback cannot be interleaved by another async continuation, so no
-    // sibling's marker is lost.
-    if (elidedArgs) storeElidedArgs(db, run.id, call.id, elidedArgs);
     persistActive(); // tool activations commit atomically with the result
   })();
-  if (elidedArgs)
-    events.emit("args.elided", spine, {
-      "gen_ai.tool.name": name,
-      "gen_ai.tool.call.id": call.id,
-      bytes_before: Buffer.byteLength(call.function.arguments, "utf8"),
-      bytes_after: Buffer.byteLength(elidedArgs, "utf8"),
-    });
-}
-
-/** Replace ONE call's stored arguments with the elided form, leaving the call id, the tool name and
- * the result untouched so the transcript stays honest and the model still knows what it did. Scoped
- * to this run's ACTIVE rows and matched on the call id, so an interleaved history can never be
- * rewritten at the wrong message. Caller must hold a transaction. */
-function storeElidedArgs(db: Database, runId: string, callId: string, args: string): void {
-  const rows = db
-    .query("SELECT id, msg FROM messages WHERE run_id = ? AND active = 1 ORDER BY id DESC")
-    .all(runId) as { id: number; msg: string }[];
-  for (const row of rows) {
-    let m: AssistantMsg;
-    try {
-      m = JSON.parse(row.msg) as AssistantMsg;
-    } catch {
-      continue;
-    }
-    const target = m.tool_calls?.find((c) => c.id === callId);
-    if (!target) continue;
-    target.function.arguments = args;
-    db.query("UPDATE messages SET msg = ? WHERE id = ?").run(JSON.stringify(m), row.id);
-    return;
-  }
 }
 
 /** The driver-compatible Responses payload. Every terminal state gets one —

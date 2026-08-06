@@ -233,6 +233,87 @@ describe("the elided-argument archive", () => {
     db.close();
   });
 
+  test("compaction elides the assistant ARGUMENTS in the tail, not just tool results", async () => {
+    // The measured failure this exists for: across two 10-turn sessions, 10 of 10 compactions moved
+    // tail_bytes_before to an IDENTICAL tail_bytes_after — each paying a summary call to discover
+    // the floor had not moved. demoteSpilled bounds the tool RESULT half of the tail; nothing
+    // bounded the assistant arguments sitting beside it.
+    const { maybeCompact } = await import("../src/compaction");
+    const { Events } = await import("../src/events");
+    const db = openDb(":memory:");
+    const now = Date.now();
+    db.query(
+      "INSERT INTO sessions (id, user_id, created_at, updated_at) VALUES ('s',NULL,?,?)",
+    ).run(now, now);
+    for (let r = 1; r <= 6; r++) {
+      db.query(
+        "INSERT INTO runs (id, session_id, seq, status, request, created_at) VALUES (?,'s',?,'done','{}',?)",
+      ).run(`r${r}`, r, now);
+      db.query("INSERT INTO messages (run_id, session_id, msg, created_at) VALUES (?,'s',?,?)").run(
+        `r${r}`,
+        JSON.stringify({
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: `c${r}`,
+              type: "function",
+              function: {
+                name: "write_file",
+                arguments: JSON.stringify({ path: `p${r}.json`, content: "Z".repeat(20_000) }),
+              },
+            },
+          ],
+        }),
+        now,
+      );
+      db.query("INSERT INTO messages (run_id, session_id, msg, created_at) VALUES (?,'s',?,?)").run(
+        `r${r}`,
+        JSON.stringify({ role: "tool", tool_call_id: `c${r}`, content: "wrote 20000 chars" }),
+        now,
+      );
+    }
+    const before = (
+      db.query("SELECT msg FROM messages WHERE session_id='s' AND active=1").all() as {
+        msg: string;
+      }[]
+    ).reduce((n, r) => n + Buffer.byteLength(r.msg, "utf8"), 0);
+
+    await maybeCompact(
+      db,
+      new Events(db),
+      async () => ({
+        ok: true as const,
+        model: "m",
+        message: {
+          role: "assistant" as const,
+          content: "Goal: x\nProgress: y\nNext: z\nArtifacts: none",
+        },
+        finishReason: "stop" as const,
+        usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 2, costUsd: 0 },
+        latencyMs: 1,
+      }),
+      "s",
+      {},
+      { recentBudgetTokens: 500, workspace: "/tmp", argCap: 4_096 },
+    );
+    const rows = db.query("SELECT msg FROM messages WHERE session_id='s' AND active=1").all() as {
+      msg: string;
+    }[];
+    const after = rows.reduce((n, r) => n + Buffer.byteLength(r.msg, "utf8"), 0);
+
+    // The floor moved at all — under 0.2.11 this was byte-identical, 10 times out of 10.
+    expect(after).toBeLessThan(before);
+    // And specifically because ASSISTANT ARGUMENTS were bounded, which nothing could do before.
+    const elidedRows = rows.filter((r) => r.msg.includes(ELIDED_KEY));
+    expect(elidedRows.length).toBeGreaterThan(0);
+    // the payload itself is gone from the window
+    expect(rows.filter((r) => r.msg.includes("Z".repeat(1_000))).length).toBeLessThan(
+      6, // was one per turn
+    );
+    db.close();
+  });
+
   test("a REPAIRED argument is still readable back", () => {
     // parseToolArgs deliberately repairs trailing commas and literal control characters, and the
     // repaired object is what executes and gets elided. Storing the ORIGINAL malformed string in

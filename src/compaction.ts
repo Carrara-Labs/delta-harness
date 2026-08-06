@@ -10,7 +10,7 @@ import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import type { Events, Spine } from "./events";
 import type { ChatMsg, ChatRequest, ModelResult, Usage } from "./provider";
-import { elide, spillPathFor } from "./tools";
+import { elide, elideArgs, spillPathFor } from "./tools";
 import { untrustedToolResult } from "./untrusted";
 
 const RECENT_TOKENS_DEFAULT = 24_000; // tail kept verbatim, sized by token budget (was a fixed 4)
@@ -197,6 +197,47 @@ function demoteSpilled(row: Row, workspace: string): string {
   });
 }
 
+/** The other half of the retained tail. `demoteSpilled` above bounds a spilled tool RESULT; this
+ * bounds the assistant's own tool-call ARGUMENTS, which live on the assistant row and which nothing
+ * has ever been able to shrink. Measured across two 10-turn sessions: 10 of 10 compactions moved
+ * `tail_bytes_before` to an identical `tail_bytes_after` — each paying for a summary call to
+ * discover that the floor had not moved, while the tail grew monotonically underneath.
+ *
+ * Elision happens HERE, and not at the tool-result commit where 0.2.12 first put it, because the
+ * live rig showed the early seam makes the agent redo work: it sees its own recent call carrying a
+ * hollowed-out argument and writes again to be sure (one run wrote the same page ten times). By the
+ * time a row reaches the retained tail the agent is no longer reasoning about it, so there is
+ * nothing to second-guess.
+ *
+ * Same properties as demotion, for the same reasons: it runs at the compaction commit, which is
+ * already rewriting the prefix, so it costs no extra prefix-cache churn; the full arguments stay in
+ * `journal.args` for `recall`; and it is idempotent by size. */
+function elideRowArgs(row: Row, cap: number): string {
+  if (!Number.isFinite(cap) || cap <= 0) return row.msg;
+  let m: ChatMsg & { tool_calls?: Array<{ function: { arguments: string } }> };
+  try {
+    m = JSON.parse(row.msg) as typeof m;
+  } catch {
+    return row.msg;
+  }
+  if (m.role !== "assistant" || !m.tool_calls?.length) return row.msg;
+  let changed = false;
+  for (const call of m.tool_calls) {
+    let args: Record<string, unknown>;
+    try {
+      args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (!args || typeof args !== "object" || Array.isArray(args)) continue;
+    const elided = elideArgs(args, cap);
+    if (!elided) continue;
+    call.function.arguments = elided;
+    changed = true;
+  }
+  return changed ? JSON.stringify(m) : row.msg;
+}
+
 /** Scan compacted rows for spilled-result paths → the unique set, bounded by count AND bytes.
  * These pointers otherwise die with the tool message compaction deactivates. */
 function collectArtifacts(rows: Row[]): string[] {
@@ -264,7 +305,13 @@ export async function maybeCompact(
   chat: (req: ChatRequest) => Promise<ModelResult>,
   sessionId: string,
   spine: Spine,
-  opts: { recentBudgetTokens?: number; force?: boolean; workspace?: string } = {},
+  opts: {
+    recentBudgetTokens?: number;
+    force?: boolean;
+    workspace?: string;
+    /** `DELTA_TOOL_ARG_MAX_BYTES` — bounds the assistant arguments in the retained tail. */
+    argCap?: number;
+  } = {},
 ): Promise<CompactResult | null> {
   const rows = db
     .query("SELECT id, run_id, msg FROM messages WHERE session_id = ? AND active = 1 ORDER BY id")
@@ -330,10 +377,13 @@ export async function maybeCompact(
   let demotedAny = false;
   for (const r of kept) {
     if (tailTokens <= budget) break;
-    const demoted = opts.workspace ? demoteSpilled(r, opts.workspace) : r.msg;
-    if (demoted === r.msg) continue;
-    tailTokens -= tokEst(r.msg) - tokEst(demoted);
-    r.msg = demoted;
+    // Both halves of the tail, oldest-first: the tool result's spilled body, and the assistant's
+    // own arguments. Either one alone leaves a floor the other cannot move.
+    const shrunk = opts.workspace ? demoteSpilled(r, opts.workspace) : r.msg;
+    const both = elideRowArgs({ ...r, msg: shrunk }, opts.argCap ?? 0);
+    if (both === r.msg) continue;
+    tailTokens -= tokEst(r.msg) - tokEst(both);
+    r.msg = both;
     demotedAny = true;
   }
 
