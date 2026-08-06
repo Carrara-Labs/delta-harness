@@ -1,48 +1,105 @@
-# Delta shipping list (as of 2026-08-03, after 0.2.11)
+# Delta shipping list (as of 2026-08-06, 0.2.12 built and unreleased)
 
-Prioritized across both packages. Two security releases stay isolated + codex-gated; everything
-else is low-risk and sequences freely. Shipped items at the bottom for context.
+## Where 0.2.12 stands
 
-## P0 — none open
+Built on `feat/0.2.12-bound-writes`. 873 tests green, typecheck + lint clean, smoke passing against
+a live server, ten live tests on a real model. **Not released**, and the remaining work is ceremony
+plus one measurement we should not take ourselves.
 
-The security track (the vault + secure intake) shipped 2026-08-01. Next work is P1 below.
+### What it answers, against Aperture's eight asks
 
-## Filed (NOT scheduled) — Aperture field report on 0.2.11
+| # | ask | status |
+|---|---|---|
+| 1 | evict a successful call's arguments, with an index and a pointer back | **shipped** (S1 + S2) |
+| 2 | effort inheritance for subagents | 0.2.13 |
+| 3 | opt-in MCP mount for children | 0.2.13 |
+| 4 | budget divisor for concurrent `spawn_subagent` | **shipped** as a live reservation (S4) |
+| 5 | self-write breaker latches on converging attempts | **shipped** (S5) |
+| 6 | self-file fullness on `/v1/status` | **shipped** (S6) |
+| 7 | `/v1/status` reports the raw profile alias | **shipped** (S6) |
+| 8 | a fifth bundle file | declined as engine work; **the docs convention is still unwritten** |
 
-`docs/backlog-aperture-field-report-0211.md`, captured 2026-08-03 from the Aperture engineer after
-he verified 0.2.11 on the QS lab lane and rolled all 8 lanes the same day (PASS on all four
-criteria). Source reply kept verbatim in the appendix. Three findings, all verified against our
-source:
+Plus their one explicit request back - `demoted_only` on the compaction event (S7) - and two defects
+they could not have known about:
 
-- **The self-write breaker latches on CONVERGING `self_cap` attempts.** `STORM_CLASSES` keys every
-  cap refusal to one constant, so it cannot tell an agent binary-searching under the cap from a
-  grinding storm. One run was 45 bytes short and shrinking when it was cut off. Same bug class as
-  the compaction bug 0.2.11 just fixed: progress measured by a proxy, not by the quantity that
-  matters. Fix should be MATERIAL convergence with a hard attempt ceiling, NOT their proposed
-  monotone exemption (unbounded: one byte per try would grind forever).
-- **Self-file fullness is invisible on `/v1/status`.** The data already exists at `run.ts:313`, but
-  status is served from the boot snapshot so it needs a live read like `vault` does.
-- **`/v1/status` returns the raw profile alias** (`src/server.ts:430` returns `c.profile` verbatim)
-  where the docs say the canonical name. One-line.
+- **the parallel sub-turn resume bug** (S9): a crash mid-batch silently stranded the calls that had
+  not committed, forever. Pre-existing, no test covered it, found while reviewing the elision seam.
+- **the marker-echo bug**: our own new marker taught the agent to send it as content. Found on a
+  live run, not by five review rounds.
 
-Also: one bounded-lookback cache miss in 357 calls, which KEEPS that caveat on the backlog rather
-than promoting it.
+### What it is worth
 
-## Observing (NOT scheduled) — Ferni field report #2
+Same work delivered on both arms (10 pages / 120 records / 0 corrupt): **5 compactions to 0**,
+input tokens **-29.9%**, peak call **-26.2%**, cost **-36.5%**. On a single-burst filing shape, peak
+call input **34,034 to 9,605** and final-call cache **13% to 88%**.
 
-`docs/backlog-ferni-field-report-2.md`, captured 2026-08-01. Dogfooding continues; we want more
-data before shipping any of it.
+**Treat these as indicative, not conclusive.** One run per arm against a nondeterministic model.
+Aperture has a pinned fixture and a bench rig and offered to canary; that is the real number.
 
-- ~~Prompt caching collapses on long threads.~~ **FIXED in 0.2.11.** The rolling breakpoints were
-  landing on derived per-turn blocks, one carrying a clock, so the cached prefix could never be
-  matched. Ferni measured 11% before, 91% after.
-- ~~Compaction cannot get under the budget.~~ **FIXED in 0.2.11.** It was 94 of 94 fleet-wide, not
-  "every turn" as this list once said; the tail it keeps was never re-bounded.
-- **`list_secrets` / `vault.declared` conflate "in the vault" with "available to the agent".**
-  Found by Ferni itself while self-diagnosing. One coherent fix covers both.
-- **Operator actions are invisible to the agent** — a credential removed behind its back produced
-  a confident wrong diagnosis. The arrival case is now handled; removal is not.
-- Smaller: `spawn_subagent` running 300s, the `code` CLI missing from the Ferni image.
+## Before it can be cut
+
+1. **The `#8` docs convention.** Promised to Aperture and still unwritten: operator reference
+   material is pointed at, not resident. Cheap, and it stops the next consumer inventing a fifth
+   bundle file and shipping a pointer to nothing.
+2. **CHANGELOG, `version.ts`, `package.json`, site changelog.** The ceremony in
+   `reference_delta_release_ceremony`.
+3. **The release brief**, which must name three things:
+   - consumers whose tool calls are small see **no change at all** (verified: an identical trivial
+     turn cost exactly the same on both arms);
+   - a lone `spawn_subagent` now receives **half** the unreserved remainder rather than all of it;
+   - the echo guard costs roughly **8 extra model calls** on a long filing session.
+4. **Deploy from source to a real agent** and finish the human-in-the-loop test. The release gate is
+   explicit that a local daemon is not this step.
+5. **Aperture canaries** on `speed-lab` with `room-bench.ts`, scored on compaction count,
+   post-compaction `input_tokens` and `context_irreducible` - never on steady-state cache hit.
+
+## P1 - next release (0.2.13)
+
+- **Reduce the echo rate.** New, born from this release. The guard makes it correct and
+  self-correcting, but the retries are a real cost. One hypothesis is already dead: keeping a preview
+  of the original inside the marker made it *worse* (20 to 26 refusals, 163k to 202k tokens) because
+  it gave the model a more convincing thing to imitate.
+- **Spill retention.** `sweepTrash` only touches `.delta/trash`, so `.delta/spill` has never been
+  pruned, on lanes where nine of ten volumes are 1GB shared with the SQLite WAL. Deliberately NOT in
+  0.2.12: pruning a file an already-written stub still points at turns a bounded promise into a lie,
+  and getting that right needs the reference-lifecycle design codex showed is not trivial.
+- **Effort inheritance** (their #2). One line of code, not a one-line decision: every existing child
+  runs at model default today, so inheriting silently raises cost and latency for every consumer on
+  upgrade. Belongs in a brief, not a patch note.
+- **Opt-in MCP mount for children** (their #3). A security widening - a child inheriting the mount
+  inherits act-as rights. Filed by them as a latency ask; it is really the other structural answer to
+  the same context problem, since a child with a fresh window is context relief.
+- **Cold-cache restructuring.** OpenClaw gates a two-stage prune on the cache TTL having lapsed;
+  Hermes triggers compaction on a wall-clock idle gap. We state the principle in `demoteSpilled` and
+  apply it at exactly one moment. Does nothing for a job that fills up mid-run with no pause, so it
+  is not an Aperture item - it is the answer to the open **cache decay on long threads** item, with
+  Ferni as the beneficiary.
+- **No cache write on the summary call** (Pi's `cacheRetention: "none"`). We pay to store a cache
+  entry that can never be read back. Codex checked and it is NOT the one-liner the plan claimed: the
+  serializers add breakpoints automatically, so it needs its own cache patch.
+
+## P2 - open, unchanged
+
+- **Connect: stream the reply text itself.** 0.5.0 ships rich rendering and a live progress line but
+  deliberately not the answer as it is written.
+- **Connect: the intake 409 durability gap.** The cheap fix would tell someone their value was saved
+  when a different value is in the vault, so it waits for a real answer.
+- **Harness 0.3.0 self-extension**, **Connect 0.6.0 self-extension edge.** Earn-it, deferred.
+- **Semver drift.** `src/version.ts` documents additive = MINOR; 0.2.7 through 0.2.11 all shipped
+  additive work as third-digit bumps. **0.2.12 is additive too** - this release is the moment to
+  either follow the doc or change it.
+- **`npm deprecate`** `@carrara-labs/delta-connect@0.4.0` and `@0.4.1`. Needs Nic's npm auth.
+
+## Standing practice, earned this round
+
+- **Name the consumer who will see nothing** in every release brief. Aperture's own note; it saved
+  them a five-release wild goose chase.
+- **Report the quality gate before any cost number.** A run that gets cheap by losing rows is not a
+  win, and this release produced exactly that failure before the guard landed.
+- **Verify a regression test fails without its fix.** Two of this release's did; both were kept for
+  that reason rather than assumed.
+- **Live-test the thing reviews cannot see.** Five source-reading review rounds passed the marker
+  design. The first real agent broke it.
 
 ## Shipped — Harness 0.2.11 "Context economics" (2026-08-03)
 
