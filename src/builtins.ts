@@ -817,34 +817,45 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
   // One sub-agent run (a oneshot child of this binary). Shared by spawn_subagent
   // and eval_n; returns the child's final answer or a [tool error] value.
   const runSubagent = async (task: string, ctx: ToolCtx, budgetDivisor = 1): Promise<string> => {
-    const remaining = ctx.remainingBudget?.();
-    const proc = Bun.spawn([...cfg.selfCmd, "run", task], {
-      cwd: process.cwd(),
-      stdout: "pipe",
-      stderr: "pipe",
-      env: {
-        ...childEnv("subagent"),
-        DELTA_SUBAGENT_DEPTH: String(cfg.subagentDepth + 1),
-        DELTA_WORKSPACE: ctx.workspace,
-        ...(remaining
-          ? {
-              DELTA_MAX_TOKENS: String(
-                Math.max(0, Math.floor(remaining.maxTokens / budgetDivisor)),
-              ),
-              DELTA_MAX_COST_USD: String(Math.max(0, remaining.maxCostUsd / budgetDivisor)),
-            }
-          : {}),
-      },
-      ...(ctx.signal ? { signal: ctx.signal } : {}),
-    });
-    const [out, err, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    chargeReportedUsage(err, ctx);
-    if (code !== 0) return `[tool error] subagent exited ${code}: ${clip(err || out)}`;
-    return out.trim() || "(no output)";
+    // CLAIM the child's slice up front rather than reading the remainder (0.2.12). The remainder is
+    // derived from the parent's usage, which only moves when a child EXITS and reports back, so
+    // three children launched in one turn each saw the FULL remaining budget and the run could
+    // spend 3x its ceiling. `eval_n` divides by N because it knows N; `spawn_subagent` fans out
+    // under a parallel instruction and cannot, so both now draw from one live pool.
+    // A lone spawn takes half of what is unreserved: enough to do real work, and still leaving room
+    // for the parent to finish and for a sibling to run.
+    const claim = ctx.reserveBudget?.(budgetDivisor > 1 ? 1 / budgetDivisor : 0.5);
+    try {
+      const proc = Bun.spawn([...cfg.selfCmd, "run", task], {
+        cwd: process.cwd(),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...childEnv("subagent"),
+          DELTA_SUBAGENT_DEPTH: String(cfg.subagentDepth + 1),
+          DELTA_WORKSPACE: ctx.workspace,
+          ...(claim
+            ? {
+                DELTA_MAX_TOKENS: String(claim.maxTokens),
+                DELTA_MAX_COST_USD: String(claim.maxCostUsd),
+              }
+            : {}),
+        },
+        ...(ctx.signal ? { signal: ctx.signal } : {}),
+      });
+      const [out, err, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      chargeReportedUsage(err, ctx);
+      if (code !== 0) return `[tool error] subagent exited ${code}: ${clip(err || out)}`;
+      return out.trim() || "(no output)";
+    } finally {
+      // Released even on a throw/abort: a leaked reservation would shrink the run's own budget for
+      // the rest of the turn. The child's actual spend is charged separately above.
+      claim?.release();
+    }
   };
 
   if (cfg.subagentDepth < 1) {

@@ -421,6 +421,16 @@ export async function executeRun(
         user_id: string | null;
       } | null
     )?.user_id ?? null;
+  /** Budget claimed by nested work that is still in flight (see `reserveBudget`). */
+  let reservedTokens = 0;
+  let reservedCost = 0;
+  const remainingBudget = () => ({
+    maxTokens: Math.max(
+      0,
+      profile.budget.maxTokens - (Math.max(0, usage.input - usage.cacheRead) + usage.output),
+    ),
+    maxCostUsd: Math.max(0, profile.budget.maxCostUsd - usage.costUsd),
+  });
   const ctx: ToolCtx = {
     workspace: resolve(deps.workspace),
     activate,
@@ -486,13 +496,29 @@ export async function executeRun(
       addUsage(usage, childUsage);
       db.query("UPDATE runs SET usage = ? WHERE id = ?").run(JSON.stringify(usage), run.id);
     },
-    remainingBudget: () => ({
-      maxTokens: Math.max(
-        0,
-        profile.budget.maxTokens - (Math.max(0, usage.input - usage.cacheRead) + usage.output),
-      ),
-      maxCostUsd: Math.max(0, profile.budget.maxCostUsd - usage.costUsd),
-    }),
+    remainingBudget,
+    // A live reservation, so N concurrent children cannot each spend the whole remainder. Held
+    // across the child's lifetime and released in a `finally`, so a crash or timeout cannot leak
+    // it. Per-RUN state on purpose: the tool registry is built once per process, so a closure
+    // there would let one run's children shrink another's budget.
+    reserveBudget: (share) => {
+      const left = remainingBudget();
+      const maxTokens = Math.max(0, Math.floor((left.maxTokens - reservedTokens) * share));
+      const maxCostUsd = Math.max(0, (left.maxCostUsd - reservedCost) * share);
+      reservedTokens += maxTokens;
+      reservedCost += maxCostUsd;
+      let released = false;
+      return {
+        maxTokens,
+        maxCostUsd,
+        release: () => {
+          if (released) return; // idempotent — a double release would inflate the pool
+          released = true;
+          reservedTokens -= maxTokens;
+          reservedCost -= maxCostUsd;
+        },
+      };
+    },
     // The `remember` tool's hands: atomically replace DELTA.md (snapshotted + size-checked).
     // Gated on the profile explicitly (codex #10 — defense in depth, not just tool-map
     // filtering): a `chat` (untrusted-inbound) placement gets no self-write capability at all.
@@ -1163,10 +1189,35 @@ function pendingCalls(db: Database, run: RunRow, assistant: AssistantMsg) {
  * AND a single success anywhere in the turn vetoes the latch (a tool that ever succeeds isn't dead). */
 type Breaker = {
   disabled: Set<string>;
-  fails: Map<string, { err: string; n: number }>;
-  turn: { name: string; callId: string; categorical: string | null }[];
+  /** `gap` = how far the last self-write attempt still overshot its cap, and `attempts` = how many
+   * consecutive turns this tool has failed the same way regardless of progress (the hard ceiling). */
+  fails: Map<string, { err: string; n: number; gap?: number; attempts: number }>;
+  turn: { name: string; callId: string; categorical: string | null; gap?: number }[];
 };
 const CATEGORICAL_TOOL_FAIL_LIMIT = 3;
+/** A self-write refusal resets the streak only if it closed a MATERIAL fraction of the gap — the
+ * same discipline as compaction's `MATERIAL`, and for the same reason: progress must be measured by
+ * the quantity that matters, not by a proxy. `STORM_CLASSES` keys every cap refusal to one constant
+ * so the varying byte counts cannot defeat equality matching, which was the right fix for the
+ * 2026-07-30 grinding storm and also discarded the only signal separating grinding from converging.
+ * Aperture measured a run go 6,654 → 6,482 → 6,445 against a 6,400 cap and get cut off at three,
+ * 45 bytes short and shrinking. Their own first suggestion — exempt monotone shrinking — is
+ * unbounded: one byte per attempt would grind forever. */
+const SELF_CAP_CONVERGENCE = 0.95;
+/** The ceiling that makes convergence safe to honour: however well it is converging, stop here. */
+const CONVERGING_ATTEMPT_MAX = 8;
+/** The refusal carries landed-size vs cap, and that detail is what made the attempts converge at
+ * all — keep it in the message (Aperture). Here it is also the progress signal. */
+const SELF_CAP_GAP = /DELTA\.md would be (\d+) bytes \(cap (\d+)\)/;
+
+/** How far a self-write refusal overshot its cap, or undefined if this isn't one. */
+function selfCapGap(result: string): number | undefined {
+  const m = SELF_CAP_GAP.exec(result);
+  if (!m) return undefined;
+  const bytes = Number(m[1]);
+  const cap = Number(m[2]);
+  return Number.isFinite(bytes) && Number.isFinite(cap) ? Math.max(0, bytes - cap) : undefined;
+}
 /** Categorical = the failure can't fix itself by retrying (the report's ENOENT / not-found /
  * schema-invalid class). Transient wins if both match — a "timed out" is never categorical.
  * Deliberately does NOT include "unavailable" (a service being unavailable is usually transient). */
@@ -1245,10 +1296,14 @@ export function breakerKey(result: string): string | null {
  * tool is quarantined for the run and a one-line norm is appended to its last error message so the
  * model reads the way out inline. Returns nothing; mutates `breaker` and the message row. */
 function aggregateBreaker(db: Database, run: RunRow, breaker: Breaker): void {
-  const byTool = new Map<string, { callId: string; categorical: string | null }[]>();
+  const byTool = new Map<string, { callId: string; categorical: string | null; gap?: number }[]>();
   for (const o of breaker.turn) {
     const list = byTool.get(o.name) ?? [];
-    list.push({ callId: o.callId, categorical: o.categorical });
+    list.push({
+      callId: o.callId,
+      categorical: o.categorical,
+      ...(o.gap !== undefined ? { gap: o.gap } : {}),
+    });
     byTool.set(o.name, list);
   }
   breaker.turn = [];
@@ -1260,12 +1315,20 @@ function aggregateBreaker(db: Database, run: RunRow, breaker: Breaker): void {
       continue;
     }
     const f = breaker.fails.get(name);
-    const n = f && f.err === err ? f.n + 1 : 1;
-    breaker.fails.set(name, { err, n });
+    const same = f && f.err === err;
+    const gap = calls[calls.length - 1]?.gap;
+    // An attempt that closed a material fraction of the remaining gap is CONVERGING, not grinding,
+    // so it resets the streak — bounded by `attempts`, which never resets while the error repeats.
+    const converging =
+      same && gap !== undefined && f.gap !== undefined && gap < f.gap * SELF_CAP_CONVERGENCE;
+    const n = same && !converging ? f.n + 1 : 1;
+    const attempts = same ? f.attempts + 1 : 1;
+    breaker.fails.set(name, { err, n, attempts, ...(gap !== undefined ? { gap } : {}) });
     const lastCall = calls[calls.length - 1]?.callId;
-    if (n >= CATEGORICAL_TOOL_FAIL_LIMIT && !breaker.disabled.has(name) && lastCall) {
+    const latch = n >= CATEGORICAL_TOOL_FAIL_LIMIT || attempts >= CONVERGING_ATTEMPT_MAX;
+    if (latch && !breaker.disabled.has(name) && lastCall) {
       breaker.disabled.add(name);
-      const norm = `\n[norm] '${name}' has failed the same way ${n}× this run and is now disabled for the rest of it — use another approach; retrying it cannot succeed.`;
+      const norm = `\n[norm] '${name}' has failed the same way ${attempts}× this run and is now disabled for the rest of it — use another approach; retrying it cannot succeed.`;
       db.query(
         "UPDATE messages SET msg = json_set(msg, '$.content', json_extract(msg, '$.content') || ?) WHERE run_id = ? AND json_extract(msg, '$.tool_call_id') = ?",
       ).run(norm, run.id, lastCall);
@@ -1408,7 +1471,12 @@ async function execCall(
     // A4: record this call's outcome for the batch aggregation (below, after Promise.all). Classify
     // on the RAW pre-cap result — capAndSpill embeds this call's id in its spill-path notice, so an
     // oversized error would look different every call and never compare equal.
-    breaker.turn.push({ name, callId: call.id, categorical: breakerKey(result) });
+    breaker.turn.push({
+      name,
+      callId: call.id,
+      categorical: breakerKey(result),
+      ...(selfCapGap(result) !== undefined ? { gap: selfCapGap(result) } : {}),
+    });
     // Cap oversized output at the source — it's persisted AND re-sent every turn, and a single
     // giant payload is the top cause of a mid-run context-window overflow. Spill keeps it re-readable.
     result = await capAndSpill(result, ctx.workspace, run.id, call.id, deps.toolResultCap);

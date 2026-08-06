@@ -23,14 +23,26 @@ import {
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import type { DeltaEvent, Events } from "./events";
 import { saveInbox, sniffMime } from "./files";
+import { getProfile } from "./profiles";
 import { type Queue, SessionOwnershipError, UnknownPreviousResponse } from "./queue";
 import type { RunRequest } from "./run";
 import { scrubText } from "./scrub";
-import { currentSelf, listRevisions, revertSelf, writeSelf } from "./self";
+import { currentSelf, listRevisions, revertSelf, SELF_FILE, writeSelf } from "./self";
 import type { Vault } from "./vault";
 import { HARNESS_VERSION } from "./version";
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
+
+/** On-disk size of the agent's self-file against its cap (0.2.12). Best-effort: an absent file is
+ * 0, which is the truthful answer for an agent that has not written one yet. */
+function selfFullness(workspace: string | undefined, cap: number): { bytes: number; cap: number } {
+  if (!workspace) return { bytes: 0, cap };
+  try {
+    return { bytes: statSync(resolve(workspace, SELF_FILE)).size, cap };
+  } catch {
+    return { bytes: 0, cap };
+  }
+}
 
 // Hard ceiling on an upload body's ACTUAL bytes. The content-length header is only a
 // hint — a chunked body sends none, and a hostile client can declare a small length then
@@ -427,7 +439,10 @@ export function createServer(
         return json({
           version: c.version,
           ...(c.agent_id ? { agent_id: c.agent_id } : {}),
-          profile: c.profile,
+          // The CANONICAL name, not the configured alias (0.2.12). `DELTA_PROFILE=work` reported
+          // "work" here while the 0.2.7 changelog and the guide both promise "trusted" — a
+          // docs-vs-wire disagreement an edge tool cannot reconcile.
+          profile: getProfile(c.profile).name,
           safe_mode: c.safe_mode ?? false,
           model: c.model,
           ...(c.budget ? { budget: c.budget } : {}),
@@ -441,6 +456,12 @@ export function createServer(
             count: opts?.vault?.list().length ?? 0,
             declared: opts?.vaultDeclared ?? [],
           },
+          // Self-file fullness (0.2.12). Read LIVE for the same reason `vault` is: self bytes are
+          // per-run, so a boot snapshot would report the seed forever. A nearly-full DELTA.md
+          // refuses every `remember` — the lane silently stops learning — and across the Aperture
+          // fleet fullness turned out to be the single best predictor of degraded self-learning.
+          // It was computed on every run and dropped, discoverable only by querying the collector.
+          self: selfFullness(opts?.workspace, opts?.selfMaxBytes ?? 3200),
         });
       }
 

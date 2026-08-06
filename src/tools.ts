@@ -85,6 +85,15 @@ export type ToolCtx = {
   chargeUsage?: (usage: Usage) => void;
   /** Fresh-token and dollar budget still available to nested work. */
   remainingBudget?: () => { maxTokens: number; maxCostUsd: number };
+  /** Claim a share of what is left for ONE piece of nested work, and hold it until released
+   * (0.2.12). `remainingBudget` is derived from the run's usage, which only moves when a child
+   * EXITS, so concurrent children each read the FULL remaining budget and a run can spend a
+   * multiple of its ceiling. A live reservation is what makes the ceiling actually hold. */
+  reserveBudget?: (share: number) => {
+    maxTokens: number;
+    maxCostUsd: number;
+    release: () => void;
+  };
   /** Persist the agent's own DELTA.md self-file (the `remember` tool): atomic replace,
    * prior version snapshotted, oversized rejected. Absent in bare/oneshot contexts. */
   writeSelf?: (content: string) => { ok: boolean; error?: string; bytes?: number };
