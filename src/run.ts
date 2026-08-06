@@ -1444,7 +1444,11 @@ async function execCall(
       const args = parsed.args;
       // Refuse a call that echoes an engine placeholder back at us, BEFORE it executes. Silent
       // acceptance means the tool persists the marker as if it were real content.
-      const echoed = elidedArgsRejection(args);
+      // Gated on the cap: with elision disabled the engine never emits a marker, so no echo is
+      // possible and the guard has no job. This is what makes default-off genuinely OFF — a
+      // consumer who never enabled the feature cannot be affected by machinery that exists only to
+      // serve it (codex).
+      const echoed = (deps.toolArgCap ?? 0) > 0 ? elidedArgsRejection(args) : null;
       if (echoed) throw new Error(echoed.replace("[tool error] ", ""));
       executedArgs = args; // reused by the elision below — the object is parsed exactly once
       if (toolMs > 0) {

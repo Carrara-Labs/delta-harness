@@ -187,6 +187,13 @@ describe("elideArgs", () => {
     );
   });
 
+  test("the guard is gated on the cap, so default-off means off", () => {
+    // The rejection function itself is stateless and unconditional; the RUN LOOP only consults it
+    // when elision is enabled. With the cap at 0 the engine never emits a marker, so there is
+    // nothing to echo and nothing to refuse (codex).
+    expect(elideArgs({ rows: big(90_000) }, 0)).toBeNull(); // nothing emitted at cap 0
+  });
+
   test("it is stateless, so a restart cannot open a hole", () => {
     // An earlier version authenticated against markers this DAEMON had emitted. That sounds
     // stronger and fails OPEN: the set is in-memory, so every persisted marker went
