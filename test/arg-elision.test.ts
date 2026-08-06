@@ -161,43 +161,44 @@ describe("elideArgs", () => {
   test("an echoed marker is rejected before the tool runs", () => {
     // THE live finding. On a 10-turn session the agent saw the marker in its own history, copied
     // the shape into a later write_file, and silently filed 4 of 10 pages as the placeholder —
-    // the run looked cheaper because it had thrown work away. The engine writes markers and never
-    // receives one, so a marker on the way IN is always this mistake.
-    const echoed = JSON.parse(elideArgs({ rows: big(90_000) }, CAP) as string);
-    const err = elidedArgsRejection({ path: "pages/long-3.json", ...echoed });
-    expect(err).toContain("engine placeholder");
-    expect(err).toContain("rows");
-    // the root-collapse shape is rejected too
-    expect(elidedArgsRejection({ [ELIDED_KEY]: { bytes: 10 } })).toContain("whole argument object");
-    // A STRING-valued echo is the shape a `content` parameter actually produces, and the live
-    // rerun proved an object-only check sails straight past it.
-    const asText = JSON.stringify({ [ELIDED_KEY]: { bytes: 10_651 } });
-    expect(elidedArgsRejection({ path: "p.json", content: asText })).toContain("content");
-    // NESTED and ARRAY echoes: elision only ever PRODUCES a top-level marker, but an echo can
-    // arrive anywhere, so the guard walks where the producer does not.
-    expect(elidedArgsRejection({ rows: [{ [ELIDED_KEY]: { bytes: 1 } }] })).toContain("rows");
-    expect(elidedArgsRejection({ a: { b: { [ELIDED_KEY]: { bytes: 1 } } } })).toContain("a");
+    // the run looked cheaper because it had thrown work away.
+    const elided = elideArgs({ rows: big(90_000) }, CAP) as string;
+    const marker = JSON.parse(elided).rows;
+    const emitted = new Set([JSON.stringify(marker)]);
 
-    // FALSE POSITIVES — every one of these is legitimate and must pass. The guard matches the
-    // engine's EXACT shape, not mere presence of the key, or an agent could never write
-    // documentation or save a test fixture about this very feature (codex).
-    expect(elidedArgsRejection({ path: "a.json", content: "real" })).toBeNull();
+    // the object echo, and the string echo a `content` parameter actually produces
+    expect(elidedArgsRejection({ path: "p.json", content: marker }, emitted)).toContain("content");
     expect(
-      elidedArgsRejection({
-        path: "doc.md",
-        content: `the ${ELIDED_KEY} marker is engine-authored`,
-      }),
-    ).toBeNull();
-    // a real config carrying the key with a different shape
+      elidedArgsRejection({ path: "p.json", content: JSON.stringify(marker) }, emitted),
+    ).toContain("content");
+    // nested and inside an array — an echo can arrive anywhere, though elision only ever
+    // PRODUCES a top-level marker
+    expect(elidedArgsRejection({ rows: [marker] }, emitted)).toContain("rows");
+    expect(elidedArgsRejection({ a: { b: marker } }, emitted)).toContain("a");
+  });
+
+  test("it authenticates against what was EMITTED, so it has no false positives", () => {
+    // Matching a SHAPE would refuse an agent writing documentation about this feature, or saving a
+    // regression fixture. Matching what the engine actually emitted cannot (codex).
+    const elided = elideArgs({ rows: big(90_000) }, CAP) as string;
+    const emitted = new Set([JSON.stringify(JSON.parse(elided).rows)]);
+
+    // a marker-shaped value this session never emitted — a fixture, or someone's config
+    const foreign = JSON.stringify({ [ELIDED_KEY]: { bytes: 999_999 } });
+    expect(elidedArgsRejection({ content: foreign }, emitted)).toBeNull();
+    // prose that merely mentions the key
     expect(
-      elidedArgsRejection({ content: JSON.stringify({ [ELIDED_KEY]: { enabled: true } }) }),
+      elidedArgsRejection({ content: `the ${ELIDED_KEY} marker is engine-authored` }, emitted),
     ).toBeNull();
-    // our own docs saved as a fixture: the key alongside other content
-    expect(
-      elidedArgsRejection({
-        content: JSON.stringify({ [ELIDED_KEY]: { bytes: 5 }, note: "how the marker works" }),
-      }),
-    ).toBeNull();
+    // an ordinary call
+    expect(elidedArgsRejection({ path: "a.json", content: "real" }, emitted)).toBeNull();
+  });
+
+  test("it is inert when nothing has been emitted", () => {
+    // What "default off" has to MEAN: a consumer who never enabled elision cannot have a call
+    // rejected by a guard that exists for it (codex — this was the ship blocker).
+    const anything = JSON.stringify({ [ELIDED_KEY]: { bytes: 123 } });
+    expect(elidedArgsRejection({ content: anything }, new Set())).toBeNull();
   });
 
   test("the marker stays tiny, because every marker byte costs a real field", () => {

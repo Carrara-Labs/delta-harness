@@ -561,7 +561,10 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
           properties: {
             run_seq: { type: "number" },
             call_id: { type: "string" },
-            field: { type: "string" },
+            field: {
+              type: ["string", "null"],
+              description: "the elided field, or null for a whole-object artifact",
+            },
           },
           required: ["run_seq", "call_id", "field"],
         },
@@ -582,11 +585,11 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
         if (
           typeof ref.run_seq !== "number" ||
           typeof ref.call_id !== "string" ||
-          typeof ref.field !== "string"
+          !(typeof ref.field === "string" || ref.field === null)
         )
-          return "[tool error] artifact needs run_seq (number), call_id (string) and field (string) — list them by calling recall with no arguments";
+          return "[tool error] artifact needs run_seq (number), call_id (string) and field (string, or null for a whole-object artifact) — list them by calling recall with no arguments";
         const page = ctx.history?.read(
-          { runSeq: ref.run_seq, callId: ref.call_id, field: ref.field },
+          { runSeq: ref.run_seq, callId: ref.call_id, field: ref.field as string | null },
           Number(args.offset) || 0,
           ctx.resultCap ?? 20_000,
         );
@@ -615,7 +618,7 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
           "Large values you sent earlier that are no longer in context. Read one back with recall({artifact:{run_seq, call_id, field}}).",
           ...items.map(
             (a) =>
-              `- ${a.tool}.${a.field} — ${a.bytes} bytes · run_seq ${a.runSeq ?? "?"} · call_id ${a.callId}`,
+              `- ${a.tool}.${a.field ?? "(whole argument object — pass field: null)"} — ${a.bytes} bytes · run_seq ${a.runSeq ?? "?"} · call_id ${a.callId}`,
           ),
         ].join("\n");
       }

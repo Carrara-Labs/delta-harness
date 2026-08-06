@@ -268,7 +268,9 @@ it costs a lookup. A known limit, not designed around.
 
 ### 5.5 Thresholds
 
-`DELTA_TOOL_ARG_MAX_BYTES`, default **4096**, `0` disables. UTF-8 bytes (`.length` is UTF-16 -
+`DELTA_TOOL_ARG_MAX_BYTES`, default **0 (off) for the first cycle**; `4096` is the recommended
+value once enabled. Shipping opt-in because the echo guard is new and cannot be proven complete
+against arbitrary MCP argument schemas — see §13. UTF-8 bytes (`.length` is UTF-16 -
 the 0.2.11 lesson).
 
 Below the 20KB result cap on purpose: a result is read once by the next turn, arguments are replayed

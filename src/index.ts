@@ -89,6 +89,8 @@ function buildDeps(cfg: Config, dbPath: string): Deps {
     toolTimeoutMs: cfg.toolTimeoutMs,
     toolResultCap: cfg.toolResultCap,
     toolArgCap: cfg.toolArgCap,
+    // Per-daemon, so the echo guard authenticates against markers THIS process emitted.
+    emittedMarkers: new Set<string>(),
     hydrateTools: cfg.hydrateTools,
     ...(cfg.hydrateSearchTool ? { hydrateSearchTool: cfg.hydrateSearchTool } : {}),
     reflect: cfg.reflect,

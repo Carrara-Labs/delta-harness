@@ -42,6 +42,7 @@ import { type Charter, currentSelf, loadSelf, parseCharterMarkdown, writeSelf } 
 import { buildSpine } from "./spine";
 import {
   capAndSpill,
+  ELIDED_KEY,
   elide,
   elideArgs,
   elidedArgsRejection,
@@ -176,6 +177,10 @@ export type Deps = {
    * Bounds the single biggest cause of a mid-run context-window overflow. */
   toolResultCap?: number;
   toolArgCap?: number;
+  /** Markers this DAEMON has emitted (their exact serialized form). The echo guard authenticates
+   * against this rather than guessing from shape, so it has no false positives and stays inert for
+   * a consumer who never enabled elision. Bounded — see `rememberMarker`. */
+  emittedMarkers?: Set<string>;
   /** Cockpit true-to-life capture (DELTA_CAPTURE_CALLS): snapshot the exact assembled
    * request (system spine + full messages + tool schemas) and response for each model
    * call into the `calls` table, so the dev UI can show precisely what the model saw.
@@ -1443,7 +1448,7 @@ async function execCall(
       const args = parsed.args;
       // Refuse a call that echoes an engine placeholder back at us, BEFORE it executes. Silent
       // acceptance means the tool persists the marker as if it were real content.
-      const echoed = elidedArgsRejection(args);
+      const echoed = elidedArgsRejection(args, deps.emittedMarkers ?? new Set());
       if (echoed) throw new Error(echoed.replace("[tool error] ", ""));
       executedArgs = args; // reused by the elision below — the object is parsed exactly once
       if (toolMs > 0) {
@@ -1529,6 +1534,7 @@ async function execCall(
   const succeeded = !result.startsWith("[tool error]") && !result.startsWith("[interrupted]");
   const elidedArgs =
     succeeded && executedArgs ? elideArgs(executedArgs, deps.toolArgCap ?? 0) : null;
+  if (elidedArgs && deps.emittedMarkers) rememberMarkers(elidedArgs, deps.emittedMarkers);
 
   db.transaction(() => {
     db.query(
@@ -1551,6 +1557,31 @@ async function execCall(
       bytes_before: Buffer.byteLength(call.function.arguments, "utf8"),
       bytes_after: Buffer.byteLength(elidedArgs, "utf8"),
     });
+}
+
+/** Record each marker this elision produced, so the echo guard can authenticate a later call
+ * against what we ACTUALLY emitted. Bounded: markers are ~35 bytes and an echo is only plausible
+ * while the marker is still in the window, so the newest MAX_MARKERS is ample and the set can never
+ * grow without limit on a long-lived daemon. */
+const MAX_MARKERS = 500;
+function rememberMarkers(elided: string, into: Set<string>): void {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(elided) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+  const add = (v: unknown) => {
+    if (!v || typeof v !== "object") return;
+    if (!(ELIDED_KEY in (v as object))) return;
+    if (into.size >= MAX_MARKERS) {
+      const oldest = into.values().next().value; // Sets iterate in insertion order
+      if (oldest !== undefined) into.delete(oldest);
+    }
+    into.add(JSON.stringify(v));
+  };
+  add(parsed); // the root-collapse shape
+  for (const v of Object.values(parsed)) add(v);
 }
 
 /** Replace ONE call's stored arguments with the elided form, leaving the call id, the tool name and

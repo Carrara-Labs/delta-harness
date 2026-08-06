@@ -323,6 +323,9 @@ export async function runResearch(
       picked.map((task) =>
         researchOne(task, child, chat, baseCtx, {
           maxTokens: perChildTokens,
+          // The DOLLAR half of the claim. Reserving it and then not passing it meant the child's
+          // loop never checked cost, so the claim was decorative (codex).
+          maxCostUsd: rem.maxCostUsd / picked.length,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         }),
       ),

@@ -5,8 +5,10 @@
 // is worse than one that pays to remember it. These tests are the guard on that.
 
 import { describe, expect, test } from "bun:test";
+import { builtinTools } from "../src/builtins";
 import { listArtifacts, openDb, readArtifact, searchHistory } from "../src/db";
 import { ELIDED_KEY, elideArgs } from "../src/tools";
+import { NEUTRAL_VOCAB } from "../src/vocab";
 
 const CAP = 4_096;
 
@@ -170,7 +172,7 @@ describe("the elided-argument archive", () => {
     db.close();
   });
 
-  test("a whole-object collapse is listable, searchable and readable", () => {
+  test("a whole-object collapse is listable, searchable and readable", async () => {
     // The root marker: elideArgs collapses to one when the key count alone blows the cap. It was
     // invisible to all three paths, and "" could not mark it because "" is a legal JSON key.
     const db = openDb(":memory:");
@@ -202,6 +204,32 @@ describe("the elided-argument archive", () => {
     expect(items[0]?.field).toBeNull(); // null, not "" — an empty string is a legal key
     expect(searchHistory(db, "s", "NEEDLE_ROOT", 5).some((h) => h.role === "archived")).toBe(true);
     expect(readArtifact(db, "s", { runSeq: 3, callId: "c1", field: null })?.retained).toBe(true);
+
+    // …and through the REAL recall tool, not just the db layer. The tool schema required a string,
+    // so a whole-object artifact could be listed and never read back (codex).
+    const tools = builtinTools({
+      workspace: "/tmp",
+      selfCmd: ["delta"],
+      subagentDepth: 0,
+      codeCli: [],
+      fetchAllowPrivate: false,
+      vocab: NEUTRAL_VOCAB,
+    } as Parameters<typeof builtinTools>[0]);
+    const recall = tools.get("recall");
+    expect(recall).toBeDefined();
+    const out = await recall?.execute(
+      { artifact: { run_seq: 3, call_id: "c1", field: null } },
+      {
+        workspace: "/tmp",
+        activate: () => {},
+        history: {
+          search: (q, l) => searchHistory(db, "s", q, l),
+          artifacts: (l) => listArtifacts(db, "s", l).map(({ runId: _r, ...a }) => a),
+          read: (r, o, m) => readArtifact(db, "s", r, o, m),
+        },
+      },
+    );
+    expect(out).toContain("NEEDLE_ROOT");
     db.close();
   });
 
