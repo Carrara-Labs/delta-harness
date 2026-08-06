@@ -16,6 +16,25 @@ export type RecallHit = {
   spillPath?: string;
 };
 
+/** One elided argument value the agent can list and read back (0.2.12). */
+export type Artifact = {
+  runSeq: number | null;
+  callId: string;
+  tool: string;
+  field: string;
+  bytes: number;
+};
+
+/** A page of an archived argument value. `retained: false` = the journal has since pruned the
+ * body, which is stated plainly rather than returned as an empty string. */
+export type ArtifactPage = {
+  text: string;
+  offset: number;
+  total: number;
+  more: boolean;
+  retained: boolean;
+};
+
 /** The agent's per-thread working plan (W3 recitation). */
 export type TodoStatus = "pending" | "doing" | "done" | "dropped";
 export type TodoItem = { text: string; status: TodoStatus };
@@ -29,7 +48,16 @@ export type ToolCtx = {
    * window — for text the agent saw earlier (the `recall` tool). Session is bound
    * internally so a caller can never search another session. Absent in bare/oneshot
    * contexts (a `:memory:` sub-agent has no shared history). */
-  history?: { search: (query: string, limit: number) => RecallHit[] };
+  history?: {
+    search: (query: string, limit: number) => RecallHit[];
+    /** The manifest of argument values elided out of this thread's window (0.2.12). */
+    artifacts: (limit: number) => Artifact[];
+    /** Page one of them back from the journal archive. Null = no such artifact in this thread. */
+    read: (
+      ref: { runSeq: number; callId: string; field: string },
+      offset: number,
+    ) => ArtifactPage | null;
+  };
   /** The `todo` tool's hands: read / replace THIS thread's working plan (W3). Session-bound so a
    * tool can't touch another thread's plan; absent in bare/oneshot contexts. */
   todo?: { read: () => TodoItem[]; write: (items: TodoItem[]) => TodoItem[] };

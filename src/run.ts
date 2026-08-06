@@ -11,7 +11,7 @@ import { resolve } from "node:path";
 import { SkillRegistryAdapter } from "./adapter-defaults";
 import type { CapabilityAdapter } from "./adapters";
 import { maybeCompact } from "./compaction";
-import { readTodo, searchHistory, writeTodo } from "./db";
+import { listArtifacts, readArtifact, readTodo, searchHistory, writeTodo } from "./db";
 import type { Events, Spine } from "./events";
 import { expandImageMarkers } from "./files";
 import { hydrate, type RecalledMemory, recallAgentMemory } from "./hydrate";
@@ -427,7 +427,13 @@ export async function executeRun(
     owner: runOwner,
     // `recall` reads THIS thread's history, active + compacted-out. Session bound here so a
     // tool can never search another session (W1 + the S0 ownership boundary at the seam).
-    history: { search: (query, limit) => searchHistory(db, run.session_id, query, limit) },
+    history: {
+      search: (query, limit) => searchHistory(db, run.session_id, query, limit),
+      // The elided-argument manifest + archive (0.2.12), session-bound the same way.
+      artifacts: (limit) =>
+        listArtifacts(db, run.session_id, limit).map(({ runId: _runId, ...a }) => a),
+      read: (ref, offset) => readArtifact(db, run.session_id, ref, offset),
+    },
     // `todo` reads/replaces THIS thread's working plan (W3), session-bound the same way.
     todo: {
       read: () => readTodo(db, run.session_id),

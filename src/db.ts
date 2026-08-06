@@ -9,7 +9,11 @@
 
 import { Database } from "bun:sqlite";
 import type { ChatMsg } from "./provider";
-import type { RecallHit, TodoItem, TodoStatus } from "./tools";
+import { ELIDED_KEY, type RecallHit, type TodoItem, type TodoStatus } from "./tools";
+
+/** One tool call as stored on an assistant message row. */
+type AssistantToolCall = { id: string; function: { name: string; arguments: string } };
+
 import { HARNESS_VERSION } from "./version";
 
 const MIGRATIONS: string[] = [
@@ -404,16 +408,21 @@ export function searchHistory(
   }>;
   const ql = q.toLowerCase();
   const seen = new Map<string, RecallHit>();
+  /** (run_id, call_id) pairs a transcript hit already covers, so the archive pass can dedupe. */
+  const matched = new Set<string>();
   for (const row of rows) {
-    let m: ChatMsg;
+    let m: ChatMsg & { tool_calls?: AssistantToolCall[] };
     try {
-      m = JSON.parse(row.msg) as ChatMsg;
+      m = JSON.parse(row.msg) as ChatMsg & { tool_calls?: AssistantToolCall[] };
     } catch {
       continue;
     }
     const text = msgText(m);
     const idx = text.toLowerCase().indexOf(ql);
     if (idx < 0) continue; // matched JSON scaffolding, not readable content — skip
+    if (m.role === "tool")
+      matched.add(`${row.run_id}:${(m as { tool_call_id: string }).tool_call_id}`);
+    for (const c of m.tool_calls ?? []) matched.add(`${row.run_id}:${c.id}`);
     const key =
       m.role === "tool"
         ? `tool:${row.run_id}:${(m as { tool_call_id: string }).tool_call_id}`
@@ -439,7 +448,216 @@ export function searchHistory(
       ...(spillPath ? { spillPath } : {}),
     });
   }
-  return [...seen.values()].sort((a, b) => Number(a.active) - Number(b.active)).slice(0, n);
+  const transcript = [...seen.values()]
+    .sort((a, b) => Number(a.active) - Number(b.active))
+    .slice(0, n);
+  // Fill any REMAINING slots from the archive, never the other way round: a run with many elided
+  // payloads must not crowd unrelated live or compacted hits out of the limit (codex P1).
+  if (transcript.length >= n) return transcript;
+  return [...transcript, ...searchArchive(db, sessionId, q, n - transcript.length, matched)];
+}
+
+/** Keyword-search the bodies that S1 elided out of the window. Without this, eliding an argument
+ * would DELETE a capability: `msgText` renders assistant calls as `name(arguments)`, so today
+ * `recall("ABC-123")` finds an identifier inside a stored payload, and an agent that can no longer
+ * find what it filed is worse than one that pays to remember it.
+ *
+ * Bounded by construction: the candidate set comes from the manifest scan (a small explicit list of
+ * references), and each body is then fetched by PRIMARY KEY. Journal growth cannot slow this down,
+ * and nothing ever LIKEs `journal.args`. */
+function searchArchive(
+  db: Database,
+  sessionId: string,
+  query: string,
+  limit: number,
+  matched: Set<string>,
+): RecallHit[] {
+  const ql = query.toLowerCase();
+  const out: RecallHit[] = [];
+  for (const ref of listArtifacts(db, sessionId)) {
+    if (out.length >= limit) break;
+    // Deduped against the transcript by (run_id, call_id): a term visible in a SURVIVING field of
+    // the same call already produced a live hit, and one call should yield one hit.
+    if (matched.has(`${ref.runId}:${ref.callId}`)) continue;
+    const row = db
+      .query("SELECT args FROM journal WHERE run_id = ? AND call_id = ?")
+      .get(ref.runId, ref.callId) as { args: string } | null;
+    if (!row) continue; // body pruned by the journal's ordinary retention — nothing to search
+    let value: unknown;
+    try {
+      value = (JSON.parse(row.args) as Record<string, unknown>)[ref.field];
+    } catch {
+      continue;
+    }
+    const text = typeof value === "string" ? value : (JSON.stringify(value) ?? "");
+    const idx = text.toLowerCase().indexOf(ql);
+    if (idx < 0) continue;
+    const start = Math.max(0, idx - 400);
+    const end = Math.min(text.length, idx + ql.length + 400);
+    out.push({
+      role: "archived",
+      runSeq: ref.runSeq,
+      active: false,
+      snippet:
+        `[${ref.tool}.${ref.field}, ${ref.bytes} bytes, dropped from context — ` +
+        `read it back with recall({artifact:{run_seq:${ref.runSeq},call_id:"${ref.callId}",field:"${ref.field}"}})]\n` +
+        `${start > 0 ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`,
+    });
+  }
+  return out;
+}
+
+// --- 0.2.12: the elided-argument archive ---
+//
+// S1 replaces an over-budget tool-call argument value with a ~60-byte marker in the message row and
+// leaves the full arguments in `journal.args`. That split is deliberate: the MANIFEST (what did I
+// file, and how much) is small enough to keep for the life of the message, while the BODY is large,
+// rarely needed, and stays under the journal's EXISTING retention. Nothing here pins a row or adds
+// a retention exception — durable recall, no session expiry and a hard storage ceiling cannot all
+// be true, so the permanent thing is the one that costs ~60 bytes.
+//
+// Discovery runs off the manifest, never off a filesystem path parsed out of model-visible prose:
+// scan the same bounded id window `searchHistory` uses for marker-bearing rows, which yields a
+// small explicit set of (run_id, call_id, field) references, then hit `journal` by PRIMARY KEY.
+// Journal growth therefore cannot slow this down.
+
+/** One elided argument value, as named by the manifest in the transcript. */
+export type ArtifactRef = {
+  runId: string;
+  runSeq: number | null;
+  callId: string;
+  tool: string;
+  field: string;
+  bytes: number;
+};
+
+/** How many manifest references one scan will surface. Bounds both enumeration and the
+ * archive-search probe set. */
+const ARTIFACT_MAX = 200;
+
+/** Bytes of an archived body returned per `recall` read. Deliberately below the smallest sane
+ * `toolResultCap` so a readback can never itself trip `capAndSpill` and write a spill file into a
+ * durable session (codex P1) — the agent pages through with `offset` instead. */
+export const ARTIFACT_CHUNK = 8_000;
+
+/** The manifest for THIS session: every elided argument value still named in the transcript,
+ * newest first. Deduped by (run_id, call_id, field) so compaction's re-inserted tail copies count
+ * once. Inactive rows are included — compaction deactivates originals and a failed finalize only
+ * deactivates, and the agent's own record of what it filed must survive both. */
+export function listArtifacts(
+  db: Database,
+  sessionId: string,
+  limit = ARTIFACT_MAX,
+): ArtifactRef[] {
+  const { floor } = db
+    .query("SELECT COALESCE(MAX(id), 0) - ? AS floor FROM messages WHERE session_id = ?")
+    .get(SCAN_WINDOW, sessionId) as { floor: number };
+  // `_` is a LIKE wildcard — escape it, or this matches far more than the marker.
+  //
+  // `active IN (0, 1)` is not a filter (the column is NOT NULL, so it matches everything) — it is
+  // how the id range becomes index-usable. `messages_session(session_id, active, id)` cannot range
+  // on `id` while skipping `active`, so without it SQLite scans the whole session; with it the plan
+  // is `session_id=? AND active=? AND id>?`. Verified with EXPLAIN QUERY PLAN. This is why no new
+  // index is needed: the bounded window is genuinely bounded on the schema we already have.
+  const rows = db
+    .query(
+      `SELECT m.msg AS msg, m.run_id AS run_id, r.seq AS seq
+         FROM messages m JOIN runs r ON r.id = m.run_id
+        WHERE m.session_id = ? AND m.active IN (0, 1) AND m.id > ? AND m.msg LIKE ? ESCAPE '\\'
+        ORDER BY m.id DESC`,
+    )
+    .all(sessionId, floor, `%\\${ELIDED_KEY}%`) as Array<{
+    msg: string;
+    run_id: string;
+    seq: number;
+  }>;
+  const seen = new Map<string, ArtifactRef>();
+  for (const row of rows) {
+    if (seen.size >= limit) break;
+    let m: ChatMsg & { tool_calls?: AssistantToolCall[] };
+    try {
+      m = JSON.parse(row.msg) as ChatMsg & { tool_calls?: AssistantToolCall[] };
+    } catch {
+      continue;
+    }
+    for (const call of m.tool_calls ?? []) {
+      let args: Record<string, unknown>;
+      try {
+        args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      if (!args || typeof args !== "object" || Array.isArray(args)) continue;
+      for (const [field, value] of Object.entries(args)) {
+        const bytes = elidedBytes(value);
+        if (bytes === null) continue;
+        const key = `${row.run_id}:${call.id}:${field}`;
+        if (seen.has(key) || seen.size >= limit) continue;
+        seen.set(key, {
+          runId: row.run_id,
+          runSeq: row.seq ?? null,
+          callId: call.id,
+          tool: call.function.name,
+          field,
+          bytes,
+        });
+      }
+    }
+  }
+  return [...seen.values()];
+}
+
+/** The marker's byte count, or null if this value is not one. Shape-checked, not name-checked:
+ * a legitimate argument could contain the key, and readback resolves from the journal anyway, so a
+ * forged marker can only ever produce a phantom manifest entry — never a false body. */
+function elidedBytes(value: unknown): number | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const mark = (value as Record<string, unknown>)[ELIDED_KEY];
+  if (!mark || typeof mark !== "object") return null;
+  const n = (mark as { bytes?: unknown }).bytes;
+  return typeof n === "number" ? n : null;
+}
+
+/** Read one archived value back, a chunk at a time. Session-bound through `journal → runs`, and the
+ * reference must be named by a real manifest entry, so no caller can aim this at another session or
+ * at a call the transcript never made. Returns null when the reference is unknown; returns
+ * `retained: false` when the journal has since pruned the body, which is the honest answer rather
+ * than an empty one — the marker never promised a file, so nothing here can rot into a lie. */
+export function readArtifact(
+  db: Database,
+  sessionId: string,
+  ref: { runSeq: number; callId: string; field: string },
+  offset = 0,
+): { text: string; offset: number; total: number; more: boolean; retained: boolean } | null {
+  const named = listArtifacts(db, sessionId).find(
+    (a) => a.runSeq === ref.runSeq && a.callId === ref.callId && a.field === ref.field,
+  );
+  if (!named) return null;
+  const row = db
+    .query(
+      `SELECT j.args AS args FROM journal j JOIN runs r ON r.id = j.run_id
+        WHERE j.run_id = ? AND j.call_id = ? AND r.session_id = ?`,
+    )
+    .get(named.runId, named.callId, sessionId) as { args: string } | null;
+  if (!row) return { text: "", offset: 0, total: named.bytes, more: false, retained: false };
+  let value: unknown;
+  try {
+    value = (JSON.parse(row.args) as Record<string, unknown>)[ref.field];
+  } catch {
+    return { text: "", offset: 0, total: named.bytes, more: false, retained: false };
+  }
+  if (value === undefined)
+    return { text: "", offset: 0, total: named.bytes, more: false, retained: false };
+  const text = typeof value === "string" ? value : (JSON.stringify(value) ?? "");
+  const start = Math.max(0, Math.floor(offset) || 0);
+  const slice = text.slice(start, start + ARTIFACT_CHUNK);
+  return {
+    text: slice,
+    offset: start,
+    total: text.length,
+    more: start + slice.length < text.length,
+    retained: true,
+  };
 }
 
 // --- W3: per-thread working plan (todo) ---

@@ -547,18 +547,70 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
     name: "recall",
     readonly: true,
     description:
-      "Search this conversation's earlier turns — including ones compacted out of the live window — for text/results you saw before. Returns matching snippets + the disk path of any spilled result. Use to pull back context that scrolled off before you finish.",
+      "Look back at THIS conversation. Three ways: pass `query` to search earlier turns (including ones compacted out of the live window) for text you saw before; pass nothing to LIST the large values you sent earlier that have since been dropped from context; pass `artifact` to read one of those values back in full. Use it to reconcile what you have already done without re-doing it.",
     parameters: {
       type: "object",
       properties: {
         query: { type: "string", description: "keywords to search earlier turns for" },
         limit: { type: "number", description: "max hits, 1-25 (default 10)" },
+        artifact: {
+          type: "object",
+          description:
+            "read one earlier large value back, as listed by calling this tool with no arguments",
+          properties: {
+            run_seq: { type: "number" },
+            call_id: { type: "string" },
+            field: { type: "string" },
+          },
+          required: ["run_seq", "call_id", "field"],
+        },
+        offset: { type: "number", description: "character offset when paging a long artifact" },
       },
-      required: ["query"],
     },
     idempotent: true,
     execute: async (args, ctx) => {
-      const hits = ctx.history?.search(String(args.query ?? ""), Number(args.limit) || 10) ?? [];
+      const limit = Number(args.limit) || 10;
+      // Read one archived value back. A structured reference, not a delimited string: provider call
+      // ids and JSON field names can both contain colons (codex P1).
+      const ref = args.artifact as
+        | { run_seq?: unknown; call_id?: unknown; field?: unknown }
+        | undefined;
+      if (ref && typeof ref === "object") {
+        if (
+          typeof ref.run_seq !== "number" ||
+          typeof ref.call_id !== "string" ||
+          typeof ref.field !== "string"
+        )
+          return "[tool error] artifact needs run_seq (number), call_id (string) and field (string) — list them by calling recall with no arguments";
+        const page = ctx.history?.read(
+          { runSeq: ref.run_seq, callId: ref.call_id, field: ref.field },
+          Number(args.offset) || 0,
+        );
+        if (!page)
+          return "(no such artifact in this thread — call recall with no arguments to list them)";
+        if (!page.retained)
+          return `(that value is no longer retained — ${page.total} bytes were dropped from local history. It is gone from here; if you still need it, get it from wherever you sent it.)`;
+        const more = page.more
+          ? `\n\n… ${page.total - page.offset - page.text.length} chars remain; call again with offset ${page.offset + page.text.length} …`
+          : "";
+        return `[${ref.field}, chars ${page.offset}-${page.offset + page.text.length} of ${page.total}]\n${page.text}${more}`;
+      }
+      // No query → enumerate what has been dropped, so "what have I filed, and how much" is
+      // answerable without guessing a keyword.
+      const query = String(args.query ?? "").trim();
+      if (!query) {
+        const items = ctx.history?.artifacts(Math.min(Math.max(limit, 1), 25)) ?? [];
+        if (items.length === 0)
+          return "(nothing from this thread has been dropped from context yet)";
+        return [
+          "Large values you sent earlier that are no longer in context. Read one back with recall({artifact:{run_seq, call_id, field}}).",
+          ...items.map(
+            (a) =>
+              `- ${a.tool}.${a.field} — ${a.bytes} bytes · run_seq ${a.runSeq ?? "?"} · call_id ${a.callId}`,
+          ),
+        ].join("\n");
+      }
+      const hits = ctx.history?.search(query, limit) ?? [];
       if (hits.length === 0) return "(nothing earlier in this thread matches)";
       return hits
         .map((h) => {
