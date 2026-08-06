@@ -123,7 +123,7 @@ async function researchOne(
   child: ChildConfig,
   chat: (req: ChatRequest) => Promise<ModelResult>,
   baseCtx: ToolCtx,
-  opts: { maxTokens: number; signal?: AbortSignal },
+  opts: { maxTokens: number; maxCostUsd?: number; signal?: AbortSignal },
 ): Promise<Outcome> {
   const usage = zero();
   const universe = child.tools;
@@ -169,7 +169,11 @@ async function researchOne(
       if (opts.signal?.aborted) return { task, ok: false, text: "[research cancelled]", usage };
       const tools = callable();
       const remaining = opts.maxTokens - billed(usage);
-      const overBudget = remaining <= 0 || toolCalls >= MAX_TOOLCALLS_TOTAL;
+      // The DOLLAR half of the claim, which was reserved and then never enforced: only maxTokens
+      // reached the child, so a run with tokens left but almost no dollars left could still admit
+      // several children and overspend the claim before any usage was charged back (codex P1).
+      const overCost = opts.maxCostUsd !== undefined && usage.costUsd >= opts.maxCostUsd;
+      const overBudget = remaining <= 0 || overCost || toolCalls >= MAX_TOOLCALLS_TOTAL;
       const res = await chat({
         messages,
         ...(overBudget ? {} : { tools: toolSpecs(tools) }), // out of budget → force a final answer

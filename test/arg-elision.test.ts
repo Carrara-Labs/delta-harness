@@ -149,6 +149,15 @@ describe("elideArgs", () => {
     expect(JSON.parse(out)[ELIDED_KEY].fields).toBe(20_000);
   });
 
+  test("the root marker still fits caps at the configured floor", () => {
+    // The root collapse is the one shape that could exceed its own bound. config clamps any cap
+    // below CAP_FLOOR (512) to the default, so the marker always fits what it promises.
+    const args: Record<string, unknown> = {};
+    for (let i = 0; i < 3_000; i++) args[`field_number_${i}`] = i;
+    const out = elideArgs(args, 512) as string;
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(512);
+  });
+
   test("survives an unserializable value without throwing on the commit path", () => {
     const circular: Record<string, unknown> = { rows: big(90_000) };
     circular.self = circular;

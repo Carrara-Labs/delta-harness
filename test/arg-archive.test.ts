@@ -170,6 +170,41 @@ describe("the elided-argument archive", () => {
     db.close();
   });
 
+  test("a whole-object collapse is listable, searchable and readable", () => {
+    // The root marker: elideArgs collapses to one when the key count alone blows the cap. It was
+    // invisible to all three paths, and "" could not mark it because "" is a legal JSON key.
+    const db = openDb(":memory:");
+    const now = Date.now();
+    const full: Record<string, unknown> = { NEEDLE_ROOT: "found me" };
+    for (let i = 0; i < 3_000; i++) full[`field_number_${i}`] = i;
+    const elided = elideArgs(full, CAP) as string;
+    expect(JSON.parse(elided)[ELIDED_KEY].fields).toBe(3_001);
+    db.query(
+      "INSERT INTO sessions (id, user_id, created_at, updated_at) VALUES ('s',NULL,?,?)",
+    ).run(now, now);
+    db.query(
+      "INSERT INTO runs (id, session_id, seq, status, request, created_at) VALUES ('r','s',3,'running','{}',?)",
+    ).run(now);
+    db.query("INSERT INTO messages (run_id, session_id, msg, created_at) VALUES ('r','s',?,?)").run(
+      JSON.stringify({
+        role: "assistant",
+        content: null,
+        tool_calls: [{ id: "c1", type: "function", function: { name: "bulk", arguments: elided } }],
+      }),
+      now,
+    );
+    db.query(
+      "INSERT INTO journal (run_id, call_id, tool, args, status, result, created_at) VALUES ('r','c1','bulk',?,'done','ok',?)",
+    ).run(JSON.stringify(full), now);
+
+    const items = listArtifacts(db, "s");
+    expect(items).toHaveLength(1);
+    expect(items[0]?.field).toBeNull(); // null, not "" — an empty string is a legal key
+    expect(searchHistory(db, "s", "NEEDLE_ROOT", 5).some((h) => h.role === "archived")).toBe(true);
+    expect(readArtifact(db, "s", { runSeq: 3, callId: "c1", field: null })?.retained).toBe(true);
+    db.close();
+  });
+
   test("survives compaction deactivating the row that carries the manifest", () => {
     // A failed finalize and compaction both only DEACTIVATE, and the agent's record of what it
     // filed has to outlive both.

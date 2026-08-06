@@ -204,6 +204,7 @@ const SUBAGENT_CONFIG_ENV = new Set([
   "DELTA_STREAM_IDLE_MS",
   "DELTA_TOOL_TIMEOUT_MS",
   "DELTA_TOOL_RESULT_MAX_BYTES",
+  "DELTA_TOOL_ARG_MAX_BYTES",
 ]);
 
 /** Build a default-deny environment for a model-directed child process. */
@@ -596,7 +597,12 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
         const more = page.more
           ? `\n\n… ${page.total - page.offset - page.text.length} chars remain; call again with offset ${page.offset + page.text.length} …`
           : "";
-        return `[${ref.field}, chars ${page.offset}-${page.offset + page.text.length} of ${page.total}]\n${page.text}${more}`;
+        const body = `[${ref.field ?? "(whole argument object)"}, chars ${page.offset}-${page.offset + page.text.length} of ${page.total}]\n${page.text}${more}`;
+        // Hard-bound the ENTIRE result. Sizing only the slice left the framing, the pagination
+        // line and a long field name outside the budget, so a small configured cap still produced
+        // an over-cap result and `capAndSpill` wrote a file into a durable session (codex P1).
+        const cap = ctx.resultCap ?? 20_000;
+        return body.length <= cap ? body : body.slice(0, Math.max(1, cap - 1));
       }
       // No query → enumerate what has been dropped, so "what have I filed, and how much" is
       // answerable without guessing a keyword.
@@ -819,7 +825,15 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
 
   // One sub-agent run (a oneshot child of this binary). Shared by spawn_subagent
   // and eval_n; returns the child's final answer or a [tool error] value.
-  const runSubagent = async (task: string, ctx: ToolCtx, budgetDivisor = 1): Promise<string> => {
+  const runSubagent = async (
+    task: string,
+    ctx: ToolCtx,
+    budgetDivisor = 1,
+    /** A slice already claimed by the caller (eval_n reserves ONE batch share and splits it), so
+     * the candidates get EQUAL budgets instead of a geometric 33/22/15 decay that would bias the
+     * judge toward whichever attempt claimed first (codex P2). */
+    preclaimed?: { maxTokens: number; maxCostUsd: number },
+  ): Promise<string> => {
     // CLAIM the child's slice up front rather than reading the remainder (0.2.12). The remainder is
     // derived from the parent's usage, which only moves when a child EXITS and reports back, so
     // three children launched in one turn each saw the FULL remaining budget and the run could
@@ -827,7 +841,7 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
     // under a parallel instruction and cannot, so both now draw from one live pool.
     // A lone spawn takes half of what is unreserved: enough to do real work, and still leaving room
     // for the parent to finish and for a sibling to run.
-    const claim = ctx.reserveBudget?.(budgetDivisor > 1 ? 1 / budgetDivisor : 0.5);
+    const claim = preclaimed ?? ctx.reserveBudget?.(budgetDivisor > 1 ? 1 / budgetDivisor : 0.5);
     try {
       const proc = Bun.spawn([...cfg.selfCmd, "run", task], {
         cwd: process.cwd(),
@@ -856,8 +870,9 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
       return out.trim() || "(no output)";
     } finally {
       // Released even on a throw/abort: a leaked reservation would shrink the run's own budget for
-      // the rest of the turn. The child's actual spend is charged separately above.
-      claim?.release();
+      // the rest of the turn. The child's actual spend is charged separately above. A PRE-claimed
+      // slice belongs to the caller, which releases it once for the whole batch.
+      if (!preclaimed) (claim as { release?: () => void } | undefined)?.release?.();
     }
   };
 
@@ -921,16 +936,29 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
           return "[tool error] eval_n needs a model for judging (no provider in context)";
         const n = Math.max(2, Math.min(Number(args.n) || 3, 5));
         const task = String(args.task);
-        // Fan out N independent attempts. Vary each so they don't collapse to one.
-        const variants = await Promise.all(
-          Array.from({ length: n }, (_, i) =>
-            runSubagent(
-              `${task}\n\n(Independent attempt ${i + 1} of ${n} — take your own approach.)`,
-              ctx,
-              n,
+        // ONE claim for the whole batch, split equally. Claiming per candidate would hand each a
+        // fraction of a shrinking pool, so attempt 1 got ~33%, attempt 2 ~22%, attempt 3 ~15% —
+        // unequal attempts make the judge's comparison unfair (codex P2).
+        const batch = ctx.reserveBudget?.(n / (n + 1));
+        const share = batch
+          ? { maxTokens: Math.floor(batch.maxTokens / n), maxCostUsd: batch.maxCostUsd / n }
+          : undefined;
+        let variants: string[];
+        try {
+          // Fan out N independent attempts. Vary each so they don't collapse to one.
+          variants = await Promise.all(
+            Array.from({ length: n }, (_, i) =>
+              runSubagent(
+                `${task}\n\n(Independent attempt ${i + 1} of ${n} — take your own approach.)`,
+                ctx,
+                n,
+                share,
+              ),
             ),
-          ),
-        );
+          );
+        } finally {
+          batch?.release();
+        }
         const valid = variants
           .map((v, i) => ({ i, v }))
           .filter((c) => !c.v.startsWith("[tool error]"));

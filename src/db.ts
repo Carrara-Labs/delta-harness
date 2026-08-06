@@ -499,7 +499,8 @@ function searchArchive(
     if (!row) continue; // body pruned by the journal's ordinary retention — nothing to search
     let value: unknown;
     try {
-      value = (JSON.parse(row.args) as Record<string, unknown>)[ref.field];
+      const parsed = JSON.parse(row.args) as Record<string, unknown>;
+      value = ref.field === null ? parsed : parsed[ref.field];
     } catch {
       continue;
     }
@@ -542,13 +543,15 @@ export type ArtifactRef = {
   runSeq: number | null;
   callId: string;
   tool: string;
-  field: string;
+  /** The elided key, or null for a whole-object collapse. */
+  field: string | null;
   bytes: number;
 };
 
-/** How many manifest references one scan will surface. Bounds both enumeration and the
- * archive-search probe set. */
-const ARTIFACT_MAX = 200;
+/** How many distinct CALLS one manifest scan will surface. Bounding raw field references instead
+ * let a single newer call with 200 elided fields hide every older call from the archive search
+ * (codex P1) — the limit has to be on the thing the search iterates. */
+const ARTIFACT_MAX_CALLS = 200;
 
 /** Default bytes of an archived body per `recall` read. The CALLER passes the run's real result cap
  * so the page can never itself trip `capAndSpill` and write a spill file into a durable session
@@ -563,18 +566,13 @@ export const ARTIFACT_CHUNK = 8_000;
 export function listArtifacts(
   db: Database,
   sessionId: string,
-  limit = ARTIFACT_MAX,
+  limit = ARTIFACT_MAX_CALLS,
 ): ArtifactRef[] {
   const { floor } = db
     .query("SELECT COALESCE(MAX(id), 0) - ? AS floor FROM messages WHERE session_id = ?")
     .get(SCAN_WINDOW, sessionId) as { floor: number };
-  // `_` is a LIKE wildcard — escape it, or this matches far more than the marker.
-  //
-  // `active IN (0, 1)` is not a filter (the column is NOT NULL, so it matches everything) — it is
-  // how the id range becomes index-usable. `messages_session(session_id, active, id)` cannot range
-  // on `id` while skipping `active`, so without it SQLite scans the whole session; with it the plan
-  // is `session_id=? AND active=? AND id>?`. Verified with EXPLAIN QUERY PLAN. This is why no new
-  // index is needed: the bounded window is genuinely bounded on the schema we already have.
+  // `_` is a LIKE wildcard — escape it, or this matches far more than the marker. The id range and
+  // the floor above both ride `messages_session_id(session_id, id)`, added for exactly this.
   const rows = db
     .query(
       `SELECT m.msg AS msg, m.run_id AS run_id, r.seq AS seq
@@ -588,8 +586,9 @@ export function listArtifacts(
     seq: number;
   }>;
   const seen = new Map<string, ArtifactRef>();
+  const calls = new Set<string>(); // the limit counts CALLS, not fields
   for (const row of rows) {
-    if (seen.size >= limit) break;
+    if (calls.size >= limit) break;
     let m: ChatMsg & { tool_calls?: AssistantToolCall[] };
     try {
       m = JSON.parse(row.msg) as ChatMsg & { tool_calls?: AssistantToolCall[] };
@@ -606,16 +605,19 @@ export function listArtifacts(
       if (!args || typeof args !== "object" || Array.isArray(args)) continue;
       // The whole-object collapse: `elideArgs` returns ONE root marker when the key count alone
       // blows the cap. Without this it would be invisible to enumeration, search and readback.
+      const callKey = `${row.run_id}:${call.id}`;
+      if (!seen.size || calls.has(callKey) || calls.size < limit) calls.add(callKey);
+      else continue;
       const rootBytes = elidedBytes(args);
       if (rootBytes !== null) {
-        const key = JSON.stringify([row.run_id, call.id, ""]);
-        if (!seen.has(key) && seen.size < limit)
+        const key = JSON.stringify([row.run_id, call.id, null]);
+        if (!seen.has(key))
           seen.set(key, {
             runId: row.run_id,
             runSeq: row.seq ?? null,
             callId: call.id,
             tool: call.function.name,
-            field: "", // the whole argument object
+            field: null, // the whole argument object
             bytes: rootBytes,
           });
         continue;
@@ -624,7 +626,7 @@ export function listArtifacts(
         const bytes = elidedBytes(value);
         if (bytes === null) continue;
         const key = JSON.stringify([row.run_id, call.id, field]); // colons occur in call ids AND field names
-        if (seen.has(key) || seen.size >= limit) continue;
+        if (seen.has(key)) continue;
         seen.set(key, {
           runId: row.run_id,
           runSeq: row.seq ?? null,
@@ -658,7 +660,7 @@ function elidedBytes(value: unknown): number | null {
 export function readArtifact(
   db: Database,
   sessionId: string,
-  ref: { runSeq: number; callId: string; field: string },
+  ref: { runSeq: number; callId: string; field: string | null },
   offset = 0,
   maxChars = ARTIFACT_CHUNK,
 ): { text: string; offset: number; total: number; more: boolean; retained: boolean } | null {
@@ -676,7 +678,7 @@ export function readArtifact(
   let value: unknown;
   try {
     const parsed = JSON.parse(row.args) as Record<string, unknown>;
-    value = ref.field === "" ? parsed : parsed[ref.field];
+    value = ref.field === null ? parsed : parsed[ref.field];
   } catch {
     return { text: "", offset: 0, total: named.bytes, more: false, retained: false };
   }

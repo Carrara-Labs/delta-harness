@@ -201,7 +201,13 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const toolTimeoutMs = Number(env.DELTA_TOOL_TIMEOUT_MS ?? 120_000); // per-tool default; 0 unbounded
   // Inline cap before spill — 20k matches the old per-builtin elide, so the token budget is
   // unchanged; what's new is the full output now survives in a re-readable spill file.
-  const toolResultCap = Number(env.DELTA_TOOL_RESULT_MAX_BYTES ?? 20_000);
+  // Clamped, not just parsed: 0 / negative / NaN previously flowed straight into slice arithmetic
+  // in every consumer. A cap below the floor cannot express even a bounded marker or a pointer
+  // sentence, so it is not a smaller budget, it is a broken one (codex).
+  const CAP_FLOOR = 512;
+  const rawResultCap = Number(env.DELTA_TOOL_RESULT_MAX_BYTES ?? 20_000);
+  const toolResultCap =
+    Number.isFinite(rawResultCap) && rawResultCap >= CAP_FLOOR ? rawResultCap : 20_000;
   // Ceiling on a SUCCEEDED call's stored arguments (0.2.12). Lower than the result cap on purpose:
   // a result is read once by the next turn, while arguments are replayed on EVERY turn until
   // compaction, so they are worth more per byte. 4KB also has to sit below the reported case —
@@ -209,8 +215,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   // elided none of it. Nothing an agent types by hand reaches 4KB; what does is a banked payload.
   // Number.isFinite, not Number(): a typo'd env var yields NaN, and every `<=` against NaN is
   // false, which would elide EVERYTHING (codex P2). 0 disables.
+  // 0 disables entirely; anything else must clear the floor, so the root marker can always fit
+  // inside the bound it promises.
   const rawArgCap = Number(env.DELTA_TOOL_ARG_MAX_BYTES ?? 4_096);
-  const toolArgCap = Number.isFinite(rawArgCap) && rawArgCap >= 0 ? rawArgCap : 4_096;
+  const toolArgCap =
+    rawArgCap === 0 ? 0 : Number.isFinite(rawArgCap) && rawArgCap >= CAP_FLOOR ? rawArgCap : 4_096;
   const leaseTtl = Number(env.DELTA_LEASE_TTL_MS ?? 30_000);
   const provider: ProviderConfig = {
     baseUrl: env.MODEL_BASE_URL ?? "https://openrouter.ai/api/v1",

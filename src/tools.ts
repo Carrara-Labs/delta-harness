@@ -21,7 +21,9 @@ export type Artifact = {
   runSeq: number | null;
   callId: string;
   tool: string;
-  field: string;
+  /** The elided argument key, or null when the WHOLE object was collapsed. Not `""` — an empty
+   * string is a legal JSON property name, so it cannot distinguish the two (codex P1). */
+  field: string | null;
   bytes: number;
 };
 
@@ -57,7 +59,7 @@ export type ToolCtx = {
     artifacts: (limit: number) => Artifact[];
     /** Page one of them back from the journal archive. Null = no such artifact in this thread. */
     read: (
-      ref: { runSeq: number; callId: string; field: string },
+      ref: { runSeq: number; callId: string; field: string | null },
       offset: number,
       maxChars: number,
     ) => ArtifactPage | null;
