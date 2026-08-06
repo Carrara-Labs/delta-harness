@@ -28,6 +28,43 @@ Aperture's measurement, same job shape on two lanes: 275 rows at 78% cache, 5 co
 `context_irreducible`, $12.63; 119 rows at 93% cache, 0 compactions, $3.88. Results plateau because
 they are capped on arrival. Arguments accumulate because nothing caps them.
 
+## What the other runtimes do
+
+Read against `~/delta/.refs/{openclaw,pi,hermes-agent}`, 2026-08-06.
+
+**Nobody bounds tool-call arguments.** OpenClaw *counts* them in its context estimate
+(`tool-result-truncation.ts:135`, `JSON.stringify(record.arguments).length`) and never trims them.
+Pi *reads* them to build a typed file-operations ledger (`extractFileOpsFromMessage`: read /
+written / edited paths) and never trims them. Hermes' `turn_context.py` does not touch them at all.
+All three bound tool results only.
+
+The likely reason is workload, not oversight: these are coding runtimes where arguments are file
+paths and results are huge. Delta is a working agent, so a roster sweep inverts the shape. That is
+a defensible answer to "why has nobody done this", and it is also weak evidence, so it raises the
+bar on the live proof rather than lowering it.
+
+**The convergent lesson, and we only half-hold it: restructure history when the cache is already
+cold.** The cost of rewriting context is not the rewrite, it is the cache invalidation, so do it at
+a moment when there is no cache to lose.
+
+- **OpenClaw** `pruneExpiredCacheTtlToolResults`: gated on `now - lastCacheTouchAt >= ttlMs`, then a
+  two-stage escalation - soft trim (1500 head + 1500 tail) once the window is ≥30% full, hard clear
+  to a placeholder at ≥50% - protecting the last three assistant messages, limited to tools declared
+  prunable, and skipped entirely when the eligible content is under 50k chars.
+- **Hermes** `_should_idle_compact`: fires on a wall-clock idle gap rather than a token threshold,
+  so "a long-lived thread that is paused and later resumed compacts its accumulated history up front
+  instead of re-reading it on every subsequent turn". Orthogonal to the pressure trigger, floored so
+  a small thread never pays for a summary that saves nothing.
+- **Delta** states this principle in `demoteSpilled`'s comment and applies it at exactly one moment,
+  the compaction commit. Aperture's five compactions all fired mid-run against a 92-100% hot cache,
+  which is the most expensive possible moment to restructure.
+
+**Pi isolates the summary call from the cache.** `compaction.ts:126` - "Summaries are standalone
+requests, so isolate routing and avoid cache writes that cannot be reused" - and sets
+`cacheRetention: "none"`. Delta's summary rides `chatVia` into the same `withPromptCache` path, so
+every compaction writes an Anthropic cache entry for a one-off prompt that can never be read back,
+billed at 1.25x base input on roughly 20k tokens of bounded transcript. Pure waste, one line.
+
 ## S0 - the gate (no code)
 
 We can prove arguments are unbounded. We cannot prove they caused those five `context_irreducible`
@@ -180,6 +217,47 @@ detail is what made the attempts converge at all. Run B is a free reproducible t
   reference material is pointed at rather than resident, which the workspace plus `read_file`
   already does. What is missing is a written convention, so the next consumer does not invent a
   fifth file and ship a pointer to nothing.
+
+## S7 - make the fix measurable (ship this FIRST)
+
+Aperture could not answer reading 3 because `demoted_only` does not reach them, and the reason is
+not the exporter: it is only set on the demotion-only early return, so the summarize path never
+emits it. Their five compactions all took the summarize path.
+
+Worse, `SAFE_ATTRS` carries **no compaction attributes at all**, so a consumer without payload
+consent sees none of `kept` / `merged` / `compacted_turns` / `summary_tokens`. These are
+engine-authored numbers, not model-controlled text, so they are safe to allowlist and there is no
+reason they should have needed payload consent.
+
+Emit on BOTH paths, and add what actually scores S1: whether demotion ran, and the retained tail's
+bytes before and after. Then allowlist the set.
+
+This ships first because it is the instrument. Aperture can re-run `room-bench.ts` on the pinned
+roster fixture with S7 alone and establish a clean baseline before S1 changes anything.
+
+## S8 - stop writing cache on the summary call
+
+Pi's `cacheRetention: "none"`, above. One line, pure waste today.
+
+## Scoring - the part it is easiest to get wrong
+
+Aperture's measurements (`docs/aperture-0.2.12-measurements.md`) reframe the win. Steady-state cache
+hit is 92-100%, so the model is NOT paying to replay arguments every turn; the cache absorbs that.
+The bill is that each compaction detonates the prefix and the reload re-reads ~195k uncached. Five
+reloads are 977,625 tokens, **78% of the run's uncached input**.
+
+So argument eviction is aimed correctly, for a different reason than this plan first claimed: a
+smaller retained tail means fewer compactions AND a cheaper reload when one fires.
+
+**Score S1 on compaction count, post-compaction `input_tokens`, and `context_irreducible`. Never on
+steady-state cache hit**, which is already 92-100% and will not move. A run scored the wrong way
+reads as "no change" while having removed the only five expensive calls in it. Row count and
+identifier completeness ride alongside as the quality gate, because a run that gets cheap by losing
+rows is not a win.
+
+Also settled by their data: the fixed floor is ~16k, not the 110k turn-1 figure (that is their own
+opening payload, which is history). Schema bulk is dead as a suspect and this batch grows no
+tool-schema item.
 
 ## Verification
 
