@@ -43,7 +43,7 @@ import { buildSpine } from "./spine";
 import {
   capAndSpill,
   elide,
-  evictArgs,
+  elideArgs,
   type ToolCtx,
   type ToolDef,
   type Tools,
@@ -174,7 +174,7 @@ export type Deps = {
   /** Max chars of a tool result kept inline before it's spilled to a re-readable file.
    * Bounds the single biggest cause of a mid-run context-window overflow. */
   toolResultCap?: number;
-  toolArgsCap?: number;
+  toolArgCap?: number;
   /** Cockpit true-to-life capture (DELTA_CAPTURE_CALLS): snapshot the exact assembled
    * request (system spine + full messages + tool schemas) and response for each model
    * call into the `calls` table, so the dev UI can show precisely what the model saw.
@@ -1321,6 +1321,8 @@ async function execCall(
     .get(run.id, call.id) as { status: string; result: string | null } | null;
 
   let result: string;
+  /** The arguments as PARSED for execution, so the commit-time elision never parses twice. */
+  let executedArgs: Record<string, unknown> | undefined;
   if (journal?.status === "done") {
     // Crashed after execution, before the message row landed — replay, never re-fire.
     result = journal.result ?? "";
@@ -1349,6 +1351,7 @@ async function execCall(
             `reissue valid arguments (use a smaller/chunked payload if they were cut)`,
         );
       const args = parsed.args;
+      executedArgs = args; // reused by the elision below — the object is parsed exactly once
       if (toolMs > 0) {
         // Compose the caller's cancel with a fresh timeout controller; the timer is cleared the
         // moment the tool settles, so a fast call leaves no lingering timer.
@@ -1406,20 +1409,22 @@ async function execCall(
     });
   }
 
-  // Bound what the MODEL writes (0.2.12). `capAndSpill` above bounds the result; nothing has ever
-  // bounded the ARGUMENTS, which live in the assistant message and are replayed on every later
-  // turn. Evicting HERE is what makes it free and safe:
-  //   • the call has SUCCEEDED, so `pendingCalls` will never re-fire it and a resume never needs
-  //     the arguments again (stubbing on arrival, the seam the mechanism's shape suggests, would
-  //     break exactly that);
-  //   • this assistant row was written THIS turn and is not sent to a provider until the NEXT
-  //     call, so rewriting it now costs zero prefix-cache churn — the same reasoning that put
-  //     `demoteSpilled` at the compaction commit, one turn earlier.
-  // A failed/interrupted call keeps its arguments: the model needs to see what it sent to fix it.
+  // Bound what the MODEL writes (0.2.12). Only a SUCCEEDED call: a failed or interrupted one keeps
+  // its arguments, because the model needs to see what it sent in order to fix it.
+  //
+  // This seam is why it is free AND safe. The call is answered, so `pendingCalls` can never re-fire
+  // it and a resume never needs these arguments again — evicting on ARRIVAL, the seam the
+  // `capAndSpill` analogy suggests, would lose exactly what a crash-resume reads. And this assistant
+  // row was written THIS turn and is not sent to any provider until the NEXT call, so it only ever
+  // goes over the wire elided: zero prefix-cache churn, which matters because the cache is the whole
+  // bill (Aperture measured 78% of a run's uncached input in five post-compaction reloads).
+  //
+  // The full arguments stay in `journal.args` — written before execution and NOT overwritten by the
+  // upsert below — which is what `recall` reads back. Retention keeps its existing bounds on that
+  // table; the permanent record is the ~60-byte marker in the message, not the body.
   const succeeded = !result.startsWith("[tool error]") && !result.startsWith("[interrupted]");
-  const stub = succeeded
-    ? await evictArgs(call.function.arguments, ctx.workspace, run.id, call.id, deps.toolArgsCap ?? 0)
-    : null;
+  const elidedArgs =
+    succeeded && executedArgs ? elideArgs(executedArgs, deps.toolArgCap ?? 0) : null;
 
   db.transaction(() => {
     db.query(
@@ -1428,25 +1433,27 @@ async function execCall(
        ON CONFLICT (run_id, call_id) DO UPDATE SET status='done', result=excluded.result, finished_at=excluded.finished_at`,
     ).run(run.id, call.id, name, call.function.arguments, result, Date.now(), Date.now());
     insertMessage(db, run, { role: "tool", tool_call_id: call.id, content: result });
-    // Inside the transaction on purpose: this is a read-modify-write of a row that the OTHER calls
-    // in the same `Promise.all` batch share (one assistant message carries every tool_call), and a
-    // synchronous block cannot interleave, so no sibling's edit is lost.
-    if (stub) stubStoredArgs(db, run.id, call.id, stub);
+    // Inside the transaction on purpose: the calls of one turn SHARE one assistant row (a batch is
+    // one message with several tool_calls), so this is a read-modify-write on contended state. A
+    // synchronous transaction callback cannot be interleaved by another async continuation, so no
+    // sibling's marker is lost.
+    if (elidedArgs) storeElidedArgs(db, run.id, call.id, elidedArgs);
     persistActive(); // tool activations commit atomically with the result
   })();
-  if (stub)
-    events.emit("args.evicted", spine, {
+  if (elidedArgs)
+    events.emit("args.elided", spine, {
       "gen_ai.tool.name": name,
       "gen_ai.tool.call.id": call.id,
-      bytes: Buffer.byteLength(call.function.arguments, "utf8"),
+      bytes_before: Buffer.byteLength(call.function.arguments, "utf8"),
+      bytes_after: Buffer.byteLength(elidedArgs, "utf8"),
     });
 }
 
-/** Replace ONE call's stored arguments with an eviction stub, leaving the call, its name and its
- * result untouched so the transcript stays honest and the model still knows what it did. Scoped to
- * this run's ACTIVE rows and matched on the call id, so an interleaved history can't be rewritten
- * at the wrong message. Must be called from inside a transaction (see the call site). */
-function stubStoredArgs(db: Database, runId: string, callId: string, stub: string): void {
+/** Replace ONE call's stored arguments with the elided form, leaving the call id, the tool name and
+ * the result untouched so the transcript stays honest and the model still knows what it did. Scoped
+ * to this run's ACTIVE rows and matched on the call id, so an interleaved history can never be
+ * rewritten at the wrong message. Caller must hold a transaction. */
+function storeElidedArgs(db: Database, runId: string, callId: string, args: string): void {
   const rows = db
     .query("SELECT id, msg FROM messages WHERE run_id = ? AND active = 1 ORDER BY id DESC")
     .all(runId) as { id: number; msg: string }[];
@@ -1459,7 +1466,7 @@ function stubStoredArgs(db: Database, runId: string, callId: string, stub: strin
     }
     const target = m.tool_calls?.find((c) => c.id === callId);
     if (!target) continue;
-    target.function.arguments = stub;
+    target.function.arguments = args;
     db.query("UPDATE messages SET msg = ? WHERE id = ?").run(JSON.stringify(m), row.id);
     return;
   }

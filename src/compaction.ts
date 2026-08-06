@@ -359,6 +359,9 @@ export async function maybeCompact(
       compacted_turns: 0,
       kept: kept.length,
       demoted_only: true,
+      demoted: true,
+      tail_bytes_before: activeBytes,
+      tail_bytes_after: demotedBytes,
       summary_tokens: 0,
       summary_cost_usd: 0,
       identifiers_audited: 0,
@@ -505,6 +508,14 @@ export async function maybeCompact(
   events.emit("compaction", spine, {
     compacted_turns: prefix.length,
     kept: tail.length,
+    // Emitted on BOTH paths (0.2.12). It was previously set only on the demotion-only early return,
+    // so a consumer whose compactions all summarize — which is all of them under pressure — could
+    // never tell whether demotion ran and was not enough. That is the single number that says
+    // whether a tail-shrinking change worked, and Aperture could not read it.
+    demoted_only: false,
+    demoted: demotedAny,
+    tail_bytes_before: rows.reduce((n, r) => n + bytes(r.msg), 0),
+    tail_bytes_after: newBytes,
     summary_tokens: sumUsage.output,
     summary_cost_usd: sumUsage.costUsd,
     identifiers_audited: ids.length,

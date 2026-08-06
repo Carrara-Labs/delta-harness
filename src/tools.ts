@@ -105,65 +105,10 @@ export function elide(text: string, max = 20_000): string {
  *  tool_call_id instead of trusting a path parsed out of model-visible content, so a hostile tool
  *  result cannot point a pointer-stub at an arbitrary file (codex P1).
  *  callId comes from the PROVIDER — sanitize both ids so a hostile `../`-laden id can never escape
- *  the spill dir and overwrite an arbitrary path (codex #4).
- *  `kind` splits the two spills a single call can produce. They are keyed on the SAME
- *  (runId, callId), so without the suffix an evicted-arguments spill and an oversize-result spill
- *  would overwrite each other, and `demoteSpilled` — which derives this path from row identity to
- *  decide what it may stub — could be pointed at the wrong body. */
-export function spillPathFor(
-  workspace: string,
-  runId: string,
-  callId: string,
-  kind: "result" | "args" = "result",
-): string {
+ *  the spill dir and overwrite an arbitrary path (codex #4). */
+export function spillPathFor(workspace: string, runId: string, callId: string): string {
   const safe = (s: string) => s.replace(/[^\w-]/g, "_").slice(0, 80);
-  const suffix = kind === "args" ? ".args" : "";
-  return `${workspace}/.delta/spill/${safe(runId)}.${safe(callId)}${suffix}.txt`;
-}
-
-/** Bound what the MODEL writes. A SUCCEEDED call's arguments have already done their job — the
- * next turn reasons about the RESULT ("staged 12,431 chars, total 96,204"), never the payload —
- * but they are persisted verbatim inside the assistant message and replayed on every subsequent
- * turn, and no rail shrinks them: `capAndSpill` bounds results on arrival and `demoteSpilled`
- * bounds them at compaction, and both ignore anything that isn't `role: "tool"`. So a sweep that
- * writes its findings out page by page pays, forever, to re-read text it already banked.
- *
- * Returns a stub to store in place of the arguments, or null to leave them alone.
- *
- * Three properties this shape buys, each load-bearing:
- *  • the stub is valid JSON — the Anthropic wire does `JSON.parse(arguments)` and falls back to
- *    `{}` on failure, so a prose stub would silently hand the model a call with NO arguments and
- *    no explanation, which is a worse trade than the tokens it saves;
- *  • it reuses capAndSpill's exact "saved to <path>" phrasing, so `recall`'s pointer extractor and
- *    compaction's artifact ledger both pick evicted arguments up with no new parsing;
- *  • it fails closed — a spill that doesn't land means no eviction, because a stub promising a
- *    file that isn't there is worse than the bytes it saves (`demoteSpilled`'s existing rule).
- *
- * Idempotent by SHAPE, not by a forgeable marker: a stub is far below any sane cap, so a second
- * pass measures it and declines. */
-export async function evictArgs(
-  args: string,
-  workspace: string,
-  runId: string,
-  callId: string,
-  max: number,
-): Promise<string | null> {
-  const bytes = Buffer.byteLength(args, "utf8"); // UTF-8, like compaction — `.length` is UTF-16
-  if (max <= 0 || bytes <= max) return null;
-  const path = spillPathFor(workspace, runId, callId, "args");
-  try {
-    await Bun.write(path, args);
-  } catch {
-    return null; // fail closed: no file on disk, no eviction
-  }
-  return JSON.stringify({
-    _delta_evicted: {
-      bytes,
-      note:
-        `arguments of this SUCCEEDED call were dropped from context; ` +
-        `full arguments saved to ${path}; read that file if you need them back`,
-    },
-  });
+  return `${workspace}/.delta/spill/${safe(runId)}.${safe(callId)}.txt`;
 }
 
 export async function capAndSpill(
@@ -184,6 +129,59 @@ export async function capAndSpill(
   const tail = max - head;
   const dropped = text.length - max;
   return `${text.slice(0, head)}\n\n… [elided ${dropped} chars — full output saved to ${path}; read that file for the rest] …\n\n${text.slice(text.length - tail)}`;
+}
+
+/** The engine-authored marker replacing an over-budget argument value. */
+export const ELIDED_KEY = "_delta_elided";
+
+/** Bound what the MODEL writes. `capAndSpill` bounds a tool RESULT on arrival and `demoteSpilled`
+ * bounds it again at compaction; both ignore anything that isn't `role:"tool"`, so a tool call's
+ * ARGUMENTS — which live on the assistant message and are replayed on every later turn — have never
+ * had a rail. A sweep that writes its findings out page by page therefore carries every page's
+ * payload in the window forever, which is what makes its retained tail irreducible.
+ *
+ * Elides by STRUCTURE, not by call: the object and its keys survive, and only the largest values are
+ * replaced, largest-first, until the whole serialized object fits `cap`. `send_email` keeps `to` and
+ * `subject` and loses only `body`, so the model can still see WHAT it did — the thing that prevents
+ * duplicate side effects and repeated work. The full arguments stay in `journal.args` (written before
+ * execution, never overwritten), which is how `recall` reads them back.
+ *
+ * One cap, applied as both the per-value threshold and the total ceiling, so the invariant is simply
+ * "a stored tool call's arguments never exceed `cap` bytes". A per-value rule alone would still admit
+ * an arbitrarily large object made of sub-threshold values (codex P1).
+ *
+ * Returns the replacement JSON string, or null to leave the row byte-identical. Pure and synchronous
+ * so it can run inside the commit transaction. Idempotent by SHAPE: an already-elided object is
+ * under `cap`, so a second pass measures it and declines — `demoteSpilled` learned that a sentinel
+ * alone is forgeable, and size is not. */
+export function elideArgs(args: Record<string, unknown>, cap: number): string | null {
+  if (!Number.isFinite(cap) || cap <= 0) return null;
+  const bytes = (s: string) => Buffer.byteLength(s, "utf8"); // UTF-8: `.length` is UTF-16 (0.2.11)
+  const ser = (o: unknown): string | null => {
+    try {
+      return JSON.stringify(o) ?? null;
+    } catch {
+      return null; // circular/unserializable → no-op rather than a throw on the commit path
+    }
+  };
+  const size = (v: unknown): number => (typeof v === "string" ? bytes(v) : bytes(ser(v) ?? "null"));
+
+  let out = ser(args);
+  if (out === null || bytes(out) <= cap) return null;
+
+  // Largest values first, so the fewest fields are lost to reach the bound.
+  const order = Object.entries(args)
+    .map(([k, v]) => [k, size(v)] as const)
+    .sort((a, b) => b[1] - a[1]);
+  const next: Record<string, unknown> = { ...args };
+  for (const [k, n] of order) {
+    next[k] = { [ELIDED_KEY]: { bytes: n } };
+    out = ser(next);
+    if (out === null) return null;
+    if (bytes(out) <= cap) return out;
+  }
+  // Every value elided and still over — a pathological key count. Collapse to one root marker.
+  return ser({ [ELIDED_KEY]: { bytes: size(args), fields: order.length } });
 }
 
 export function toolSpecs(tools: Tools): ToolSpec[] {
