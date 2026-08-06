@@ -664,7 +664,19 @@ export async function executeRun(
 
     const tools = effectiveTools();
     const last = lastRunMessage(db, run.id);
-    const assistant = last?.role === "assistant" ? (last as AssistantMsg) : null;
+    // S9: reconcile off the last row when it IS the assistant (today's path, byte-identical), and
+    // ONLY when it is a tool result fall back to the batch's own caller. A turn's calls run under
+    // Promise.all, so a crash mid-batch can commit call A's result and leave call B unexecuted —
+    // after which the last row is A's tool message, `pending` was never computed, and the next
+    // request carried an unanswered tool_use the provider rejects. Reaching back unconditionally
+    // would be wrong: on an ordinary run that finished a batch and then answered, it would select
+    // the OLDER tool-calling assistant and never finalize.
+    const assistant =
+      last?.role === "assistant"
+        ? (last as AssistantMsg)
+        : last?.role === "tool"
+          ? batchCaller(db, run.id)
+          : null;
 
     if (assistant?.tool_calls?.length) {
       const pending = pendingCalls(db, run, assistant);
@@ -1564,6 +1576,28 @@ function insertMessage(db: Database, run: RunRow, msg: ChatMsg): void {
     JSON.stringify(msg),
     Date.now(),
   );
+}
+
+/** The assistant row that issued the batch the last tool result belongs to — i.e. the newest active
+ * assistant of this run, but ONLY if it carries tool_calls. Returning null when the newest assistant
+ * is a plain answer is the safety property: it means this can never reach back past a completed
+ * exchange and re-open it. */
+function batchCaller(db: Database, runId: string): AssistantMsg | null {
+  const rows = db
+    .query("SELECT msg FROM messages WHERE run_id = ? AND active = 1 ORDER BY id DESC")
+    .all(runId) as { msg: string }[];
+  for (const row of rows) {
+    let m: ChatMsg;
+    try {
+      m = JSON.parse(row.msg) as ChatMsg;
+    } catch {
+      continue;
+    }
+    if (m.role !== "assistant") continue;
+    const a = m as AssistantMsg;
+    return a.tool_calls?.length ? a : null;
+  }
+  return null;
 }
 
 function lastRunMessage(db: Database, runId: string): ChatMsg | null {
