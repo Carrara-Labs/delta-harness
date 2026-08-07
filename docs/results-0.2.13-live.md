@@ -4,9 +4,10 @@
 Anthropic wire, `claude-sonnet-5`, utility `claude-haiku-4-5-20251001`. Key borrowed from the
 ai-recruiter app env with Nic's authorisation; nothing was written into this repo.
 
-**Read the caveat first.** This is **one run per arm against a nondeterministic model** — the exact
-shape of measurement that produced the retracted -29.9% claim in 0.2.12. Treat the direction as
-believable and every magnitude as indicative. The lane canary is still the real number.
+**Scope.** Three repetitions per arm of an identical workload. Synthetic, self-designed, at 40k on
+sonnet — an order of magnitude below Aperture's 200k+ opus shape, and the workload was invented by
+the same person judging the result, which  names as a failure mode in its own right.
+The lane canary is still the real number.
 
 ## Quality gate, before any cost figure
 
@@ -19,26 +20,41 @@ Both arms answered every turn correctly. A DB snapshot of arm A shows 8 because 
 the daemon still held the last commit in the WAL — **a capture artifact, not lost work**. Do not
 report this as a quality difference.
 
-## The A/B: identical 9-turn growing conversation, ceiling 40,000
+## The A/B: identical 9-turn growing conversation, ceiling 40,000, **n=3 per arm**
 
-| metric | arm A (0.2.12) | arm B (0.2.13) | |
-|---|---:|---:|---|
-| **compaction events** | **5** | **3** | the primary metric |
-| mean cache hit | 52% | **79%** | |
-| mean input tokens | 26,899 | 24,678 | -8.3% |
-| peak input tokens | 32,196 | 32,094 | -0.3% |
-| `context_irreducible` | 0 | 0 | |
-| metered cost | $0.3712 | $0.1748 | **not comparable — see below** |
+An earlier single run per arm is superseded by this. Ranges are [min–max] across three repetitions
+of the identical workload.
 
-**The cost figure is not apples-to-apples and should not be quoted.** Arm A's utility calls emit
-nothing (that is the bug S3 fixes), so its cost sums main calls only, while arm B's sums main *and*
-its four summary calls. Arm A's true spend is therefore higher than $0.3712, which means the gap is
-if anything understated — but the two numbers are not measuring the same set and a headline
-percentage off them would be dishonest. **Score this batch on compaction count and cache hit.**
+| metric | arm A (0.2.12) | arm B (0.2.13) | verdict |
+|---|---|---|---|
+| **compaction events** | **5.00** [5–5] | **3.00** [3–3] | **separated, zero variance — established** |
+| mean input tokens | 26,880 [26845–26921] | 24,682 [24676–24686] | **-8.2%, separated — established** |
+| peak input tokens | 32,170 [32110–32286] | 32,093 [32075–32109] | flat |
+| mean cache hit | 61.3% [51.7–71.0] | 68.3% [46.6–79.1] | **ranges overlap — NOT established** |
+|  | 0, 0, 0 | 0, 0, 0 | no regression |
+| turns delivered | 9, 9, 9 | 9, 9, 9 | no quality loss |
 
-Turns 1-4 produced byte-identical input counts on both arms (10,668 / 17,207 / 23,746 / 30,285).
-Divergence begins at turn 5, the first turn where compaction fires. That is a useful determinism
-check: the arms only differ where the change is supposed to act.
+### What n=3 retired
+
+A single run per arm had shown **cache 52% → 79%**, and that number does not survive repetition.
+Across three runs the arms are 61.3% vs 68.3% with ranges that overlap almost completely
+(46.6–79.1 against 51.7–71.0). **The cache-hit improvement is not established** — the first
+observation was noise, and cache hit is a poor metric on short runs because it is sensitive to the
+5-minute TTL against variable wall-clock timing.
+
+That is the same error class as the retracted -29.9% in 0.2.12, caught this time by running the
+repetitions before reporting rather than after.
+
+### What survives
+
+**Compaction count and input volume are effectively deterministic**, not statistical: both arms
+returned identical counts on every repetition, with no overlap between arms. That is expected —
+compaction firing is decided by token arithmetic on identical inputs — and it means 5 → 3 is a
+property of the change rather than a sample.
+
+**The cost figure is still not quoted.** Arm A's utility calls emit nothing (the bug S3 fixes), so
+its cost sums main calls only while arm B's sums main plus its summary calls. The two numbers do not
+measure the same set.
 
 ## S5 has a deliberate no-op zone, and a first run landed in it
 
