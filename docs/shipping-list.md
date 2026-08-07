@@ -1,4 +1,4 @@
-# Delta shipping list (as of 2026-08-06, 0.2.12 built and unreleased)
+# Delta shipping list (as of 2026-08-07, 0.2.12 built and unreleased)
 
 ## Where 0.2.12 stands
 
@@ -53,7 +53,74 @@ Aperture has a pinned fixture and a bench rig and offered to canary; that is the
 5. **Aperture canaries** on `speed-lab` with `room-bench.ts`, scored on compaction count,
    post-compaction `input_tokens` and `context_irreducible` - never on steady-state cache hit.
 
-## P1 - next release (0.2.13)
+## P1 - next release (0.2.13) "say what changed"
+
+Scope agreed with Aperture 2026-08-07 across three rounds of
+`reply-aperture-context-ceiling{,-2,-3}.md`, answering `ask-context-ceiling-and-compaction.md`. Read
+those before touching this list: two plausible mechanisms were proposed and both were killed by data,
+so the batch is instrumentation-first on purpose.
+
+**What the thread established, and what it did not.** Aperture measured that a turn whose assembled
+context comes out shorter than the previous turn's misses the prompt cache, 27/27, at 5.7x the cost
+of a cached turn and 72% of spend recoverable. That correlation is solid. Every proposed cause is
+dead:
+
+- **Compaction is not it.** Their join over 495 turns: 68% of misses had no compaction event at all,
+  and a compacting turn was more often a hit than a miss. 161 compactions cannot produce 119 misses.
+  Raising the ceiling would have recovered close to nothing.
+- **The A4 breaker is not it, on this data.** Only 10 `tool.result` errors across the whole 30-hour
+  window, spread over four tools that all kept being called. The breaker never latched, so the join
+  is vacuous rather than negative: ruled out as the dominant cause, untested as a cause.
+- **Tools called per turn is orthogonal.** That block is appended at the end of history, behind
+  everything cached, so it cannot invalidate a prefix.
+
+**The mechanism is still unnamed**, and the reason we could not name it is that every instrument
+either of us proposed measured *size* when the cache keys on *identity*. A same-size prefix mutation
+breaks the cache exactly as hard as a shrink and is invisible to a byte counter. The spine is rebuilt
+every turn (`run.ts:762`) and carries a `searchable` count that decrements on activation, plus the
+agent-writable self-file, so zero-byte-delta changes to a cached prefix are not hypothetical here.
+
+**Standing prediction to test on the first miss after this ships:** `spine_hash` moves on miss turns.
+If it does, the fix is cheap, because a per-turn counter has no business inside a cached prefix. If
+both prefix hashes are stable across a miss, the shrink is inside history and we have a defect not
+currently nameable from source.
+
+### The batch
+
+1. **Segmented prefix identity on `model.call`** - `spine_bytes`/`spine_hash`,
+   `tools_bytes`/`tools_hash`, `history_bytes`, `ephemeral_bytes`. The instrument that ends this
+   class of question: on a miss turn the hash that moved names the culprit, with no capture flag, no
+   PII and no reproduction run. Ships first, same reasoning as 0.2.12's S7.
+2. **Decouple the tail budget from the ceiling.** `run.ts:872` derives `recentBudget` from
+   `compactAtTokens` itself, so compaction is told to compact a 207k context to ~198k, lands at 99%
+   of budget and re-fires next turn. That is `spec-compaction-tail`'s 94-of-94 in one line. Compact
+   to a real low-water mark. Correct at any ceiling; a smaller win than the thread first thought.
+3. **Emit the non-shrinking compaction attempt.** `compaction.ts:538` returns before the event is
+   emitted, so an attempt that summarizes ~60k of transcript on the utility model and produces a
+   non-material result emits nothing. Silent cost and silent latency in front of a turn.
+4. **Emit `model.call` for utility-tier calls.** `model.call` fires in exactly one place
+   (`run.ts:1044`), the main-loop call. Every `chatUtility` path bypasses it (`run.ts:484`, `:876`,
+   `:983`) while charging through `addUsage`. No consumer can see or price the utility tier, and it
+   means any compaction-event count is a floor on attempts rather than a count.
+5. **A `window` column on the `pricing.ts` model table**, ceiling derived as
+   `window - max_output - reserve`, `DELTA_COMPACT_AT_TOKENS` demoted from the only input to an
+   override, and a clamp-with-warning when the knob exceeds the known window so the inverse error
+   degrades loudly instead of turning compaction into overflow. The table, the env-override pattern
+   and the exact/leaf/prefix resolver already exist, so this is a column and not a catalogue.
+   Seed `claude-opus-5` from Aperture's field floor: 249,127 accepted, zero overflow, no beta header.
+6. **Keep the schema resident when the A4 breaker latches.** Short-circuit the call to a synthetic
+   refusal instead of withdrawing the tool from the advertised surface. Identical protection, one
+   branch, prefix intact. **Not the fix for anyone's bill** - it must be named that way in the
+   release brief, because the data that motivated it also ruled it out as the dominant cause.
+7. **Emit the breaker latch** as its own event, with the tool name and the schema bytes withdrawn.
+   It is currently invisible, which is why item 6 could not be tested directly.
+8. **`last_event_ms_ago` on `/v1/busy`.** Aperture's reconciler treated 2 minutes of silence as a
+   stall and carded a healthy 12-hour run with a Resume that would have duplicated it. Every consumer
+   is guessing this constant independently. "How long has it been silent" beats turn age.
+9. **What survives a suspend, in `hosting.md`.** A machines-API wake timeout cold-booted a daemon
+   mid-engagement and lost in-memory state.
+
+### Also open, carried from before
 
 - **Reduce the echo rate.** New, born from this release. The guard makes it correct and
   self-correcting, but the retries are a real cost. One hypothesis is already dead: keeping a preview
