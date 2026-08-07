@@ -403,3 +403,56 @@ outcome that should be suspicious.
 7. Factual corrections: history is *not* append-only outside compaction (the breaker mutates a row in
    place); ephemeral is suffix-safe rather than universally uncached; activated tools *do* survive a
    restart; the `eval_n` judge is never charged; pi's `shouldCompact` is at `:237`.
+
+## What the CODE review killed (round 2 and 3)
+
+The spec review above caught six design errors. Two code reviews then caught six more, and three of
+them were fixes that were *present but dead in production* while every test passed — the exact
+failure this batch exists to remove, arriving inside the batch itself.
+
+**P1, round 2:**
+
+1. **Research telemetry never fired.** `runResearch` builds its child `ToolCtx` field-by-field and
+   did not copy `onUtilityCall`, so the emission was always a no-op. Research is the site where
+   per-call emission matters most, because the fan-out is charged as one aggregate.
+2. **The S5 crash gap stayed open on overflow recovery.** The proactive compaction passed
+   `anchorRunId`; the forced one did not, and `clearAnchor` silently no-ops without it. So the path
+   that runs on a turn that already failed still resumed with a stale anchor.
+3. **S7 shipped the wrong public field name.** `Response.json()` does no case conversion, so
+   `/v1/busy` returned `lastEventMsAgo` where the spec promised `last_event_ms_ago`.
+
+**P2/P3, rounds 2 and 3:**
+
+4. A `window <= OUTPUT_RESERVE` derived a ceiling of **0**, compacting every request forever. Windows
+   that cannot clear `MIN_USABLE_CEILING` are now treated as unknown.
+5. **`self_bytes` does not disambiguate within a run** — `self` is a per-run snapshot. The spec's
+   table claimed resolution it does not have; the code comment now says what it actually resolves.
+6. **`loadConfig(env)` ignored an injected `DELTA_MODEL_PRICES`**, because `pricing.ts` freezes its
+   table from `process.env` at import. Both derivation functions now take the table.
+7. A comment claimed a query optimization `EXPLAIN` does not support. Reverted, and the comment now
+   states the real cost.
+8. **`maxSafeCeiling` keeps ignoring unknown cascade members, deliberately.** It and
+   `deriveContextCeiling` answer different questions: the default is ours to choose so an unknown
+   makes it conservative; an override is the operator's explicit decision and we overrule it only on
+   positive evidence. Counting unknowns there would clamp nearly every deployment, since one model
+   carries a window today.
+
+**And the tests were wrong twice.** First round: two of them hand-rolled the logic they were meant to
+verify. Second round: two more would have gone green again if their fix were reverted — the anchor
+test supplied `anchorRunId` itself, and nothing drove `runResearch` at all. A third attempt at the
+overflow test passed trivially because a fresh run's anchor is `0` from birth, so the run needed a
+real anchor before the assertion meant anything.
+
+Every load-bearing test is now verified by reverting its fix and watching exactly one test break.
+
+## Consumer-visible changes on upgrade
+
+For the release brief:
+
+- **`model.call` now includes utility calls.** Filter `tier === "main"` anywhere turns are counted.
+- **`compaction` now includes unsuccessful attempts.** Filter `shrank === true` for the old meaning.
+- **`tool.breaker` is a new event type.** Exhaustive event enums will reject it.
+- **`/v1/busy` gains an optional field** while running. Additive; strict exact-object decoders reject.
+- **An opus-5 config with no override moves from 120k to 209k.** A cascade containing any
+  unknown-window model stays at 120k.
+- **Who sees nothing:** an agent not near a context ceiling. New fields, no behaviour change.
