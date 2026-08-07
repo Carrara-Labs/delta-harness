@@ -1,0 +1,1715 @@
+<title>Delta Bench — the release gate for agent harnesses</title>
+
+<style>
+  :root {
+    --oat-50:#faf8f2; --oat-100:#f4efe6; --oat-200:#e9e1d1; --oat-300:#d8ceb7;
+    --oat-400:#c1b69c; --oat-500:#a49a82; --oat-600:#7f7663; --oat-700:#5c5647;
+    --oat-800:#3a352a; --oat-900:#211d14; --oat-950:#14110b;
+
+    --sage:#b8ccb2; --sage-deep:#4f6b4a;
+    --slate:#bcc6d4; --slate-deep:#47576e;
+    --mauve:#d8bcc2; --mauve-deep:#7d4f5b;
+    --wheat:#d9c79a; --wheat-deep:#7a6320;
+
+    --bg:#f4efe6;
+    --surface:#faf8f2;
+    --surface-2:#ece4d4;
+    --ink:#14110b;
+    --ink-soft:#5c5647;
+    --ink-faint:#7f7663;
+    --line:#e4dbc8;
+    --line-strong:#d8ceb7;
+
+    --a-ink:var(--sage-deep);   --a-tint:rgba(79,107,74,.10);
+    --b-ink:var(--slate-deep);  --b-tint:rgba(71,87,110,.10);
+    --bad-ink:var(--mauve-deep);--bad-tint:rgba(125,79,91,.10);
+    --warn-ink:var(--wheat-deep);--warn-tint:rgba(122,99,32,.10);
+
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+
+    --measure: 68ch;
+    --rail: 190px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#100c05; --surface:#1a160e; --surface-2:#241f15;
+      --ink:#f4efe6; --ink-soft:#c1b69c; --ink-faint:#a49a82;
+      --line:rgba(244,239,230,.13); --line-strong:rgba(244,239,230,.22);
+      --a-ink:#b8ccb2;  --a-tint:rgba(184,204,178,.12);
+      --b-ink:#bcc6d4;  --b-tint:rgba(188,198,212,.12);
+      --bad-ink:#d8bcc2;--bad-tint:rgba(216,188,194,.12);
+      --warn-ink:#d9c79a;--warn-tint:rgba(217,199,154,.12);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#100c05; --surface:#1a160e; --surface-2:#241f15;
+    --ink:#f4efe6; --ink-soft:#c1b69c; --ink-faint:#a49a82;
+    --line:rgba(244,239,230,.13); --line-strong:rgba(244,239,230,.22);
+    --a-ink:#b8ccb2;  --a-tint:rgba(184,204,178,.12);
+    --b-ink:#bcc6d4;  --b-tint:rgba(188,198,212,.12);
+    --bad-ink:#d8bcc2;--bad-tint:rgba(216,188,194,.12);
+    --warn-ink:#d9c79a;--warn-tint:rgba(217,199,154,.12);
+  }
+  :root[data-theme="light"] {
+    --bg:#f4efe6; --surface:#faf8f2; --surface-2:#ece4d4;
+    --ink:#14110b; --ink-soft:#5c5647; --ink-faint:#7f7663;
+    --line:#e4dbc8; --line-strong:#d8ceb7;
+    --a-ink:#4f6b4a;  --a-tint:rgba(79,107,74,.10);
+    --b-ink:#47576e;  --b-tint:rgba(71,87,110,.10);
+    --bad-ink:#7d4f5b;--bad-tint:rgba(125,79,91,.10);
+    --warn-ink:#7a6320;--warn-tint:rgba(122,99,32,.10);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16.5px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+    margin: 0;
+  }
+
+  /* ---------- shell ---------- */
+  .shell {
+    display: grid;
+    grid-template-columns: var(--rail) minmax(0, 1fr);
+    gap: 0 56px;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 28px 140px;
+  }
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: minmax(0,1fr); gap: 0; padding: 0 20px 90px; }
+    .rail { display: none; }
+  }
+
+  /* ---------- the gauge rail ---------- */
+  .rail {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    height: 100vh;
+    padding: 84px 0 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .rail-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-bottom: 18px;
+  }
+  .gauge { position: relative; padding-left: 16px; display: flex; flex-direction: column; gap: 2px; }
+  .gauge::before {
+    content:"";
+    position: absolute; left: 3px; top: 6px; bottom: 6px;
+    width: 1px; background: var(--line-strong);
+  }
+  .gauge-fill {
+    position: absolute; left: 3px; top: 6px;
+    width: 1px; height: 0;
+    background: var(--ink);
+    transition: height .25s linear;
+  }
+  @media (prefers-reduced-motion: reduce) { .gauge-fill { transition: none; } }
+  .rail a {
+    position: relative;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: .02em;
+    color: var(--ink-faint);
+    text-decoration: none;
+    padding: 3px 0 3px 4px;
+    display: flex;
+    gap: 8px;
+    line-height: 1.35;
+    border-radius: 3px;
+  }
+  .rail a::before {
+    content:"";
+    position: absolute; left: -16px; top: 11px;
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--bg);
+    border: 1px solid var(--line-strong);
+  }
+  .rail a .lv { color: var(--ink-faint); opacity: .55; }
+  .rail a:hover { color: var(--ink); }
+  .rail a.on { color: var(--ink); font-weight: 600; }
+  .rail a.on::before { background: var(--ink); border-color: var(--ink); }
+  .rail a:focus-visible { outline: 2px solid var(--a-ink); outline-offset: 2px; }
+
+  /* ---------- masthead ---------- */
+  .masthead { padding: 92px 0 0; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  }
+  .eyebrow .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--line-strong); }
+  h1 {
+    font-size: clamp(2.6rem, 6.2vw, 4.15rem);
+    line-height: 1.02;
+    letter-spacing: -.033em;
+    font-weight: 680;
+    margin: 22px 0 0;
+    text-wrap: balance;
+    max-width: 16ch;
+  }
+  .standfirst {
+    font-size: 1.24rem;
+    line-height: 1.52;
+    color: var(--ink-soft);
+    max-width: 60ch;
+    margin: 26px 0 0;
+    text-wrap: pretty;
+  }
+  .meta-strip {
+    margin-top: 44px;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    padding: 16px 0;
+    display: flex; flex-wrap: wrap; gap: 34px;
+  }
+  .meta-strip div { display: flex; flex-direction: column; gap: 3px; }
+  .meta-strip dt, .meta-k {
+    font-family: var(--mono); font-size: 10px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--ink-faint);
+  }
+  .meta-v { font-family: var(--mono); font-size: 13.5px; color: var(--ink); }
+
+  /* ---------- sections ---------- */
+  section { padding-top: 88px; scroll-margin-top: 24px; }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 8px; }
+  .sec-lv {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .12em;
+    color: var(--ink-faint); padding: 3px 7px;
+    border: 1px solid var(--line-strong); border-radius: 3px;
+    white-space: nowrap;
+  }
+  h2 {
+    font-size: clamp(1.65rem, 3.4vw, 2.2rem);
+    line-height: 1.13; letter-spacing: -.024em; font-weight: 660;
+    margin: 0; text-wrap: balance;
+  }
+  h3 {
+    font-size: 1.12rem; line-height: 1.3; letter-spacing: -.012em;
+    font-weight: 650; margin: 40px 0 10px;
+  }
+  h4 {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .13em;
+    text-transform: uppercase; color: var(--ink-faint);
+    font-weight: 500; margin: 0 0 10px;
+  }
+  p { max-width: var(--measure); margin: 15px 0; text-wrap: pretty; }
+  .lede { font-size: 1.08rem; color: var(--ink-soft); max-width: 62ch; }
+  a { color: var(--ink); text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+  a:hover { text-decoration-color: currentColor; }
+  strong { font-weight: 650; }
+  code {
+    font-family: var(--mono); font-size: .875em;
+    background: var(--surface-2); padding: .1em .38em;
+    border-radius: 3px; word-break: break-word;
+  }
+  ul, ol { max-width: var(--measure); padding-left: 1.15em; }
+  li { margin: 7px 0; }
+  li::marker { color: var(--ink-faint); }
+
+  /* ---------- cards / blocks ---------- */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 22px 24px;
+  }
+  .flush { max-width: none; }
+  .grid { display: grid; gap: 14px; }
+  .g2 { grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
+  .g3 { grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); }
+  .g4 { grid-template-columns: repeat(auto-fit, minmax(178px, 1fr)); }
+
+  .stack { display: flex; flex-direction: column; gap: 14px; }
+  .mt { margin-top: 26px; }
+  .mt-s { margin-top: 16px; }
+
+  .tag {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em;
+    text-transform: uppercase; padding: 3px 8px; border-radius: 3px;
+    border: 1px solid var(--line-strong); color: var(--ink-faint);
+    white-space: nowrap;
+  }
+  .tag.a { color: var(--a-ink); border-color: var(--a-ink); background: var(--a-tint); }
+  .tag.b { color: var(--b-ink); border-color: var(--b-ink); background: var(--b-tint); }
+  .tag.bad { color: var(--bad-ink); border-color: var(--bad-ink); background: var(--bad-tint); }
+  .tag.warn { color: var(--warn-ink); border-color: var(--warn-ink); background: var(--warn-tint); }
+
+  /* ---------- tables ---------- */
+  .scroller { overflow-x: auto; margin: 22px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14.2px; min-width: 560px; }
+  th, td { padding: 11px 15px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th {
+    font-family: var(--mono); font-size: 10px; letter-spacing: .13em;
+    text-transform: uppercase; color: var(--ink-faint); font-weight: 500;
+    background: var(--surface-2); white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.k { font-family: var(--mono); font-size: 13px; white-space: nowrap; }
+  .ink-a { color: var(--a-ink); } .ink-b { color: var(--b-ink); }
+  .ink-bad { color: var(--bad-ink); } .ink-warn { color: var(--warn-ink); }
+
+  /* ---------- code ---------- */
+  pre {
+    font-family: var(--mono); font-size: 12.8px; line-height: 1.66;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 18px 20px; overflow-x: auto;
+    margin: 20px 0; color: var(--ink);
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre .c { color: var(--ink-faint); }
+  pre .hl { color: var(--a-ink); }
+  pre .hl2 { color: var(--b-ink); }
+
+  /* ---------- the retraction panel (L0) ---------- */
+  .three-reads { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px,1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin: 26px 0; }
+  .read { background: var(--surface); padding: 20px 22px; display: flex; flex-direction: column; gap: 6px; }
+  .read .when { font-family: var(--mono); font-size: 10px; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-faint); }
+  .read .val { font-family: var(--mono); font-size: 1.85rem; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .read .say { font-size: 13.5px; color: var(--ink-soft); line-height: 1.45; }
+
+  /* ---------- pipeline ---------- */
+  .pipe { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin: 28px 0; min-width: 600px; }
+  .stage { background: var(--surface); padding: 20px 18px 22px; display: flex; flex-direction: column; gap: 9px; }
+  .stage .n { font-family: var(--mono); font-size: 10px; letter-spacing: .14em; color: var(--ink-faint); }
+  .stage .t { font-weight: 640; font-size: 1.02rem; letter-spacing: -.01em; }
+  .stage .d { font-size: 13px; color: var(--ink-soft); line-height: 1.48; }
+  .stage .out { margin-top: auto; padding-top: 12px; border-top: 1px dashed var(--line-strong); font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+
+  /* ---------- fan-out svg ---------- */
+  .figure { margin: 28px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 24px; }
+  .figure svg { width: 100%; height: auto; display: block; }
+  .figcap { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); line-height: 1.55; }
+  .svg-ink { fill: var(--ink); }
+  .svg-soft { fill: var(--ink-soft); }
+  .svg-faint { fill: var(--ink-faint); }
+  .svg-line { stroke: var(--line-strong); }
+  .svg-a { fill: var(--a-ink); } .stroke-a { stroke: var(--a-ink); }
+  .svg-b { fill: var(--b-ink); } .stroke-b { stroke: var(--b-ink); }
+  .svg-surface { fill: var(--surface-2); }
+  .mono-t { font-family: var(--mono); font-size: 11px; }
+  .mono-s { font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em; }
+
+  /* ---------- playbook cards ---------- */
+  .pb { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px 21px; display: flex; flex-direction: column; gap: 11px; }
+  .pb .name { font-family: var(--mono); font-size: 12.5px; letter-spacing: .01em; font-weight: 600; }
+  .pb .q { font-size: 14px; color: var(--ink-soft); line-height: 1.5; }
+  .pb dl { margin: 0; display: grid; grid-template-columns: 68px 1fr; gap: 5px 11px; font-size: 12.4px; align-items: start; }
+  .pb dt { font-family: var(--mono); font-size: 9.5px; letter-spacing: .11em; text-transform: uppercase; color: var(--ink-faint); padding-top: 3px; }
+  .pb dd { margin: 0; color: var(--ink-soft); line-height: 1.45; }
+
+  /* ---------- verdict card ---------- */
+  .verdict { border: 1px solid var(--line-strong); border-radius: 12px; overflow: hidden; margin: 26px 0; background: var(--surface); }
+  .verdict-top { padding: 18px 22px; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between; }
+  .verdict-title { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; color: var(--ink-soft); }
+  .verdict-call { font-family: var(--mono); font-size: 13px; letter-spacing: .1em; text-transform: uppercase; padding: 5px 12px; border-radius: 4px; font-weight: 600; }
+  .call-ship { color: var(--a-ink); background: var(--a-tint); border: 1px solid var(--a-ink); }
+  .call-hold { color: var(--warn-ink); background: var(--warn-tint); border: 1px solid var(--warn-ink); }
+  .verdict-body { padding: 4px 0 0; }
+  .verdict-body table { min-width: 620px; }
+  .verdict-note { padding: 16px 22px; border-top: 1px solid var(--line); font-size: 13.5px; color: var(--ink-soft); line-height: 1.55; }
+
+  /* error bar viz */
+  .bar-cell { min-width: 190px; }
+  .ebar { position: relative; height: 22px; }
+  .ebar .zero { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--line-strong); }
+  .ebar .whisk { position: absolute; top: 10px; height: 1px; }
+  .ebar .pt { position: absolute; top: 7px; width: 7px; height: 7px; border-radius: 50%; margin-left: -3.5px; }
+
+  /* ---------- callouts ---------- */
+  .note {
+    border-left: 2px solid var(--line-strong);
+    padding: 4px 0 4px 18px;
+    margin: 24px 0;
+    max-width: var(--measure);
+  }
+  .note.a { border-color: var(--a-ink); }
+  .note.bad { border-color: var(--bad-ink); }
+  .note.warn { border-color: var(--warn-ink); }
+  .note p { margin: 8px 0; }
+  .note p:first-child { margin-top: 0; }
+  .note p:last-child { margin-bottom: 0; }
+
+  .kicker { font-family: var(--mono); font-size: 10.5px; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-faint); display: block; margin-bottom: 6px; }
+
+  /* ---------- route comparison ---------- */
+  .routes { display: grid; grid-template-columns: repeat(auto-fit, minmax(258px,1fr)); gap: 14px; margin: 26px 0; }
+  .route { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 20px 21px; display: flex; flex-direction: column; gap: 12px; }
+  .route .rname { font-family: var(--mono); font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+  .route .rsub { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); letter-spacing: .04em; }
+  .route ul { padding-left: 1em; margin: 0; font-size: 13.2px; color: var(--ink-soft); }
+  .route li { margin: 5px 0; line-height: 1.45; }
+  .route .lever { margin-top: auto; padding-top: 12px; border-top: 1px dashed var(--line-strong); font-size: 12.5px; line-height: 1.45; }
+
+  /* ---------- fidelity ladder ---------- */
+  .ladder { display: flex; flex-direction: column; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin: 26px 0; }
+  .rung { background: var(--surface); padding: 16px 20px; display: grid; grid-template-columns: 120px 1fr 145px; gap: 18px; align-items: center; }
+  @media (max-width: 720px) { .rung { grid-template-columns: 1fr; gap: 7px; } }
+  .rung .lvl { font-family: var(--mono); font-size: 11.5px; font-weight: 600; }
+  .rung .desc { font-size: 13.5px; color: var(--ink-soft); line-height: 1.45; }
+  .rung .cost { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); text-align: right; }
+  @media (max-width: 720px) { .rung .cost { text-align: left; } }
+
+  /* ---------- footer ---------- */
+  footer { margin-top: 96px; padding-top: 26px; border-top: 1px solid var(--line); font-size: 13.5px; color: var(--ink-faint); }
+  footer p { max-width: var(--measure); }
+  footer a { color: var(--ink-soft); }
+
+  hr.rule { border: none; border-top: 1px solid var(--line); margin: 40px 0 0; }
+</style>
+
+<div class="shell">
+
+  <nav class="rail" aria-label="Contents">
+    <div class="rail-label">Technicality</div>
+    <div class="gauge" id="gauge">
+      <div class="gauge-fill" id="gaugeFill"></div>
+      <a href="#problem"><span class="lv">L0</span><span>The problem</span></a>
+      <a href="#ask"><span class="lv">L1</span><span>Three bullets</span></a>
+      <a href="#pipeline"><span class="lv">L2</span><span>Five stages</span></a>
+      <a href="#fixtures"><span class="lv">L3</span><span>Fixtures</span></a>
+      <a href="#arms"><span class="lv">L4</span><span>Arms</span></a>
+      <a href="#playbooks"><span class="lv">L5</span><span>Playbooks</span></a>
+      <a href="#routes"><span class="lv">L6</span><span>Token routes</span></a>
+      <a href="#fly"><span class="lv">L7</span><span>Fly execution</span></a>
+      <a href="#telemetry"><span class="lv">L8</span><span>Telemetry</span></a>
+      <a href="#stats"><span class="lv">L9</span><span>Statistics</span></a>
+      <a href="#foreign"><span class="lv">L9</span><span>Foreign arms</span></a>
+      <a href="#priorart"><span class="lv">—</span><span>Prior art</span></a>
+      <a href="#package"><span class="lv">—</span><span>The package</span></a>
+      <a href="#risks"><span class="lv">—</span><span>Risks &amp; cost</span></a>
+      <a href="#roadmap"><span class="lv">—</span><span>Roadmap</span></a>
+    </div>
+  </nav>
+
+  <main>
+
+    <header class="masthead">
+      <div class="eyebrow">
+        <span>Delta Bench</span><span class="dot"></span>
+        <span>Design proposal</span><span class="dot"></span>
+        <span>Not built</span>
+      </div>
+      <h1>Proving a release is better than the one before it.</h1>
+      <p class="standfirst">
+        Delta Harness ships context-management changes that move real money. We have no way to
+        prove any of them work. Delta Bench replays your own production runs against two versions
+        of the engine and returns a verdict with error bars on it.
+      </p>
+
+      <div class="meta-strip">
+        <div><span class="meta-k">Proposed package</span><span class="meta-v">@carrara-labs/delta-bench</span></div>
+        <div><span class="meta-k">Licence</span><span class="meta-v">Apache-2.0, OSS</span></div>
+        <div><span class="meta-k">Status</span><span class="meta-v">design only</span></div>
+        <div><span class="meta-k">Written</span><span class="meta-v">2026-08-07</span></div>
+      </div>
+    </header>
+
+    <!-- ============================= L0 ============================= -->
+    <section id="problem">
+      <div class="sec-head"><span class="sec-lv">L0</span><h2>One change, three answers</h2></div>
+      <p class="lede">
+        Start with the thing that happened last week, because the whole design falls out of it.
+      </p>
+
+      <p>
+        During 0.2.12 I made one change to how the engine bounds tool-call arguments, ran it once
+        against a control, and reported the result. Then I ran the identical change again.
+      </p>
+
+      <div class="three-reads">
+        <div class="read">
+          <span class="when">Run 1 · reported</span>
+          <span class="val ink-a">−29.9%</span>
+          <span class="say">A big win. This is the number that went into a summary and nearly went into a changelog.</span>
+        </div>
+        <div class="read">
+          <span class="when">Run 2 · same change</span>
+          <span class="val ink-bad">+22.9%</span>
+          <span class="say">Same code, same fixture, same model. The sign flipped.</span>
+        </div>
+        <div class="read">
+          <span class="when">Run 1 · re-examined</span>
+          <span class="val ink-bad">+50% work</span>
+          <span class="say">The "cheap" arm had quietly done 18 writes where the control did 10. It looked cheap because it was throwing work away.</span>
+        </div>
+      </div>
+
+      <p>
+        Three separate failures, and only one of them is about the number:
+      </p>
+      <ol>
+        <li><strong>One run against a nondeterministic model is not a measurement.</strong> Three
+          runs of that same change produced 163k, 286k and 202k tokens on one fixture.</li>
+        <li><strong>The metric set was chosen after the result was seen</strong>, so it happened not
+          to include the metric that would have caught the regression.</li>
+        <li><strong>The workload was invented by the person judging the result.</strong> I designed a
+          fixture, so it measured what I expected it to measure.</li>
+      </ol>
+
+      <div class="note bad">
+        <span class="kicker">The actual problem behind the problem</span>
+        <p>
+          Delta Harness is a context-economics engine. 0.2.11 moved a production agent's cache hit
+          rate from 11% to 91% and cut cost by a third at volume. Those are the changes that justify
+          the project, and they are exactly the changes whose effect is invisible to a unit test and
+          drowned in variance by a single live run.
+        </p>
+        <p>
+          We have 883 passing tests. Not one of them can tell you whether the next release is
+          cheaper, faster, or better than the last. <strong>That is the gap.</strong>
+        </p>
+      </div>
+
+      <h3>What Delta Bench is, in one sentence</h3>
+      <p>
+        A benchmark rig that takes <strong>real runs your agents already did</strong>, replays them
+        against <strong>two or more versions of the engine</strong> under identical conditions, and
+        gives you <strong>one table with a quality gate, a cost delta, and a confidence interval</strong>
+        — so "this release is an upgrade" becomes a claim you can check instead of a claim you make.
+      </p>
+    </section>
+
+    <!-- ============================= L1 ============================= -->
+    <section id="ask">
+      <div class="sec-head"><span class="sec-lv">L1</span><h2>You write three bullets. It writes the experiment.</h2></div>
+      <p class="lede">
+        The interaction has to be cheap or it will not get used. You should not have to know which
+        fixtures, which metrics, or which statistics a question needs — that knowledge belongs in
+        the rig, not in your head.
+      </p>
+
+      <pre><code><span class="c"># what you type</span>
+$ bench plan
+&gt; <span class="hl">compaction seems to fire too often on long Ferni threads</span>
+&gt; <span class="hl">I want to try raising the trigger threshold</span>
+&gt; <span class="hl">must not cost us any answer quality</span>
+^D
+</code></pre>
+
+      <pre><code><span class="c"># what it hands back, for you to approve or edit</span>
+PLAN  <span class="hl2">compaction-trigger-threshold</span>                        est. $41  ·  ~2h10m
+
+  playbook   <span class="hl2">context-economics</span>   <span class="c">(matched on: "compaction", "threshold")</span>
+  gate       answer-equivalence, judge=claude-opus-5, calibrated n=40
+             <span class="c">↳ a cheaper arm that answers worse FAILS before cost is read</span>
+
+  fixtures   12 replays  <span class="c">selected from agent_events, last 30d</span>
+               8 × ferni       turns 40-120, ≥3 compactions   <span class="c">← the population you named</span>
+               2 × ferni       turns &gt;200                     <span class="c">← tail</span>
+               2 × quick-search  turns &lt;12                    <span class="c">← CONTROL, must not move</span>
+
+  arms       A  0.2.12                       <span class="c">(baseline, npm)</span>
+             B  worktree @ HEAD              <span class="c">(candidate)</span>
+  repeats    5 per arm per fixture           <span class="c">= 120 runs</span>
+  route      anthropic-native                <span class="c">(matches Ferni prod)</span>
+
+  metrics    <span class="c">FIXED NOW, before you write the code:</span>
+             gate     answer-equivalence · task-completion
+             primary  cost_usd/run · cache_hit_rate · compactions/run
+             guard    duplicate_tool_calls · turns_to_done · rework_ratio
+             report   p50/p95 latency · tokens in/out/cached
+
+  run:  bench run compaction-trigger-threshold --lane
+</code></pre>
+
+      <div class="note a">
+        <p>
+          <strong>The guard metrics are the point.</strong> <code>duplicate_tool_calls</code> and
+          <code>rework_ratio</code> are in that list because they are what caught the 0.2.12
+          regression — after the fact. The rig fixes the metric set at <em>plan</em> time so a
+          change can never again be judged by a scorecard drawn up once the result is known.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============================= L2 ============================= -->
+    <section id="pipeline">
+      <div class="sec-head"><span class="sec-lv">L2</span><h2>Five stages</h2></div>
+      <p class="lede">Everything the rig does is one of these. Nothing else lives in it.</p>
+
+      <div class="scroller">
+        <div class="pipe">
+          <div class="stage">
+            <span class="n">01</span><span class="t">Ask</span>
+            <span class="d">Your bullets, matched to a playbook. The playbook carries the gate, the metric set and the fixture query.</span>
+            <span class="out">→ plan.json</span>
+          </div>
+          <div class="stage">
+            <span class="n">02</span><span class="t">Select</span>
+            <span class="d">Query <code>agent_events</code> for real runs matching the population. Freeze them as an immutable fixture set with a content hash.</span>
+            <span class="out">→ fixtures/*.jsonl</span>
+          </div>
+          <div class="stage">
+            <span class="n">03</span><span class="t">Run</span>
+            <span class="d">Every fixture × every arm × every repetition, on isolated ephemeral machines, from identical seeded state.</span>
+            <span class="out">→ transcripts + events</span>
+          </div>
+          <div class="stage">
+            <span class="n">04</span><span class="t">Score</span>
+            <span class="d">Gate first (deterministic checks, then a calibrated judge). Only what passes the gate is eligible for a cost comparison.</span>
+            <span class="out">→ scores.jsonl</span>
+          </div>
+          <div class="stage">
+            <span class="n">05</span><span class="t">Verdict</span>
+            <span class="d">Paired differences per fixture, standard errors, confidence intervals. Ship / hold / inconclusive, with the reason.</span>
+            <span class="out">→ verdict.md + report.html</span>
+          </div>
+        </div>
+      </div>
+
+      <p>
+        The rig itself stays thin, deliberately. It drives the daemon's public seam and reads the
+        telemetry every agent already emits. <strong>No product API, no product database, no
+        per-app adapter.</strong> That is what makes one rig work across Quick Search, Intake, Prep,
+        Ferni and Brain without knowing anything about any of them.
+      </p>
+
+      <div class="figure">
+        <h4>What it talks to</h4>
+        <svg viewBox="0 0 760 210" role="img" aria-label="Delta Bench drives the daemon seam and reads the telemetry outbox">
+          <rect x="0" y="62" width="150" height="86" rx="8" class="svg-surface" stroke="var(--line-strong)"/>
+          <text x="75" y="98" text-anchor="middle" class="mono-t svg-ink" font-weight="600">delta-bench</text>
+          <text x="75" y="116" text-anchor="middle" class="mono-s svg-faint">DRIVER + SCORER</text>
+
+          <rect x="300" y="20" width="180" height="76" rx="8" fill="none" stroke="var(--line-strong)"/>
+          <text x="390" y="48" text-anchor="middle" class="mono-t svg-ink" font-weight="600">delta daemon</text>
+          <text x="390" y="66" text-anchor="middle" class="mono-s svg-faint">ARM A · 0.2.12</text>
+          <text x="390" y="82" text-anchor="middle" class="mono-s svg-a">POST /v1/tasks</text>
+
+          <rect x="300" y="114" width="180" height="76" rx="8" fill="none" stroke="var(--line-strong)"/>
+          <text x="390" y="142" text-anchor="middle" class="mono-t svg-ink" font-weight="600">delta daemon</text>
+          <text x="390" y="160" text-anchor="middle" class="mono-s svg-faint">ARM B · candidate</text>
+          <text x="390" y="176" text-anchor="middle" class="mono-s svg-b">POST /v1/tasks</text>
+
+          <rect x="580" y="62" width="170" height="86" rx="8" fill="none" stroke="var(--line-strong)"/>
+          <text x="665" y="92" text-anchor="middle" class="mono-t svg-ink" font-weight="600">agent_events</text>
+          <text x="665" y="110" text-anchor="middle" class="mono-s svg-faint">NDJSON OUTBOX</text>
+          <text x="665" y="128" text-anchor="middle" class="mono-s svg-faint">turn.end · model.call</text>
+
+          <path d="M150 92 L 300 58" fill="none" class="svg-line" stroke-width="1"/>
+          <path d="M150 118 L 300 152" fill="none" class="svg-line" stroke-width="1"/>
+          <path d="M480 58 L 580 92" fill="none" class="svg-line" stroke-width="1" stroke-dasharray="3 3"/>
+          <path d="M480 152 L 580 118" fill="none" class="svg-line" stroke-width="1" stroke-dasharray="3 3"/>
+          <path d="M580 138 C 400 205, 250 205, 150 138" fill="none" class="svg-line" stroke-width="1"/>
+
+          <text x="222" y="52" text-anchor="middle" class="mono-s svg-faint">drive</text>
+          <text x="536" y="52" text-anchor="middle" class="mono-s svg-faint">emit</text>
+          <text x="365" y="203" text-anchor="middle" class="mono-s svg-faint">read back</text>
+        </svg>
+        <p class="figcap">
+          Two surfaces, both already public and already stable: <code>POST /v1/tasks</code> to drive a
+          turn, and the telemetry outbox to read what it cost. Both are part of the harness contract,
+          so the bench needs no privileged access and no engine changes to work.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============================= L3 ============================= -->
+    <section id="fixtures">
+      <div class="sec-head"><span class="sec-lv">L3</span><h2>Fixtures come from production, not from imagination</h2></div>
+      <p class="lede">
+        This is the one design decision everything else depends on, and it is the one I got wrong
+        the first time.
+      </p>
+
+      <p>
+        A fixture I invent measures what I expect. A fixture drawn from a real run measures what
+        actually happens — including the parts nobody thought to look for. We now have enough
+        traffic that the interesting runs announce themselves, and they are already sitting in
+        <code>agent_events</code> with their inputs, turn counts and outcomes.
+      </p>
+
+      <div class="grid g4 mt">
+        <div class="card">
+          <h4>Expensive</h4>
+          <p style="margin:0;font-size:13.5px;color:var(--ink-soft);line-height:1.5">Top cost per run, or worst cost per delivered unit. Where an engine change pays for itself.</p>
+        </div>
+        <div class="card">
+          <h4>Long</h4>
+          <p style="margin:0;font-size:13.5px;color:var(--ink-soft);line-height:1.5">Highest turn counts and wall-clock outliers. The only place compaction and cache decay are visible.</p>
+        </div>
+        <div class="card">
+          <h4>Repetitive</h4>
+          <p style="margin:0;font-size:13.5px;color:var(--ink-soft);line-height:1.5">The user had to follow up many times — the honest signal that the agent did not finish the job.</p>
+        </div>
+        <div class="card">
+          <h4>Failed</h4>
+          <p style="margin:0;font-size:13.5px;color:var(--ink-soft);line-height:1.5"><code>context_irreducible</code>, budget exhaustion, breaker latches, compaction storms.</p>
+        </div>
+      </div>
+
+      <h3>A fixture is a frozen conversation, not a prompt</h3>
+      <p>
+        Replaying a real run means replaying its <em>shape</em>: the seeded workspace, the bundle in
+        force at the time, the ordered user turns, and the tool surface that was connected. What it
+        must <strong>not</strong> replay is the side effects.
+      </p>
+
+      <pre><code>fixtures/ferni-2026-07-31-a91c4/
+├── manifest.json      <span class="c">agent, bundle hash, model, route, turn count, why selected</span>
+├── seed/              <span class="c">workspace state at t=0, restored fresh for every single run</span>
+├── turns.jsonl        <span class="c">the ordered user inputs, verbatim</span>
+└── tools.json         <span class="c">tool surface + record/replay policy per tool</span>
+</code></pre>
+
+      <div class="note warn">
+        <span class="kicker">The honest limitation</span>
+        <p>
+          Replay fidelity is a spectrum, not a guarantee. Read-only tools (<code>search</code>,
+          <code>fetch</code>, an MCP knowledge-base read) replay perfectly from a recorded cassette.
+          Tools with side effects — sending a message, writing to a client's system — must be
+          stubbed, and a stub is a place where the replay stops being the real run.
+        </p>
+        <p>
+          The rig should state which tools were live, which were replayed, and which were stubbed,
+          <em>on the verdict</em>. A result whose fixture stubbed half the tool surface deserves less
+          of your confidence, and the report should say so rather than let you infer it.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============================= L4 ============================= -->
+    <section id="arms">
+      <div class="sec-head"><span class="sec-lv">L4</span><h2>Four kinds of arm</h2></div>
+      <p class="lede">
+        An arm is anything you can point the same fixture at. The rig does not care which kind you
+        pick, which is what lets one tool answer four different questions.
+      </p>
+
+      <div class="grid g2 mt">
+        <div class="card">
+          <span class="tag a">Engine</span>
+          <h3 style="margin:12px 0 6px">Version vs version</h3>
+          <p style="margin:0;font-size:14px;color:var(--ink-soft)">
+            <code>0.2.12</code> from npm against your worktree at HEAD. The release gate: is the next
+            version actually an upgrade?
+          </p>
+        </div>
+        <div class="card">
+          <span class="tag b">Bundle</span>
+          <h3 style="margin:12px 0 6px">Config vs config</h3>
+          <p style="margin:0;font-size:14px;color:var(--ink-soft)">
+            Same engine, different <code>DELTA.md</code>, <code>POLICY.md</code>, model, effort level
+            or tool surface. The question an <em>operator</em> has, and the one nobody can answer today.
+          </p>
+        </div>
+        <div class="card">
+          <span class="tag">Route</span>
+          <h3 style="margin:12px 0 6px">Token route vs token route</h3>
+          <p style="margin:0;font-size:14px;color:var(--ink-soft)">
+            Identical engine and bundle, reached through Anthropic-native, OpenAI-native or
+            OpenRouter. Cache economics differ per route — see <a href="#routes">L6</a>.
+          </p>
+        </div>
+        <div class="card">
+          <span class="tag">Foreign</span>
+          <h3 style="margin:12px 0 6px">Delta vs another harness</h3>
+          <p style="margin:0;font-size:14px;color:var(--ink-soft)">
+            The same fixture driven through OpenClaw, Pi or Hermes Agent behind a thin adapter.
+            Honest comparison, with caveats — see <a href="#foreign">L9</a>.
+          </p>
+        </div>
+      </div>
+
+      <p class="mt">
+        Arms are declared, never inferred. An arm pins an engine source, a bundle hash, a model, a
+        route and an effort level; anything unpinned is a confound, and the rig refuses to run a
+        plan with an unpinned axis rather than quietly varying two things at once.
+      </p>
+    </section>
+
+    <!-- ============================= L5 ============================= -->
+    <section id="playbooks">
+      <div class="sec-head"><span class="sec-lv">L5</span><h2>The playbook library</h2></div>
+      <p class="lede">
+        A playbook is the accumulated knowledge of how to test one class of change: which fixtures
+        it needs, what its gate is, which metrics are load-bearing, and how many repetitions before
+        the answer means anything. This is the cookbook, and it is the part that gets better every
+        time we use it.
+      </p>
+
+      <div class="grid g2 mt">
+
+        <div class="pb">
+          <span class="name">context-economics</span>
+          <span class="q">Does this change make long threads cheaper without making them dumber?</span>
+          <dl>
+            <dt>Fixtures</dt><dd>Longest + most expensive runs; ≥3 compactions; plus a short control</dd>
+            <dt>Gate</dt><dd>Answer equivalence vs baseline, judged</dd>
+            <dt>Primary</dt><dd>cost/run · cache hit rate · compactions/run</dd>
+            <dt>Guard</dt><dd>duplicate tool calls · rework ratio · turns to done</dd>
+            <dt>Repeats</dt><dd>5 (high variance class)</dd>
+          </dl>
+        </div>
+
+        <div class="pb">
+          <span class="name">cache-economics</span>
+          <span class="q">Did we improve prefix stability, or just move the breakpoints around?</span>
+          <dl>
+            <dt>Fixtures</dt><dd>Threads with a warmed cache, ≥20 turns</dd>
+            <dt>Gate</dt><dd>Task completion unchanged</dd>
+            <dt>Primary</dt><dd>cached-read share · cache-miss turns after warm · write premium paid</dd>
+            <dt>Guard</dt><dd>Turns where context shrank vs prior turn</dd>
+            <dt>Repeats</dt><dd>3, and always across ≥2 routes</dd>
+          </dl>
+        </div>
+
+        <div class="pb">
+          <span class="name">rework-and-reliability</span>
+          <span class="q">Is the agent redoing work it already did?</span>
+          <dl>
+            <dt>Fixtures</dt><dd>Runs with the highest repeated-tool-call counts</dd>
+            <dt>Gate</dt><dd>Deterministic: output artefacts byte-comparable</dd>
+            <dt>Primary</dt><dd>duplicate writes · retries · breaker latches</dd>
+            <dt>Guard</dt><dd>cost (a rework fix that costs more is still a fix)</dd>
+            <dt>Repeats</dt><dd>3 — structural metrics stabilise fast</dd>
+          </dl>
+        </div>
+
+        <div class="pb">
+          <span class="name">latency</span>
+          <span class="q">Did we make the user wait longer for the first useful token?</span>
+          <dl>
+            <dt>Fixtures</dt><dd>Interactive runs; short turns weighted heavily</dd>
+            <dt>Gate</dt><dd>Completion unchanged</dd>
+            <dt>Primary</dt><dd>p50/p95 time-to-first-token · turn wall clock</dd>
+            <dt>Guard</dt><dd>cold-resume path timed separately from warm</dd>
+            <dt>Repeats</dt><dd>7 (latency is the noisiest metric we have)</dd>
+          </dl>
+        </div>
+
+        <div class="pb">
+          <span class="name">quality-regression</span>
+          <span class="q">Does the release still do everything the last one did?</span>
+          <dl>
+            <dt>Fixtures</dt><dd>The graduated set: every capability eval that has hit ~100%</dd>
+            <dt>Gate</dt><dd>Near-100% pass expected; any drop blocks</dd>
+            <dt>Primary</dt><dd>pass^k across k repeats, not pass@k</dd>
+            <dt>Guard</dt><dd>—</dd>
+            <dt>Repeats</dt><dd>3 (consistency, not capability)</dd>
+          </dl>
+        </div>
+
+        <div class="pb">
+          <span class="name">bundle-tuning</span>
+          <span class="q">Did my DELTA.md / POLICY.md / model edit make this agent better?</span>
+          <dl>
+            <dt>Fixtures</dt><dd>That agent's own worst runs</dd>
+            <dt>Gate</dt><dd>Operator-authored rubric</dd>
+            <dt>Primary</dt><dd>rubric score · cost/run</dd>
+            <dt>Guard</dt><dd>refusals · off-policy actions</dd>
+            <dt>Repeats</dt><dd>5</dd>
+          </dl>
+        </div>
+
+        <div class="pb">
+          <span class="name">route-comparison</span>
+          <span class="q">Which token route is actually cheapest for this workload?</span>
+          <dl>
+            <dt>Fixtures</dt><dd>One representative run per agent type</dd>
+            <dt>Gate</dt><dd>Answer equivalence across routes</dd>
+            <dt>Primary</dt><dd>effective $/run · cached-read share · $/delivered unit</dd>
+            <dt>Guard</dt><dd>tool-call fidelity (routes differ in tool support)</dd>
+            <dt>Repeats</dt><dd>5</dd>
+          </dl>
+        </div>
+
+        <div class="pb">
+          <span class="name">cross-harness</span>
+          <span class="q">Where does Delta actually stand against OpenClaw, Pi and Hermes?</span>
+          <dl>
+            <dt>Fixtures</dt><dd>The portable subset — no Delta-specific tools</dd>
+            <dt>Gate</dt><dd>Task completion, judged identically for all arms</dd>
+            <dt>Primary</dt><dd>completion rate · $/completed task · turns</dd>
+            <dt>Guard</dt><dd>declared capability gaps, reported not hidden</dd>
+            <dt>Repeats</dt><dd>5</dd>
+          </dl>
+        </div>
+
+      </div>
+
+      <div class="note a">
+        <p>
+          <strong>Playbooks are how the rig gets smarter without getting bigger.</strong> Every time
+          a test struggles, what it struggled with becomes a line in a playbook — the repetition
+          count that turned out to be too low, the guard metric that should have been there. The
+          engine stays lean; the accumulated judgement lives in data.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============================= L6 ============================= -->
+    <section id="routes">
+      <div class="sec-head"><span class="sec-lv">L6</span><h2>The route axis: the same change is worth different amounts on different wires</h2></div>
+      <p class="lede">
+        Delta already speaks three wire formats. They do not merely price caching differently —
+        they hand you a <em>different lever</em>, which means a context-management change can be a
+        win on one route and a no-op on another. Any bench that reports a single cost number without
+        naming the route is reporting a coincidence.
+      </p>
+
+      <div class="routes">
+        <div class="route">
+          <span class="rname">Anthropic-native</span>
+          <span class="rsub">api: "anthropic" · Messages API</span>
+          <ul>
+            <li>Caching is <strong>explicit</strong>: you place <code>cache_control</code> breakpoints yourself</li>
+            <li>Writes cost a premium over base input; reads are discounted roughly ten-fold</li>
+            <li>Minimum cacheable prefix around 1,024 tokens; TTL is a choice (short or long)</li>
+          </ul>
+          <div class="lever">
+            <strong>Lever: breakpoint placement.</strong> This is the route where 0.2.11's fix lived
+            — rolling breakpoints were landing on per-turn ephemeral blocks, so only the spine was
+            ever re-read. Placement is a strategy you can get catastrophically wrong, and therefore
+            one a bench can measurably improve.
+          </div>
+        </div>
+
+        <div class="route">
+          <span class="rname">OpenAI-native</span>
+          <span class="rsub">api: "responses" · incl. codex sign-in</span>
+          <ul>
+            <li>Caching is <strong>automatic</strong>: no breakpoints, no control, no write premium</li>
+            <li>The system matches the longest stable prefix above a ~1,024-token threshold</li>
+            <li>Discount on cached reads is set by the provider, not by you</li>
+          </ul>
+          <div class="lever">
+            <strong>Lever: prefix stability only.</strong> Breakpoint work is worth exactly zero
+            here. What pays is never mutating an early byte — which makes this the route that
+            punishes compaction rewrites hardest, and the one where the Sphere finding bites: a
+            context that <em>shrinks</em> versus the previous turn missed cache 16 times out of 16.
+          </div>
+        </div>
+
+        <div class="route">
+          <span class="rname">OpenRouter</span>
+          <span class="rsub">api: "openai" · default backup path</span>
+          <ul>
+            <li>Behaviour is <strong>whatever the upstream provider does</strong>, and can change under you</li>
+            <li>Cost arrives in the usage chunk rather than being computed locally</li>
+            <li>Same model, different upstream, different cache semantics</li>
+          </ul>
+          <div class="lever">
+            <strong>Lever: none — this route is a measurement, not a control.</strong> Its value in
+            the bench is as a fidelity check: if a change wins on the native routes but vanishes here,
+            the win depended on control we do not have in the fallback path, and the fleet should
+            know that before it fails over.
+          </div>
+        </div>
+      </div>
+
+      <div class="figure">
+        <h4>Why one number is not enough</h4>
+        <svg viewBox="0 0 760 240" role="img" aria-label="The same engine change produces different cache behaviour on each route">
+          <text x="0" y="16" class="mono-s svg-faint">SAME ENGINE CHANGE, MEASURED ON THREE ROUTES</text>
+
+          <!-- row 1 -->
+          <text x="0" y="62" class="mono-t svg-ink">anthropic-native</text>
+          <rect x="150" y="48" width="470" height="20" rx="3" class="svg-surface"/>
+          <rect x="150" y="48" width="404" height="20" rx="3" class="svg-a" opacity=".55"/>
+          <text x="632" y="63" class="mono-t svg-a">86% cached</text>
+          <text x="150" y="84" class="mono-s svg-faint">BREAKPOINTS MOVED → BIG WIN</text>
+
+          <!-- row 2 -->
+          <text x="0" y="132" class="mono-t svg-ink">openai-native</text>
+          <rect x="150" y="118" width="470" height="20" rx="3" class="svg-surface"/>
+          <rect x="150" y="118" width="386" height="20" rx="3" class="svg-b" opacity=".55"/>
+          <text x="632" y="133" class="mono-t svg-b">82% cached</text>
+          <text x="150" y="154" class="mono-s svg-faint">PREFIX UNCHANGED → NO EFFECT FROM BREAKPOINTS</text>
+
+          <!-- row 3 -->
+          <text x="0" y="202" class="mono-t svg-ink">openrouter</text>
+          <rect x="150" y="188" width="470" height="20" rx="3" class="svg-surface"/>
+          <rect x="150" y="188" width="150" height="20" rx="3" fill="var(--ink-faint)" opacity=".4"/>
+          <text x="632" y="203" class="mono-t svg-faint">unstable</text>
+          <text x="150" y="224" class="mono-s svg-faint">UPSTREAM-DEPENDENT → REPORT, DO NOT OPTIMISE AGAINST</text>
+        </svg>
+        <p class="figcap">
+          Illustrative shape, not measured data — this figure states the hypothesis the route
+          playbook exists to test. The point is structural: a change targeting breakpoint placement
+          <em>can only</em> pay on the route that has breakpoints, and a bench that averages across
+          routes will hide that.
+        </p>
+      </div>
+
+      <h3>What the rig needs from each route</h3>
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Route</th><th>Auth in the rig</th><th>Cost source</th><th>Cache signal available</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="k">anthropic-native</td>
+              <td>API key</td>
+              <td>Computed locally from the pricing table</td>
+              <td>Full: read, write and TTL per call</td>
+            </tr>
+            <tr>
+              <td class="k">openai-native</td>
+              <td>API key <em>or</em> the Codex subscription broker</td>
+              <td>Computed locally; subscription runs are metered but unbilled</td>
+              <td>Cached-token count only, no breakpoint control</td>
+            </tr>
+            <tr>
+              <td class="k">openrouter</td>
+              <td>API key</td>
+              <td>Reported by the provider in the usage chunk</td>
+              <td>Whatever the upstream chooses to report</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note warn">
+        <p>
+          <strong>A subscription arm needs its own accounting.</strong> Running an arm through the
+          Codex sign-in path produces real tokens at zero marginal dollars, so a naive
+          cost-per-run column would declare it the winner every time. The rig has to report
+          subscription arms in <em>tokens and turns</em>, and mark the dollar column
+          <code>n/a — subscription</code> rather than <code>$0.00</code>.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============================= L7 ============================= -->
+    <section id="fly">
+      <div class="sec-head"><span class="sec-lv">L7</span><h2>Execution: ephemeral Fly Machines, one per cell</h2></div>
+      <p class="lede">
+        A plan of 12 fixtures × 2 arms × 5 repeats is 120 runs. Run sequentially on a laptop that is
+        an overnight job with contaminated state; run as 120 short-lived machines it is about the
+        wall-clock of the slowest single run, with perfect isolation.
+      </p>
+
+      <div class="figure">
+        <h4>Fan-out</h4>
+        <svg viewBox="0 0 760 300" role="img" aria-label="One machine per fixture, arm and repetition, created and destroyed per cell">
+          <rect x="290" y="0" width="180" height="42" rx="7" class="svg-surface" stroke="var(--line-strong)"/>
+          <text x="380" y="26" text-anchor="middle" class="mono-t svg-ink" font-weight="600">bench run --lane</text>
+
+          <path d="M380 42 L380 62" class="svg-line" fill="none"/>
+          <rect x="250" y="62" width="260" height="38" rx="7" fill="none" stroke="var(--line-strong)"/>
+          <text x="380" y="80" text-anchor="middle" class="mono-t svg-ink">scheduler</text>
+          <text x="380" y="94" text-anchor="middle" class="mono-s svg-faint">120 CELLS · CONCURRENCY 16 · CHECKPOINTED</text>
+
+          <!-- fan lines -->
+          <path d="M300 100 L110 140" class="svg-line" fill="none"/>
+          <path d="M340 100 L250 140" class="svg-line" fill="none"/>
+          <path d="M380 100 L390 140" class="svg-line" fill="none"/>
+          <path d="M420 100 L530 140" class="svg-line" fill="none"/>
+          <path d="M460 100 L670 140" class="svg-line" fill="none"/>
+
+          <g>
+            <rect x="40" y="140" width="140" height="66" rx="7" fill="none" class="stroke-a"/>
+            <text x="110" y="162" text-anchor="middle" class="mono-s svg-a">MACHINE 01</text>
+            <text x="110" y="180" text-anchor="middle" class="mono-t svg-ink">arm A · fx-1</text>
+            <text x="110" y="196" text-anchor="middle" class="mono-s svg-faint">rep 1/5</text>
+          </g>
+          <g>
+            <rect x="192" y="140" width="140" height="66" rx="7" fill="none" class="stroke-b"/>
+            <text x="262" y="162" text-anchor="middle" class="mono-s svg-b">MACHINE 02</text>
+            <text x="262" y="180" text-anchor="middle" class="mono-t svg-ink">arm B · fx-1</text>
+            <text x="262" y="196" text-anchor="middle" class="mono-s svg-faint">rep 1/5</text>
+          </g>
+          <g>
+            <rect x="344" y="140" width="140" height="66" rx="7" fill="none" class="stroke-a"/>
+            <text x="414" y="162" text-anchor="middle" class="mono-s svg-a">MACHINE 03</text>
+            <text x="414" y="180" text-anchor="middle" class="mono-t svg-ink">arm A · fx-2</text>
+            <text x="414" y="196" text-anchor="middle" class="mono-s svg-faint">rep 1/5</text>
+          </g>
+          <g>
+            <rect x="496" y="140" width="140" height="66" rx="7" fill="none" class="stroke-b"/>
+            <text x="566" y="162" text-anchor="middle" class="mono-s svg-b">MACHINE 04</text>
+            <text x="566" y="180" text-anchor="middle" class="mono-t svg-ink">arm B · fx-2</text>
+            <text x="566" y="196" text-anchor="middle" class="mono-s svg-faint">rep 1/5</text>
+          </g>
+          <g>
+            <rect x="648" y="140" width="80" height="66" rx="7" fill="none" stroke="var(--line-strong)" stroke-dasharray="3 3"/>
+            <text x="688" y="178" text-anchor="middle" class="mono-t svg-faint">… ×116</text>
+          </g>
+
+          <path d="M110 206 L110 240" class="svg-line" fill="none" stroke-dasharray="3 3"/>
+          <path d="M262 206 L262 240" class="svg-line" fill="none" stroke-dasharray="3 3"/>
+          <path d="M414 206 L414 240" class="svg-line" fill="none" stroke-dasharray="3 3"/>
+          <path d="M566 206 L566 240" class="svg-line" fill="none" stroke-dasharray="3 3"/>
+          <path d="M688 206 L688 240" class="svg-line" fill="none" stroke-dasharray="3 3"/>
+
+          <rect x="40" y="240" width="688" height="42" rx="7" class="svg-surface" stroke="var(--line-strong)"/>
+          <text x="384" y="259" text-anchor="middle" class="mono-t svg-ink">collector</text>
+          <text x="384" y="274" text-anchor="middle" class="mono-s svg-faint">TRANSCRIPTS + EVENTS + USAGE · MACHINE DESTROYED ON DRAIN</text>
+        </svg>
+        <p class="figcap">
+          Each cell is one machine: created from the arm's image, seeded with the fixture's workspace,
+          driven through <code>/v1/tasks</code>, drained of telemetry, destroyed. Per-second billing
+          means 120 short machines cost about what 120 sequential runs cost, but finish in a fraction
+          of the wall clock — the trade we are making is concurrency, not money.
+        </p>
+      </div>
+
+      <h3>Why this is a natural fit rather than a clever hack</h3>
+      <p>
+        Delta already runs one agent per Machine in production, with a mounted volume for SQLite and
+        workspace, a control plane that owns suspend and resume, and <code>/healthz</code> as the
+        wake probe. A bench cell is the same shape with a shorter life. There is no second deployment
+        model to build and no second thing to keep in sync.
+      </p>
+
+      <h3>Fidelity is a ladder, and the rig should say which rung it ran on</h3>
+      <div class="ladder">
+        <div class="rung">
+          <span class="lvl ink-a">local</span>
+          <span class="desc">Daemon on your box, real bundle, real model. Fastest loop; hides everything about the platform.</span>
+          <span class="cost">seconds to start</span>
+        </div>
+        <div class="rung">
+          <span class="lvl">lane · warm</span>
+          <span class="desc">Real Fly Machine, already running. Real network, real volume, real region latency.</span>
+          <span class="cost">~1s to dispatch</span>
+        </div>
+        <div class="rung">
+          <span class="lvl ink-b">lane · cold</span>
+          <span class="desc">Machine started from suspended. The rung that catches what only appears on resume.</span>
+          <span class="cost">seconds, then MCP discovery</span>
+        </div>
+        <div class="rung">
+          <span class="lvl">lane · pinned</span>
+          <span class="desc">Same region and volume as the production agent being modelled. Slowest, most faithful, release-gate only.</span>
+          <span class="cost">provisioning</span>
+        </div>
+      </div>
+
+      <div class="note bad">
+        <span class="kicker">The rung that would have caught a real bug</span>
+        <p>
+          A 300-second first-turn stall in Quick Search turned out to be a dead pooled socket after
+          suspend-resume. No local run could ever have produced it, and no warm lane run either — it
+          only exists on the cold rung. A rig that offers only the fast rung will tell you a release
+          is fine and be wrong in the exact way that costs a client.
+        </p>
+      </div>
+
+      <h3>Getting the arm onto the machine</h3>
+      <pre><code><span class="c"># an arm resolves to an image, three ways, all pinned</span>
+arms:
+  A: { <span class="hl">npm: "@carrara-labs/delta-harness@0.2.12"</span> }   <span class="c">← what the fleet runs</span>
+  B: { <span class="hl2">git: "HEAD"</span> }                                <span class="c">← built from the worktree</span>
+  C: { <span class="hl2">image: "ghcr.io/carrara-labs/delta:0.2.11"</span> }  <span class="c">← an exact prior release</span>
+
+<span class="c"># resolved once, hashed, recorded in the verdict. "latest" is never an arm:</span>
+<span class="c"># a benchmark you cannot re-run against the same bytes is an anecdote.</span>
+</code></pre>
+    </section>
+
+    <!-- ============================= L8 ============================= -->
+    <section id="telemetry">
+      <div class="sec-head"><span class="sec-lv">L8</span><h2>Telemetry: nothing new to instrument</h2></div>
+      <p class="lede">
+        The reason this rig can be small is that the measurement layer already exists and is already
+        running in production. The bench is a reader, not an instrumenter.
+      </p>
+
+      <p>
+        Every Delta daemon emits a structured event per happening, correlated on the spine
+        <code>user → agent → session/run → task → turn</code>, into a local SQLite table that doubles
+        as a durable outbox and ships as NDJSON to a collector. Setting
+        <code>DELTA_CAPTURE_PAYLOADS=1</code> adds full prompts and outputs — off in production by
+        default, on in every bench cell, because a bench with no transcripts cannot grade anything.
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Event</th><th>What the bench takes from it</th><th>Feeds</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="k">turn.start / turn.end</td><td>Turn count, wall clock, terminal state</td><td>latency, completion</td></tr>
+            <tr><td class="k">model.call</td><td>Input, output, cache read, cache write, cost, latency per call</td><td>every cost and cache metric</td></tr>
+            <tr><td class="k">tool.call / tool.result</td><td>Name, arguments, outcome, duplicates</td><td>rework, guard metrics</td></tr>
+            <tr><td class="k">compaction</td><td>Trigger, tokens before/after, what was demoted</td><td>context-economics</td></tr>
+            <tr><td class="k">recall / retrieval</td><td>What was pulled back and whether it was used</td><td>memory playbooks</td></tr>
+            <tr><td class="k">self.pressure</td><td>Breaker state, self-write caps</td><td>reliability</td></tr>
+            <tr><td class="k">error</td><td>Class, provider, recoverability</td><td>failure-mode diffs</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>The metric taxonomy, and why the tiers matter</h3>
+      <div class="grid g4 mt">
+        <div class="card" style="border-color:var(--a-ink)">
+          <h4 style="color:var(--a-ink)">Gate</h4>
+          <p style="margin:0;font-size:13.5px;color:var(--ink-soft);line-height:1.5">
+            Did it do the job? Read <strong>first</strong>. Fail here and no cost number is printed at all.
+          </p>
+        </div>
+        <div class="card">
+          <h4>Primary</h4>
+          <p style="margin:0;font-size:13.5px;color:var(--ink-soft);line-height:1.5">
+            The thing the change is trying to move. Declared in the plan, one to three metrics.
+          </p>
+        </div>
+        <div class="card" style="border-color:var(--bad-ink)">
+          <h4 style="color:var(--bad-ink)">Guard</h4>
+          <p style="margin:0;font-size:13.5px;color:var(--ink-soft);line-height:1.5">
+            What this class of change is known to break. A guard regression blocks a primary win.
+          </p>
+        </div>
+        <div class="card">
+          <h4>Report</h4>
+          <p style="margin:0;font-size:13.5px;color:var(--ink-soft);line-height:1.5">
+            Context, never a decision input. Printed so a human can spot something nobody predicted.
+          </p>
+        </div>
+      </div>
+
+      <div class="note a">
+        <p>
+          <strong>Gate before cost is the single most important rule in the rig</strong>, because the
+          failure it prevents is the one that actually happened. An arm that filed 4 of 10 pages as
+          garbage looked 60% cheaper, and cheapness was the first thing I looked at. Under this
+          ordering that arm never reaches a cost column — it is reported as a gate failure and
+          the comparison stops there.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============================= L9 ============================= -->
+    <section id="stats">
+      <div class="sec-head"><span class="sec-lv">L9</span><h2>Statistics: where the error bars come from</h2></div>
+      <p class="lede">
+        This is the part that turns a pile of runs into a decision, and it is the part I skipped.
+        The methods below are standard for model evaluation; none of them are exotic, and all of
+        them are cheap relative to the cost of shipping a regression.
+      </p>
+
+      <h3>Paired differences, because the pairing is free</h3>
+      <p>
+        Both arms run the <strong>same fixture</strong>. That means the right statistic is not "mean
+        of A versus mean of B" but the mean of the per-fixture <em>difference</em>. Fixture-to-fixture
+        variation — some runs are simply longer and pricier than others — cancels out entirely, and
+        what is left is the effect of the change. Published work on model evals puts the correlation
+        between arms on the same question between roughly 0.3 and 0.7; the variance reduction from
+        pairing is substantial and costs nothing but bookkeeping.
+      </p>
+
+      <h3>Repetitions, because the model is nondeterministic</h3>
+      <p>
+        Each fixture runs <em>k</em> times per arm. The playbook sets <em>k</em> from how noisy that
+        metric class is: structural counts settle in about three, latency needs seven or more. Where
+        the question is "does it work every time" rather than "can it work", the statistic is
+        <strong>pass^k</strong> — the probability all <em>k</em> succeed — not pass@k, because a
+        production agent that succeeds one try in three is not a working agent.
+      </p>
+
+      <h3>Clustered standard errors, because fixtures are not independent</h3>
+      <p>
+        Five repetitions of one fixture are five correlated observations, not five independent ones.
+        Treating them as independent shrinks the error bars fraudulently. Clustering the standard
+        error at the fixture level is the correction, and it is what stops the rig from manufacturing
+        confidence it has not earned.
+      </p>
+
+      <h3>What a verdict looks like</h3>
+
+      <div class="verdict">
+        <div class="verdict-top">
+          <span class="verdict-title">compaction-trigger-threshold · A 0.2.12 → B HEAD · 12 fixtures × 5 · anthropic-native</span>
+          <span class="verdict-call call-hold">Hold</span>
+        </div>
+        <div class="verdict-body">
+          <div class="scroller" style="margin:0;border:none;border-radius:0">
+            <table>
+              <thead>
+                <tr>
+                  <th>Metric</th><th>Tier</th>
+                  <th class="num">A</th><th class="num">B</th>
+                  <th class="num">Δ paired</th>
+                  <th class="bar-cell">95% CI</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>answer-equivalence</td><td><span class="tag a">gate</span></td>
+                  <td class="num">60/60</td><td class="num">59/60</td>
+                  <td class="num ink-a">pass</td>
+                  <td class="bar-cell"><span style="font-family:var(--mono);font-size:11.5px;color:var(--ink-faint)">1 failure, judged non-systematic</span></td>
+                </tr>
+                <tr>
+                  <td>cost per run</td><td><span class="tag">primary</span></td>
+                  <td class="num">$0.412</td><td class="num">$0.331</td>
+                  <td class="num ink-a">−19.7%</td>
+                  <td class="bar-cell">
+                    <div class="ebar">
+                      <span class="zero"></span>
+                      <span class="whisk" style="left:8%;width:44%;background:var(--a-ink)"></span>
+                      <span class="pt" style="left:30%;background:var(--a-ink)"></span>
+                    </div>
+                    <span style="font-family:var(--mono);font-size:11px;color:var(--ink-faint)">[−31.2%, −7.9%]</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>cache hit rate</td><td><span class="tag">primary</span></td>
+                  <td class="num">71.4%</td><td class="num">83.9%</td>
+                  <td class="num ink-a">+12.5pt</td>
+                  <td class="bar-cell">
+                    <div class="ebar">
+                      <span class="zero"></span>
+                      <span class="whisk" style="left:56%;width:34%;background:var(--a-ink)"></span>
+                      <span class="pt" style="left:70%;background:var(--a-ink)"></span>
+                    </div>
+                    <span style="font-family:var(--mono);font-size:11px;color:var(--ink-faint)">[+4.1pt, +20.9pt]</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>duplicate tool calls</td><td><span class="tag bad">guard</span></td>
+                  <td class="num">0.4/run</td><td class="num">2.1/run</td>
+                  <td class="num ink-bad">+1.7</td>
+                  <td class="bar-cell">
+                    <div class="ebar">
+                      <span class="zero"></span>
+                      <span class="whisk" style="left:53%;width:35%;background:var(--bad-ink)"></span>
+                      <span class="pt" style="left:68%;background:var(--bad-ink)"></span>
+                    </div>
+                    <span style="font-family:var(--mono);font-size:11px;color:var(--ink-bad)">[+0.6, +2.8] · excludes zero</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>p95 turn latency</td><td><span class="tag">report</span></td>
+                  <td class="num">14.2s</td><td class="num">13.8s</td>
+                  <td class="num">−2.8%</td>
+                  <td class="bar-cell">
+                    <div class="ebar">
+                      <span class="zero"></span>
+                      <span class="whisk" style="left:33%;width:38%;background:var(--ink-faint)"></span>
+                      <span class="pt" style="left:47%;background:var(--ink-faint)"></span>
+                    </div>
+                    <span style="font-family:var(--mono);font-size:11px;color:var(--ink-faint)">[−19%, +14%] · not significant</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>control fixtures</td><td><span class="tag">report</span></td>
+                  <td class="num">—</td><td class="num">—</td>
+                  <td class="num">no change</td>
+                  <td class="bar-cell"><span style="font-family:var(--mono);font-size:11.5px;color:var(--ink-faint)">2/2 within noise, as required</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="verdict-note">
+          <strong>Hold.</strong> The primary win is real and survives its confidence interval, but
+          the rework guard regressed with an interval that excludes zero — the arm is buying its
+          cheapness partly by making the agent redo work. Fix the guard regression and re-run;
+          the primary effect is large enough that it will still be visible.
+        </div>
+      </div>
+
+      <p>
+        Illustrative numbers, real shape. Note what the card refuses to do: it will not summarise
+        itself as a single percentage, it will not report a cost delta without an interval, and it
+        will not let a primary win overrule a guard regression. <strong>Inconclusive is a first-class
+        verdict</strong> — an honest "we need more runs to tell" is worth more than a confident number
+        that flips sign on the next execution.
+      </p>
+    </section>
+
+    <!-- ============================= foreign ============================= -->
+    <section id="foreign">
+      <div class="sec-head"><span class="sec-lv">L9</span><h2>Foreign arms: running the same fixture through another harness</h2></div>
+      <p class="lede">
+        We claim Delta is leaner and cheaper. Right now that claim rests on reading competitors'
+        source, which is a good way to understand a design and a bad way to know a number.
+      </p>
+
+      <p>
+        A foreign arm is any runtime that can accept a task and return a transcript. The adapter
+        contract is deliberately the smallest thing that could work — one function, the same shape
+        the research-grade agent leaderboards converged on:
+      </p>
+
+      <pre><code>type ForeignArm = {
+  name: string
+  setup(fixture): Promise&lt;Handle&gt;        <span class="c">// seed workspace, start runtime</span>
+  send(handle, turn): Promise&lt;Transcript&gt; <span class="c">// one user turn in, transcript out</span>
+  usage(handle): Promise&lt;Usage&gt;           <span class="c">// tokens, cached, cost, per call</span>
+  teardown(handle): Promise&lt;void&gt;
+}
+</code></pre>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Arm</th><th>How it is driven</th><th>What is comparable</th><th>What is not</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="k">Delta</td>
+              <td><code>POST /v1/tasks</code></td>
+              <td>Everything</td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td class="k">OpenClaw</td>
+              <td>Gateway / headless CLI in its container</td>
+              <td>Completion, turns, tokens, cost, cache read/write</td>
+              <td>Tool surface differs; it carries a much larger built-in toolset</td>
+            </tr>
+            <tr>
+              <td class="k">Pi</td>
+              <td><code>AgentSession</code> in an isolated temp project dir</td>
+              <td>Completion, turns, tokens</td>
+              <td>Coding-agent shaped; several Delta fixtures are simply out of scope</td>
+            </tr>
+            <tr>
+              <td class="k">Hermes Agent</td>
+              <td>Python agent runner over a task record</td>
+              <td>Completion, turns, tool-call counts</td>
+              <td>Cost accounting differs; cache reporting is thinner</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note warn">
+        <span class="kicker">Fair comparison, or none</span>
+        <p>
+          Cross-harness numbers are the easiest thing in this whole document to produce dishonestly.
+          Three rules make them worth publishing: <strong>the fixture subset must be portable</strong>
+          (no Delta-specific tools), <strong>the grader must be identical for every arm</strong> and
+          blind to which arm produced the output, and <strong>capability gaps get declared, not
+          scored as failures</strong> — if a harness cannot do a fixture at all, that is a footnote in
+          the table, not a zero that flatters us.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============================= prior art ============================= -->
+    <section id="priorart">
+      <div class="sec-head"><span class="sec-lv">—</span><h2>Prior art, and an honest position</h2></div>
+      <p class="lede">
+        I went looking for who has already built this, partly for ideas and partly to find out
+        whether it needs building. Both answers were informative, and one of them was uncomfortable.
+      </p>
+
+      <h3>What the competition already has</h3>
+
+      <div class="grid g3 mt">
+        <div class="card">
+          <span class="tag bad">ahead of us</span>
+          <h3 style="margin:12px 0 6px">OpenClaw · <code>qa-lab</code></h3>
+          <p style="margin:0;font-size:13.6px;color:var(--ink-soft);line-height:1.5">
+            A full lab: a scenario catalogue, a Docker harness, JSONL replay, runtime-vs-runtime
+            parity, <strong>cache-miss diagnostics</strong>, a 551-line token-efficiency report,
+            mock-versus-live provider modes and a lab server with a UI. This is the closest thing to
+            Delta Bench that exists, and it is further along than I assumed.
+          </p>
+        </div>
+        <div class="card">
+          <span class="tag warn">partly</span>
+          <h3 style="margin:12px 0 6px">Pi · <code>packages/evals</code></h3>
+          <p style="margin:0;font-size:13.6px;color:var(--ink-soft);line-height:1.5">
+            Behavioural model-backed evals over a real agent session in isolated temp dirs, with a
+            <strong>baseline-versus-candidates table and repetition counts</strong> — genuine
+            statistical intent. Fixtures are hand-written smoke scenarios; no cost or cache metrics.
+          </p>
+        </div>
+        <div class="card">
+          <span class="tag warn">partly</span>
+          <h3 style="margin:12px 0 6px">Hermes · <code>batch_runner.py</code></h3>
+          <p style="margin:0;font-size:13.6px;color:var(--ink-soft);line-height:1.5">
+            Parallel batch execution over a JSONL dataset with multiprocessing,
+            <strong>checkpointing and resume</strong>, trajectory capture and tool-usage aggregation.
+            Built for training-data generation rather than release gating, but the fault-tolerance
+            design is the right one to copy.
+          </p>
+        </div>
+      </div>
+
+      <p class="mt">
+        Outside the three, the research world has converged on shapes worth borrowing: the
+        <strong>Holistic Agent Leaderboard</strong> validated a framework-agnostic harness across
+        21,730 rollouts on nine models and nine benchmarks for roughly $40,000, decoupling scaffold
+        from benchmark behind a one-function interface and tracking cost at the API-call level.
+        <strong>Inspect AI</strong> settled on a clean decomposition — dataset → task → solver →
+        scorer — with sandboxed execution and a log viewer. Anthropic's own eval guidance supplies
+        the discipline: capability suites separate from regression suites, grade the outcome and the
+        transcript but not the path, calibrate a model judge against human labels before trusting it,
+        and treat a 0% pass rate as a broken task until proven otherwise.
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr>
+              <th>Capability</th>
+              <th>OpenClaw qa-lab</th><th>Pi evals</th><th>Hermes batch</th>
+              <th>HAL / Inspect</th><th>Delta Bench</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Replays recorded transcripts</td><td>yes</td><td>no</td><td>dataset only</td><td>no</td><td class="ink-a">yes</td></tr>
+            <tr><td>Fixtures selected from production telemetry</td><td>no</td><td>no</td><td>no</td><td>no</td><td class="ink-a">yes</td></tr>
+            <tr><td>Baseline vs candidate arms</td><td>yes</td><td>yes</td><td>no</td><td>yes</td><td class="ink-a">yes</td></tr>
+            <tr><td>Repetitions per cell</td><td>unclear</td><td>yes</td><td>n/a</td><td>yes</td><td class="ink-a">yes</td></tr>
+            <tr><td>Confidence intervals on the delta</td><td>no</td><td>no</td><td>no</td><td>partial</td><td class="ink-a">yes</td></tr>
+            <tr><td>Cache-economics metrics</td><td class="ink-b">yes</td><td>no</td><td>no</td><td>no</td><td class="ink-a">yes</td></tr>
+            <tr><td>Compares token routes</td><td>partial</td><td>no</td><td>no</td><td>no</td><td class="ink-a">yes</td></tr>
+            <tr><td>Foreign-harness arms</td><td class="ink-b">yes (2)</td><td>no</td><td>no</td><td class="ink-b">yes</td><td class="ink-a">yes</td></tr>
+            <tr><td>Quality gate ordered before cost</td><td>no</td><td>n/a</td><td>no</td><td>no</td><td class="ink-a">yes</td></tr>
+            <tr><td>Ships standalone for consumers</td><td>no</td><td>no</td><td>no</td><td class="ink-b">yes</td><td class="ink-a">yes</td></tr>
+            <tr><td>Ephemeral cloud fan-out</td><td>Docker</td><td>no</td><td>local pool</td><td class="ink-b">yes</td><td class="ink-a">Fly-native</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note bad">
+        <p>
+          <strong>We would not be first, and the pitch should not pretend otherwise.</strong>
+          OpenClaw has replay, parity and cache diagnostics today. What none of them has is the
+          combination that makes this worth building: <em>fixtures drawn from production telemetry</em>,
+          <em>a statistical treatment that can say "inconclusive"</em>, <em>the route axis</em>, and
+          <em>shipping as a standalone package a customer can point at their own agent</em>. That last
+          one is the real differentiator — every rig above is welded into the runtime it tests.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============================= package ============================= -->
+    <section id="package">
+      <div class="sec-head"><span class="sec-lv">—</span><h2>What ships</h2></div>
+      <p class="lede">
+        Same shape as the harness and Connect: one Bun binary, zero runtime dependencies until one
+        earns its place, Apache-2.0, published to npm and ghcr.
+      </p>
+
+      <pre><code>@carrara-labs/delta-bench
+├── src/
+│   ├── plan.ts        <span class="c">bullets → plan.json  (playbook matching)</span>
+│   ├── select.ts      <span class="c">agent_events → frozen fixture set</span>
+│   ├── arms.ts        <span class="c">npm | git | image → pinned, hashed</span>
+│   ├── exec/
+│   │   ├── local.ts   <span class="c">daemon on this box</span>
+│   │   └── fly.ts     <span class="c">Machines API: create · seed · drive · drain · destroy</span>
+│   ├── score.ts       <span class="c">deterministic checks, then calibrated judge</span>
+│   ├── stats.ts       <span class="c">paired diffs · clustered SE · CI · pass^k</span>
+│   └── report.ts      <span class="c">verdict.md + a self-contained report.html</span>
+├── playbooks/         <span class="c">the cookbook — plain files, PR-able, versioned</span>
+└── adapters/          <span class="c">delta.ts · openclaw.ts · pi.ts · hermes.ts</span>
+</code></pre>
+
+      <pre><code><span class="c"># the whole CLI</span>
+bench plan                      <span class="c">interactive: bullets in, plan out</span>
+bench select --from ferni --last 30d --worst cost
+bench run &lt;plan&gt; [--local|--lane] [--resume]
+bench report &lt;run-id&gt; [--html]
+bench compare &lt;run-a&gt; &lt;run-b&gt;   <span class="c">two verdicts, one table</span>
+bench playbook list|show|add
+</code></pre>
+
+      <h3>Why a consumer would install it</h3>
+      <p>
+        The engine is product-neutral; the bench should be too. An Aperture or Ferni operator has
+        exactly the same question we do, one level up: <em>did my <code>DELTA.md</code> edit make
+        this agent better?</em> Prompt, policy, model, effort and tool-surface changes deserve the
+        same discipline as an engine change, and today nobody has any way to get it — they ship the
+        edit and watch the bill.
+      </p>
+      <p>
+        Point <code>bench</code> at your own agent, let it pull your own worst runs, get a table.
+        That closes the loop from "the engine is configurable" to "the configuration is
+        <em>tunable</em>", which is a materially different product claim.
+      </p>
+    </section>
+
+    <!-- ============================= risks ============================= -->
+    <section id="risks">
+      <div class="sec-head"><span class="sec-lv">—</span><h2>What it costs, and how it could go wrong</h2></div>
+
+      <div class="grid g2 mt">
+        <div class="card">
+          <h4 style="color:var(--bad-ink)">Money</h4>
+          <p style="margin:0;font-size:14px;color:var(--ink-soft);line-height:1.55">
+            Statistical rigour multiplies API spend. Twelve fixtures × two arms × five repeats is 120
+            real agent runs. <strong>Mitigation:</strong> the local rung for iteration, the lane rung
+            for gates only; short fixtures for smoke, long ones for release; a hard budget ceiling in
+            the plan that aborts rather than overruns.
+          </p>
+        </div>
+        <div class="card">
+          <h4 style="color:var(--bad-ink)">Replay fidelity</h4>
+          <p style="margin:0;font-size:14px;color:var(--ink-soft);line-height:1.55">
+            Side-effecting tools must be stubbed, and time-dependent state drifts. A replay is a
+            model of a run, not the run. <strong>Mitigation:</strong> declare live/replayed/stubbed
+            per tool on the verdict, and never let a heavily-stubbed fixture carry a release gate
+            alone.
+          </p>
+        </div>
+        <div class="card">
+          <h4 style="color:var(--bad-ink)">Fixture staleness</h4>
+          <p style="margin:0;font-size:14px;color:var(--ink-soft);line-height:1.55">
+            Fixtures are frozen so results stay comparable, which means they slowly stop resembling
+            what the product does now. <strong>Mitigation:</strong> date-stamp fixture sets, re-select
+            each quarter, and keep the old set runnable so historical verdicts remain meaningful.
+          </p>
+        </div>
+        <div class="card">
+          <h4 style="color:var(--bad-ink)">Judge drift</h4>
+          <p style="margin:0;font-size:14px;color:var(--ink-soft);line-height:1.55">
+            A model grader is itself a model, and it moves. <strong>Mitigation:</strong> pin the judge
+            model and prompt as part of the plan, keep a small human-labelled calibration set, and
+            re-check agreement whenever the judge is changed. An uncalibrated judge is a rumour.
+          </p>
+        </div>
+        <div class="card">
+          <h4 style="color:var(--bad-ink)">Rig sprawl</h4>
+          <p style="margin:0;font-size:14px;color:var(--ink-soft);line-height:1.55">
+            OpenClaw's lab is roughly 250 files. That is the natural end state of a rig that keeps
+            absorbing scope. <strong>Mitigation:</strong> the cookbook lives in data, not code —
+            playbooks are plain files, so the rig gets smarter without the binary getting fatter.
+          </p>
+        </div>
+        <div class="card">
+          <h4 style="color:var(--bad-ink)">Measuring the wrong thing well</h4>
+          <p style="margin:0;font-size:14px;color:var(--ink-soft);line-height:1.55">
+            A rig with beautiful statistics can still answer a question nobody asked.
+            <strong>Mitigation:</strong> fixtures come from real complaints and real cost outliers, so
+            the population is chosen by production rather than by whoever is writing the change.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================= roadmap ============================= -->
+    <section id="roadmap">
+      <div class="sec-head"><span class="sec-lv">—</span><h2>How I would build it</h2></div>
+      <p class="lede">
+        Thin slice first, and the thin slice has to be immediately useful on the very next engine
+        change — otherwise this becomes an infrastructure project that outlives its motivation.
+      </p>
+
+      <div class="ladder">
+        <div class="rung">
+          <span class="lvl ink-a">M0 · thin slice</span>
+          <span class="desc">
+            One playbook (<code>context-economics</code>), local rung only, fixtures hand-exported
+            from <code>agent_events</code>, paired differences and confidence intervals, gate before
+            cost. Enough to grade the age-gated elision change that is currently open.
+          </span>
+          <span class="cost">days</span>
+        </div>
+        <div class="rung">
+          <span class="lvl">M1 · the lane</span>
+          <span class="desc">
+            Fly executor with create/seed/drive/drain/destroy, checkpoint and resume, concurrency
+            cap, cold-resume rung. Automated fixture selection from telemetry. Three more playbooks.
+          </span>
+          <span class="cost">a sprint</span>
+        </div>
+        <div class="rung">
+          <span class="lvl ink-b">M2 · the axes</span>
+          <span class="desc">
+            Route comparison across Anthropic-native, OpenAI-native and OpenRouter. Foreign-harness
+            adapters. HTML report. Overnight release-gate battery.
+          </span>
+          <span class="cost">a sprint</span>
+        </div>
+        <div class="rung">
+          <span class="lvl">M3 · ship it</span>
+          <span class="desc">
+            Publish as <code>@carrara-labs/delta-bench</code> with the consumer story: point it at
+            your agent, replay your own worst runs, tune your bundle against a table.
+          </span>
+          <span class="cost">after it has gated two releases</span>
+        </div>
+      </div>
+
+      <div class="note a">
+        <span class="kicker">The test that informs the rig</span>
+        <p>
+          M0 is not speculative. There is an open engine question right now — whether eliding a tool
+          call's arguments once it is <em>N turns old</em> beats both seams already tried — and it has
+          three existing arms to compare against. Building M0 to answer that question is how the rig
+          gets specified by real use instead of by design, which is the only way I trust it to end up
+          lean.
+        </p>
+      </div>
+    </section>
+
+    <hr class="rule"/>
+    <footer>
+      <p>
+        <strong>Delta Bench</strong> — design proposal, 2026-08-07. Nothing here is built. Written so
+        the next person does not re-derive it, and so the small tests run in the meantime are shaped
+        to feed it.
+      </p>
+      <p style="margin-top:14px">
+        Sources and prior art:
+        <a href="https://anthropic.com/engineering/demystifying-evals-for-ai-agents">Anthropic, Demystifying evals for AI agents</a> ·
+        <a href="https://www.anthropic.com/research/statistical-approach-to-model-evals">Anthropic, Adding Error Bars to Evals</a> ·
+        <a href="https://arxiv.org/abs/2510.11977">Holistic Agent Leaderboard</a> ·
+        <a href="https://github.com/princeton-pli/hal-harness">princeton-pli/hal-harness</a> ·
+        <a href="https://inspect.aisi.org.uk/">Inspect AI, UK AISI</a> ·
+        <a href="https://www.anthropic.com/research/building-effective-agents">Anthropic, Building Effective Agents</a>.
+        Competitor rigs read from source in <code>~/delta/.refs</code>.
+      </p>
+    </footer>
+
+  </main>
+</div>
+
+<script>
+  (function () {
+    var links = Array.prototype.slice.call(document.querySelectorAll('.rail a'));
+    var fill = document.getElementById('gaugeFill');
+    var gauge = document.getElementById('gauge');
+    if (!links.length || !fill || !gauge) return;
+
+    var targets = links.map(function (a) {
+      return document.getElementById(a.getAttribute('href').slice(1));
+    });
+
+    function update() {
+      var mark = window.innerHeight * 0.32;
+      var idx = 0;
+      for (var i = 0; i < targets.length; i++) {
+        if (targets[i] && targets[i].getBoundingClientRect().top <= mark) idx = i;
+      }
+      for (var j = 0; j < links.length; j++) {
+        links[j].classList.toggle('on', j === idx);
+      }
+      var active = links[idx];
+      var h = (active.offsetTop - gauge.offsetTop) + active.offsetHeight / 2;
+      fill.style.height = Math.max(0, h - 6) + 'px';
+    }
+
+    var ticking = false;
+    function onScroll() {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(function () { update(); ticking = false; });
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    update();
+  })();
+</script>

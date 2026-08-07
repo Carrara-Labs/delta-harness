@@ -4,6 +4,12 @@ Written 2026-08-06, during the 0.2.12 work, after a measurement failure made the
 **Nothing here is scheduled.** It is written down so the next person does not re-derive it, and so
 the small tests we run in the meantime are shaped to feed it.
 
+> **Superseded by [`spec-delta-bench.md`](./spec-delta-bench.md)** (2026-08-07), which carries the
+> full design: playbook library, the token-route axis, Fly execution, the statistics, foreign-harness
+> arms, and the prior-art survey (OpenClaw's `qa-lab` is ahead of us on replay and cache
+> diagnostics). Visual version at `bench/delta-bench-proposal.html`. This file is kept for the
+> origin story in "Why this exists" below.
+
 ## Why this exists
 
 During 0.2.12 I reported a **-29.9% cost win** from one run per arm. A second run of the identical
