@@ -317,16 +317,18 @@ export class Queue {
     // serving several runs a noisy one keeps the clock low while a sibling is genuinely stuck. That
     // is the right scope for `/v1/busy` (whose other fields are daemon-wide too) and the wrong input
     // for a per-run Resume decision — a host wanting that reads `/v1/tasks/:id/events` (codex).
-    // Ordered by `id` rather than `MAX(ts)` so the `events_run(run_id, id)` index answers it
-    // directly; ids are assigned in insertion order, so the newest id IS the newest event.
+    // Cost, stated honestly because an earlier comment here claimed an optimization that EXPLAIN
+    // does not support: there is no `(run_id, ts)` index, so this scans the events of currently
+    // RUNNING runs. `ORDER BY id DESC LIMIT 1` was tried and is worse — it adds a TEMP B-TREE for
+    // the ordering on top of the same scan. Acceptable because `/v1/busy` is a suspend-gate poll,
+    // not a hot path, and terminal runs are excluded by the join.
     let last_event_ms_ago: number | undefined;
     if (row.running > 0) {
       const ev = this.deps.db
         .query(
-          `SELECT e.ts AS ts FROM events e
+          `SELECT MAX(e.ts) AS ts FROM events e
              JOIN runs r ON r.id = e.run_id
-            WHERE r.status = 'running'
-            ORDER BY e.id DESC LIMIT 1`,
+            WHERE r.status = 'running'`,
         )
         .get() as { ts: number | null } | undefined;
       if (ev?.ts) last_event_ms_ago = Math.max(0, Date.now() - ev.ts);

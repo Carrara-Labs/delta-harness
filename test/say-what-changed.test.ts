@@ -20,8 +20,9 @@ import {
 } from "../src/pricing";
 import type { ChatMsg, ChatRequest, ModelResult } from "../src/provider";
 import { Queue } from "../src/queue";
+import { runResearch } from "../src/research";
 import { prefixDigest } from "../src/run";
-import { testTools } from "../src/tools";
+import { type ToolCtx, testTools } from "../src/tools";
 import { makeDeps, textResult } from "./helpers";
 
 // --- S1: prefix identity -----------------------------------------------------------------------
@@ -532,5 +533,138 @@ describe("S7 /v1/busy silence clock", () => {
       .query("INSERT INTO events (ts, type, run_id, data) VALUES (?, 'tool.call', 'r2', '{}')")
       .run(Date.now());
     expect(queue.activity().last_event_ms_ago as number).toBeLessThan(1_000);
+  });
+});
+
+// --- The two call-site regressions the first round of tests could NOT see ----------------------
+// Codex's second pass: the anchor test supplied `anchorRunId` itself, so removing it from the
+// overflow path again would have left everything green; and nothing drove runResearch at all, so
+// dropping the callback propagation was invisible. Both are exercised through production now.
+
+describe("S5 the overflow-recovery path clears the anchor too", () => {
+  test("a forced compaction after a provider overflow leaves no stale anchor", async () => {
+    let call = 0;
+    const deps = makeDeps(
+      async (req: ChatRequest) => {
+        const sys = req.messages[0]?.content;
+        if (typeof sys === "string" && sys.startsWith("You compact"))
+          return {
+            ok: true,
+            model: "u",
+            message: { role: "assistant", content: "Goal: g\nProgress: p\nNext: n\nArtifacts: a" },
+            finishReason: "stop",
+            latencyMs: 1,
+            usage: { input: 9, output: 9, cacheRead: 0, cacheWrite: 0, total: 18, costUsd: 0.001 },
+          } as ModelResult;
+        call++;
+        // Call 1 SUCCEEDS with a tool call, which persists a large `last_input` on THIS run — the
+        // anchor the compaction must invalidate. Without this the run's anchor is 0 from birth and
+        // the assertion below passes no matter what the engine does (codex: passes-while-broken).
+        if (call === 1)
+          return {
+            ok: true,
+            model: "m",
+            message: {
+              role: "assistant",
+              tool_calls: [
+                {
+                  id: "c1",
+                  type: "function",
+                  function: { name: "add", arguments: '{"a":1,"b":2}' },
+                },
+              ],
+            },
+            finishReason: "tool_calls",
+            latencyMs: 1,
+            usage: {
+              input: 195_000,
+              output: 5,
+              cacheRead: 0,
+              cacheWrite: 0,
+              total: 195_005,
+              costUsd: 0.01,
+            },
+          } as ModelResult;
+        // Call 2 overflows, forcing the recovery compaction. Call 3 then fails for an UNRELATED
+        // reason, deliberately: a successful retry rewrites `last_input` with its own value, which
+        // would mask whether the compaction cleared it at all.
+        if (call === 2)
+          return { ok: false, model: "m", error: "prompt is too long", status: 400 } as ModelResult;
+        return { ok: false, model: "m", error: "upstream 503", status: 503 } as ModelResult;
+      },
+      new Map(testTools()),
+      { compactAtTokens: 1_000_000 },
+    );
+
+    // A session big enough that a forced compaction can actually shed something.
+    const now = Date.now();
+    deps.db
+      .query("INSERT INTO sessions (id, user_id, created_at, updated_at) VALUES ('s3',NULL,?,?)")
+      .run(now, now);
+    deps.db
+      .query(
+        "INSERT INTO runs (id, session_id, seq, status, request, created_at, last_input) VALUES ('r3','s3',1,'done','{}',?,?)",
+      )
+      .run(now, 195_000);
+    const ins = deps.db.query(
+      "INSERT INTO messages (run_id, session_id, msg, created_at) VALUES ('r3','s3',?,?)",
+    );
+    for (let i = 0; i < 24; i++)
+      ins.run(
+        JSON.stringify({ role: i % 2 ? "assistant" : "user", content: "x".repeat(1200) }),
+        now,
+      );
+
+    const queue = new Queue(deps);
+    const done = await queue.wait(
+      queue.enqueue({ input: "continue", previous_response_id: "r3" }).id,
+    );
+    expect(done.status).toBe("failed"); // by construction — see the retry above
+    // THIS run's anchor must be cleared: the recovery compaction rewrote the history, so a
+    // surviving pre-compaction estimate is a lie that outlives a crash. (The prior run's anchor is
+    // deliberately untouched — the resume path reads the CURRENT run's, and rewriting history for
+    // a finished run's bookkeeping would be scope creep.)
+    const cur = deps.db.query("SELECT last_input FROM runs WHERE id = ?").get(done.id) as {
+      last_input: number;
+    };
+    // 0 only if the FORCED compaction passed `anchorRunId`. Without it clearAnchor no-ops, the
+    // run.ts-side reset is gone, and this stays at the pre-compaction 195_000 — a stale anchor on
+    // a rewritten history, which is the crash-gap bug on the path that already failed once.
+    expect(cur.last_input).toBe(0);
+  });
+});
+
+describe("S3 research fan-out reports every child call", () => {
+  test("runResearch propagates onUtilityCall and fires it per child call", async () => {
+    const seen: string[] = [];
+    const chat = async () =>
+      ({
+        ok: true,
+        model: "child-model",
+        message: { role: "assistant", content: "child answer" },
+        finishReason: "stop",
+        latencyMs: 1,
+        usage: { input: 100, output: 20, cacheRead: 0, cacheWrite: 0, total: 120, costUsd: 0.001 },
+      }) as ModelResult;
+
+    const tools = new Map(testTools());
+    const ctx: ToolCtx = {
+      workspace: "/tmp/delta-test-ws",
+      activate: () => {},
+      onUtilityCall: (purpose) => seen.push(purpose),
+    };
+    const out = await runResearch(
+      ["task one", "task two"],
+      { tools, pinned: [...tools.keys()], maxTokens: 50_000, maxCostUsd: 1 } as never,
+      chat,
+      ctx,
+      "run-1",
+      "0",
+    );
+    expect(typeof out).toBe("string");
+    // Two children, at least one call each. Without the propagation this array is empty and the
+    // fan-out stays invisible behind its single aggregate charge.
+    expect(seen.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(seen)).toEqual(new Set(["research"]));
   });
 });

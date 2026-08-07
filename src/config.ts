@@ -7,7 +7,7 @@ import { hostname } from "node:os";
 import { resolve } from "node:path";
 import { BrokerCredential } from "./broker";
 import type { McpServerConfig } from "./mcp";
-import { deriveContextCeiling, maxSafeCeiling } from "./pricing";
+import { deriveContextCeiling, maxSafeCeiling, parsePrices } from "./pricing";
 import { getProfile } from "./profiles";
 import {
   KNOWN_EFFORTS,
@@ -319,13 +319,17 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     compactAtTokens: (() => {
       const models = [...new Set(providers.flatMap((p) => p.models))];
       const n = Number(env.DELTA_COMPACT_AT_TOKENS);
-      const derived = deriveContextCeiling(models, 120_000);
+      // Build the table from the INJECTED env, not `process.env`. `pricing.ts` freezes its module
+      // table at import time, so an embedder calling `loadConfig({...})` with its own
+      // DELTA_MODEL_PRICES would have derived the ceiling from a table that never saw it (codex).
+      const table = parsePrices(env.DELTA_MODEL_PRICES);
+      const derived = deriveContextCeiling(models, 120_000, table);
       if (!(Number.isFinite(n) && n > 0)) return derived ?? 120_000;
       // Clamp an override that exceeds what the cascade can survive, and say so once at boot. The
       // operator asked for something the model cannot do; obeying silently is how compaction stops
       // being compaction. Protects the OVERRIDE only — a wrong `window` in the table still
       // overflows, and only the post-provider retry guards that.
-      const ceiling = maxSafeCeiling(models);
+      const ceiling = maxSafeCeiling(models, table);
       const want = Math.floor(n);
       if (ceiling !== null && want > ceiling) {
         console.error(

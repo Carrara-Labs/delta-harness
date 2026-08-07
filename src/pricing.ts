@@ -162,8 +162,8 @@ export const OUTPUT_RESERVE = 40_000;
 const MIN_USABLE_CEILING = 16_000;
 
 /** The usable ceiling for one model, or null when its window is unknown or unusably small. */
-function usableCeiling(model: string): number | null {
-  const w = resolvePrice(model, TABLE)?.window;
+function usableCeiling(model: string, table: Record<string, ModelPrice> = TABLE): number | null {
+  const w = resolvePrice(model, table)?.window;
   if (!w) return null;
   const c = w - OUTPUT_RESERVE;
   return c >= MIN_USABLE_CEILING ? c : null;
@@ -179,12 +179,16 @@ function usableCeiling(model: string): number | null {
  *
  * Returns null when no model is known at all, so the caller keeps today's behaviour instead of
  * inheriting a guess. */
-export function deriveContextCeiling(models: string[], fallback: number): number | null {
+export function deriveContextCeiling(
+  models: string[],
+  fallback: number,
+  table: Record<string, ModelPrice> = TABLE,
+): number | null {
   if (!models.length) return null;
   let known = false;
   let min = Number.POSITIVE_INFINITY;
   for (const m of models) {
-    const c = usableCeiling(m);
+    const c = usableCeiling(m, table);
     if (c !== null) known = true;
     // An unknown model contributes `fallback`, NOT nothing — skipping it is what would let a known
     // large window set a ceiling that overflows the model actually serving the turn.
@@ -199,7 +203,10 @@ export function deriveContextCeiling(models: string[], fallback: number): number
  *
  * This protects the OVERRIDE, not the table: a wrong `window` entry still overflows, and only
  * conservative seeding plus the existing post-provider overflow retry guard that. */
-export function maxSafeCeiling(models: string[]): number | null {
+export function maxSafeCeiling(
+  models: string[],
+  table: Record<string, ModelPrice> = TABLE,
+): number | null {
   let min = Number.POSITIVE_INFINITY;
   for (const m of models) {
     // KNOWN windows only, and this asymmetry with `deriveContextCeiling` is deliberate (codex asked).
@@ -209,7 +216,7 @@ export function maxSafeCeiling(models: string[]): number | null {
     // deployment whose cascade contains one unpriced model — which is most of them, since only one
     // model carries a window today — silently halving ceilings that are working fine. Overruling an
     // explicit choice on the basis of ignorance is the failure mode this batch exists to remove.
-    const c = usableCeiling(m);
+    const c = usableCeiling(m, table);
     if (c !== null) min = Math.min(min, c);
   }
   return Number.isFinite(min) ? min : null;
