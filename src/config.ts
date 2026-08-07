@@ -322,7 +322,12 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       // Build the table from the INJECTED env, not `process.env`. `pricing.ts` freezes its module
       // table at import time, so an embedder calling `loadConfig({...})` with its own
       // DELTA_MODEL_PRICES would have derived the ceiling from a table that never saw it (codex).
-      const table = parsePrices(env.DELTA_MODEL_PRICES);
+      // Only re-parse when the injected value actually differs from the one the module already
+      // read, so ordinary boot does the work once and a malformed JSON warns once, not twice.
+      const table =
+        env.DELTA_MODEL_PRICES === process.env.DELTA_MODEL_PRICES
+          ? undefined
+          : parsePrices(env.DELTA_MODEL_PRICES);
       const derived = deriveContextCeiling(models, 120_000, table);
       if (!(Number.isFinite(n) && n > 0)) return derived ?? 120_000;
       // Clamp an override that exceeds what the cascade can survive, and say so once at boot. The

@@ -53,7 +53,13 @@ Aperture has a pinned fixture and a bench rig and offered to canary; that is the
 5. **Aperture canaries** on `speed-lab` with `room-bench.ts`, scored on compaction count,
    post-compaction `input_tokens` and `context_irreducible` - never on steady-state cache hit.
 
-## P1 - next release (0.2.13) "say what changed"
+## P1 - next release (0.2.13) "say what changed" — **BUILT on `feat/0.2.13-say-what-changed`**
+
+**Status 2026-08-07:** Tier 1 + Tier 2 (S1-S7) implemented, 914 tests green, typecheck + lint clean,
+three codex passes (the last returned clean). **Not released, and the live half is unrun** — there is
+no model key in the build environment, so every turn-level claim is unit-tested only. The canary ask
+is `ask-aperture-0.2.13-canary.md`. Tier 3 and the mechanism fix remain deliberately unwritten until
+that reading lands.
 
 **Full plan: [`harness-0.2.13-plan.md`](./harness-0.2.13-plan.md)** - the defect, how each proposed
 mechanism died, the tier dependency argument, the written prediction, the scoring traps and the
