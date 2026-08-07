@@ -81,13 +81,22 @@ spinner.
 Never suspend a machine that still owes work. Ask the daemon:
 
 ```
-GET http://<machine>:<port>/v1/busy   → { "busy": true|false, "running": N, "queued": N }
+GET http://<machine>:<port>/v1/busy   → { "busy": true|false, "running": N, "queued": N,
+                                          "last_event_ms_ago": N }   // only while running
 ```
 
 `busy` is the durable truth: it is `true` when **anything** is queued *or* running, read
 straight from the daemon's run table (not an in-memory flag). A queued-but-not-yet-dispatched
 run keeps `busy` true, so you will never suspend a machine with a task waiting to start.
 Suspend only when `busy` is `false`.
+
+`last_event_ms_ago` (0.2.13) is present only while something is running: how long the daemon has
+been **silent**, meaning the age of the newest event across every running run. It answers "is this
+stuck?", which is the question a reconciler is really asking — turn age would card a healthy turn
+that has been emitting tool calls every 20 seconds for four minutes. Long turns are normal; one
+lane measured a 227s turn on a healthy 12-hour run. Pick a threshold from this rather than from
+wall-clock turn duration, and note it is **daemon-wide**: on a daemon serving several runs a busy
+one masks a quiet one, so use `/v1/tasks/:id/events` for a per-run decision.
 
 `/v1/busy` is behind the `/v1/` gate, so it takes the same `DELTA_CONTROL_TOKEN` bearer your
 control plane already sends on every daemon call. It is deliberately *not* folded into
@@ -124,6 +133,29 @@ This is what makes the pattern safe: you do not need to drain the machine or wai
 quiet point. If `/v1/busy` ever races (you suspend a machine that took a task a millisecond
 later), the worst case is that the task waits, frozen and intact, until the next wake — no
 work is dropped. Suspend on idle and trust the WAL.
+
+### What survives a suspend, and what does not
+
+The guarantee above is about the *run*, not about process memory. A suspend/resume normally restores
+memory intact, but a **wake failure degrades into a cold boot** — the machines API times out, the
+platform starts a fresh process, and anything that lived only in RAM is gone. Aperture hit this
+mid-engagement in August 2026. Plan for it rather than assuming resume always means resume.
+
+| | survives | why |
+| --- | --- | --- |
+| Run position, turn history, tool results | **yes** | checkpointed to the SQLite WAL every turn |
+| The workspace, spill files, artifacts | **yes** | on the mounted volume |
+| `DELTA.md` self-file edits | **yes** | committed to disk the instant `remember` succeeds |
+| The run's activated tool set | **yes** | persisted to `runs.tools` and reloaded |
+| Queued and running task rows | **yes** | the queue recovers them at boot |
+| The A4 tool-breaker tally | **no, by design** | a quarantine is re-armed on resume, so a tool disabled by repeated failure becomes callable again |
+| In-flight provider connections | **no** | the wire is refreshed on a detected heartbeat gap; a dead pooled socket is evicted in seconds |
+| Anything else held only in process memory | **no** | assume a cold boot is possible on any wake |
+
+**What this means for a host.** Nothing needs draining before a suspend. But do not treat a resumed
+daemon as a process that never stopped: re-read state from the seam (`/v1/status`, `/v1/busy`,
+`/v1/tasks/:id`) rather than from anything you cached across the gap, and expect a re-armed breaker
+to retry a tool that had been quarantined.
 
 ## Stable contracts you can build on
 
