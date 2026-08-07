@@ -974,7 +974,8 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
         const candidates = valid
           .map((c) => `### Candidate ${c.i}\n${c.v.slice(0, 8000)}`)
           .join("\n\n");
-        const judged = await (ctx.chatUtility ?? ctx.chat)({
+        const judgeVia = ctx.chatUtility ?? ctx.chat;
+        const judged = await judgeVia({
           messages: [
             {
               role: "system",
@@ -984,6 +985,10 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
           ],
           maxTokens: 400,
         });
+        // S3: report the judge call. NOTE this call's usage is still never CHARGED to the run —
+        // a pre-existing budget defect, filed separately rather than folded into a telemetry slice
+        // so it does not ship as an invisible behaviour change (codex).
+        ctx.onUtilityCall?.("eval_judge", judged);
         let winnerIdx = valid[0]?.i ?? 0;
         if (judged.ok) {
           try {

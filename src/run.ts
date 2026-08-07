@@ -7,12 +7,13 @@
 // throughout — a provider/tool failure finalizes a clean turn.
 
 import type { Database } from "bun:sqlite";
+import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import { SkillRegistryAdapter } from "./adapter-defaults";
 import type { CapabilityAdapter } from "./adapters";
-import { maybeCompact } from "./compaction";
+import { maybeCompact, retainedTailBudget } from "./compaction";
 import { listArtifacts, readArtifact, readTodo, searchHistory, writeTodo } from "./db";
-import type { Events, Spine } from "./events";
+import { type Events, emitUtilityCall, type Spine } from "./events";
 import { expandImageMarkers } from "./files";
 import { hydrate, type RecalledMemory, recallAgentMemory } from "./hydrate";
 import type { Policy } from "./policy";
@@ -42,9 +43,7 @@ import { type Charter, currentSelf, loadSelf, parseCharterMarkdown, writeSelf } 
 import { buildSpine } from "./spine";
 import {
   capAndSpill,
-  ELIDED_KEY,
   elide,
-  elideArgs,
   elidedArgsRejection,
   type ToolCtx,
   type ToolDef,
@@ -77,6 +76,35 @@ function estimateTokens(messages: ChatMsg[], tools: ToolSpec[], images: number):
     images * IMAGE_TOKEN_RESERVE
   );
 }
+
+// --- S1 prefix identity (0.2.13) ---
+// The prompt cache keys on IDENTITY, not size: a segment that mutates without changing length
+// breaks the cached prefix exactly as hard as one that shrinks, and is invisible to a byte counter.
+// Three rounds of a 2026-08 investigation were spent measuring size for that reason.
+
+/** Per-daemon digest salt. These attributes export WITHOUT payload consent, and the spine carries
+ * DELTA.md, POLICY.md and operator context — low-entropy enough that an UNSALTED digest is
+ * dictionary-testable by anyone holding the telemetry ("not reversible" ≠ "carries no PII", codex).
+ * Salting per process preserves the only comparison we need — consecutive turns of one daemon —
+ * and destroys cross-daemon correlation. Never exported. */
+const DIGEST_SALT = randomBytes(16).toString("hex");
+
+/** 12-hex digest of an engine-assembled prompt segment. Detects CHANGE; it does not authenticate,
+ * so `Bun.hash` (wyhash, in-runtime, zero deps) is right and sha256 would be ~20× the cost for a
+ * property we don't need. Consecutive-turn comparison means a false match needs a collision between
+ * two specific values (~2⁻⁴⁸).
+ * NOTE: this digests the ENGINE-ASSEMBLED input, NOT the serialized request body — the provider
+ * renames and reshapes both segments downstream (`toAnthropic` lifts system into a content block and
+ * renames `parameters`→`input_schema`; the Responses path flattens both). A wire-format change is
+ * already reported by `gen_ai.provider` + `fallback` on this same event, so the gap is bounded. */
+export const prefixDigest = (s: string): string =>
+  Bun.hash(DIGEST_SALT + s)
+    .toString(16)
+    .padStart(16, "0")
+    .slice(0, 12);
+
+const utf8 = (s: string): number => Buffer.byteLength(s, "utf8");
+const msgBytes = (ms: ChatMsg[]): number => utf8(JSON.stringify(ms));
 
 /** Count image markers eligible for wire expansion. Scoped to the last 2 user turns (the same
  * window expandImageMarkers uses) so stale/echoed markers deeper in history don't over-reserve
@@ -492,6 +520,11 @@ export async function executeRun(
     },
     chat: deps.chat,
     ...(deps.chatUtility ? { chatUtility: deps.chatUtility } : {}),
+    // S3: the reporting seam for utility-lane calls made inside tools (research fan-out, eval_n
+    // judging). A closure rather than `events`+`spine` on ToolCtx — both are already captured here,
+    // and this keeps the surface one optional field wide. Observational only: it never charges.
+    onUtilityCall: (purpose, r) =>
+      emitUtilityCall(events, { ...spine, turn: stepCount }, purpose, r, stepCount + 1),
     ...(typeof req.metadata?.authToken === "string" ? { authToken: req.metadata.authToken } : {}),
     ...(opts.signal ? { signal: opts.signal } : {}),
     vision: deps.vision === true, // explicit false → MCP image markers say "can't view"
@@ -725,7 +758,9 @@ export async function executeRun(
             ),
           ),
         );
-        aggregateBreaker(db, run, breaker); // A4: decide quarantine once the whole batch has settled
+        // A4: decide quarantine once the whole batch has settled. `allowedMap` sizes the schema a
+        // latch withdraws, which is what makes the cache cost of a quarantine visible (S4).
+        aggregateBreaker(db, run, breaker, events, { ...spine, turn: stepCount }, allowedMap);
         resuming = false;
         continue;
       }
@@ -869,7 +904,17 @@ export async function executeRun(
       // 0 (never a floor above the real remainder) — a fixed floor could exceed the budget when
       // the fixed parts are large; budget 0 keeps only the minimal tail (codex).
       const fixed = estimateTokens(nonHistory, specs, imgs());
-      const recentBudget = Math.max(0, deps.compactAtTokens - fixed - SUMMARY_RESERVE_TOKENS);
+      // S5: the ceiling-derived remainder is a CAP, not the target. Deriving the retained tail FROM
+      // the trigger meant a 200k ceiling kept a ~180k tail: compaction landed at ~99% of budget and
+      // the next turn's tool results pushed it straight back over, so one event became a per-turn
+      // tax and `spec-compaction-tail` measured 94 failures out of 94. pi and openclaw both keep a
+      // FLAT target (`keepRecentTokens`, 20k / operator int) fully decoupled from the trigger, and
+      // we already had the right constant — the call site was overriding it.
+      // `Math.max(0, …)` still wins when the fixed parts are large, so a tight ceiling behaves
+      // exactly as before. It does NOT guarantee the request fits: compaction always keeps two
+      // protocol units and demotion only shrinks spilled results, so an irreducible tail still
+      // reaches `context_irreducible` below and the overflow retry remains the backstop (codex).
+      const recentBudget = retainedTailBudget(deps.compactAtTokens, fixed, SUMMARY_RESERVE_TOKENS);
       const cu = await maybeCompact(
         db,
         events,
@@ -880,6 +925,7 @@ export async function executeRun(
           recentBudgetTokens: recentBudget,
           workspace: deps.workspace,
           argCap: deps.toolArgCap ?? 0,
+          anchorRunId: run.id, // S5: reset the stale anchor INSIDE the rewrite transaction
         },
       );
       if (cu) {
@@ -896,10 +942,11 @@ export async function executeRun(
           history = activeSessionMessages(db, run.session_id); // re-fetch the shrunken history
           lastInputTokens = 0; // the gross backstop measured the pre-compaction prompt; reset it
           lastEstimate = 0; // and its paired byte-anchor — the next call re-establishes both
-          db.query("UPDATE runs SET usage = ?, last_input = 0 WHERE id = ?").run(
-            JSON.stringify(usage),
-            run.id,
-          );
+          // `last_input` is already 0 on disk: maybeCompact cleared it INSIDE the rewrite
+          // transaction (S5), so a crash between the two can no longer resume with a compacted
+          // history and a pre-compaction anchor. Usage stays here — it is monotonic, so a replayed
+          // update is harmless, which is exactly what the anchor was not.
+          db.query("UPDATE runs SET usage = ? WHERE id = ?").run(JSON.stringify(usage), run.id);
           // If it STILL won't fit, compaction can't help (fixed parts too big / irreducible tail).
           // Warn and proceed — the post-provider overflow path is the final backstop.
           if (estimate() > deps.compactAtTokens)
@@ -920,13 +967,39 @@ export async function executeRun(
       ? await expandImageMarkers([...history], resolve(deps.workspace))
       : history;
     const messages: ChatMsg[] = [{ role: "system", content: system }, ...withImages, ...ephemeral];
+    // S1: prefix identity, measured on the EXACT values about to be sent. Only the two segments
+    // ahead of history get a digest — they are the only ones that can mutate at constant length.
+    // History is append-only except for two writers that now announce themselves (compaction's own
+    // event, and the breaker latch's in-place row rewrite at ~:1381), and ephemeral rides behind the
+    // breakpoints. Both are sized, not digested: digesting history would cost a full ~1MB
+    // serialization every turn to answer a question two events already answer.
+    // Sized on the PRE-expansion history, matching estimateTokens — expanded base64 would swamp the
+    // number with a separately-tracked axis.
+    const prefix = {
+      spine_bytes: utf8(system),
+      spine_hash: prefixDigest(system),
+      tools_bytes: utf8(JSON.stringify(specs)),
+      tools_hash: prefixDigest(JSON.stringify(specs)),
+      // Disambiguators, both already computed. `buildSpine` embeds the pinned tool index AND the
+      // `searchable` count (spine.ts:34-36), so an activation moves spine_hash and tools_hash
+      // TOGETHER. Without these two a reader would blame the spine for every activation:
+      //   tools_n changed              → activation or breaker withdrawal (S4 says which)
+      //   tools_n same, self_bytes ≠   → a `remember` self-write
+      //   both same, spine_hash moved  → the stable context/policy block — the interesting case
+      tools_n: specs.length,
+      self_bytes: self.bytes,
+      history_bytes: msgBytes(history),
+      ephemeral_bytes: msgBytes(ephemeral),
+    };
     const turn = stepCount + 1;
     events.emit("turn.start", { ...spine, turn }, { step: turn });
     const callT0 = Date.now();
     let retries = 0;
     const result = await deps.chat({
       messages,
-      tools: toolSpecs(tools),
+      // The SAME array the digest above measured — recomputing `toolSpecs(tools)` here would let the
+      // digest and the wire drift apart, which is the one failure this instrument cannot survive.
+      tools: specs,
       cacheKey: run.session_id, // cache affinity: rolling breakpoints / prompt_cache_key
       // The trailing DERIVED blocks, so the rolling cache breakpoints can skip them and land
       // on persisted transcript instead. They are rebuilt every turn (`# Context` carries a
@@ -1052,6 +1125,11 @@ export async function executeRun(
         "gen_ai.usage.cached_tokens": result.usage.cacheRead,
         "gen_ai.usage.cost_usd": result.usage.costUsd,
         cache_hit_pct: cacheHit,
+        // S1: which part of the cached prefix changed this turn. A miss with a moved hash names its
+        // own culprit; a miss with both hashes stable says the prefix was intact and the cause is
+        // elsewhere. That second reading is the one that can falsify the standing prediction.
+        ...prefix,
+        tier: "main",
         latency_ms: result.latencyMs,
         // Wall time of the WHOLE cascade (retries + failover + the winning attempt) —
         // `wall_ms - latency_ms` is the invisible pre-call stall the waterfall hunts.
@@ -1314,7 +1392,14 @@ export function breakerKey(result: string): string | null {
  * result). That increments its consecutive-turn streak; anything else resets it. At the limit the
  * tool is quarantined for the run and a one-line norm is appended to its last error message so the
  * model reads the way out inline. Returns nothing; mutates `breaker` and the message row. */
-function aggregateBreaker(db: Database, run: RunRow, breaker: Breaker): void {
+function aggregateBreaker(
+  db: Database,
+  run: RunRow,
+  breaker: Breaker,
+  events: Events,
+  spine: Spine,
+  allowed: Tools,
+): void {
   const byTool = new Map<string, { callId: string; categorical: string | null; gap?: number }[]>();
   for (const o of breaker.turn) {
     const list = byTool.get(o.name) ?? [];
@@ -1347,6 +1432,24 @@ function aggregateBreaker(db: Database, run: RunRow, breaker: Breaker): void {
     const latch = n >= CATEGORICAL_TOOL_FAIL_LIMIT || attempts >= CONVERGING_ATTEMPT_MAX;
     if (latch && !breaker.disabled.has(name) && lastCall) {
       breaker.disabled.add(name);
+      // S4: a latch withdraws the tool's schema from `effectiveTools()` next turn AND rewrites a
+      // past tool-result row in place below — two independent prefix breaks, previously silent.
+      // A whole round of the 2026-08 cache investigation could not be tested because this left no
+      // trace. Emitted ONCE per tool (guarded by `disabled.has` above), never per later failure.
+      const def = allowed.get(name);
+      events.emit("tool.breaker", spine, {
+        "gen_ai.tool.name": name, // a resolved registry name — bounded, already on the allowlist
+        attempts,
+        schema_bytes_withdrawn: def
+          ? utf8(
+              JSON.stringify({
+                name: def.name,
+                description: def.description,
+                parameters: def.parameters,
+              }),
+            )
+          : 0,
+      });
       const norm = `\n[norm] '${name}' has failed the same way ${attempts}× this run and is now disabled for the rest of it — use another approach; retrying it cannot succeed.`;
       db.query(
         "UPDATE messages SET msg = json_set(msg, '$.content', json_extract(msg, '$.content') || ?) WHERE run_id = ? AND json_extract(msg, '$.tool_call_id') = ?",

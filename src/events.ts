@@ -85,3 +85,49 @@ export class Events {
     return this.listeners.size;
   }
 }
+
+/** The four purposes a UTILITY-lane (cheap-model) call can serve. Closed set: it is exported as a
+ *  telemetry attribute, so it must not become free text. */
+export type UtilityPurpose = "summary" | "research" | "reflection" | "eval_judge";
+
+/** Emit a `model.call` for a utility-lane call (S3, 0.2.13).
+ *
+ * `model.call` used to fire in exactly ONE place — the main loop — while four paths ran the cheap
+ * model and charged the run through `addUsage` without emitting anything. No consumer could see or
+ * price the utility tier, and it meant any compaction count derived from telemetry was a floor on
+ * attempts rather than a count of them.
+ *
+ * This helper is the ONLY new writer and it never touches usage, so double-charging is structurally
+ * impossible: accounting stays exactly where it was, emission is added beside it.
+ *
+ * `beforeTurn` exists because a utility call runs BETWEEN turns — compaction is handed
+ * `turn: stepCount` while the main call it clears the way for is `stepCount + 1`, so a first-turn
+ * compaction legitimately reports turn 0. Rather than renumber and break existing consumers, carry
+ * the spine turn as given and name the turn this call enabled. */
+export function emitUtilityCall(
+  events: Events,
+  spine: Spine,
+  purpose: UtilityPurpose,
+  r: {
+    model: string;
+    /** Absent on the failure branch of `ModelResult` — a failed call reports no tokens, so there is
+     *  nothing to emit and the failure is already carried by the retry/error paths. */
+    usage?: { input: number; output: number; cacheRead: number; costUsd: number };
+    latencyMs?: number;
+  },
+  beforeTurn?: number,
+): void {
+  if (!r.usage) return;
+  events.emit("model.call", spine, {
+    "gen_ai.request.model": r.model,
+    "gen_ai.usage.input_tokens": r.usage.input,
+    "gen_ai.usage.output_tokens": r.usage.output,
+    "gen_ai.usage.cached_tokens": r.usage.cacheRead,
+    "gen_ai.usage.cost_usd": r.usage.costUsd,
+    cache_hit_pct: r.usage.input ? Math.round((r.usage.cacheRead / r.usage.input) * 100) : 0,
+    tier: "utility",
+    purpose,
+    ...(r.latencyMs !== undefined ? { latency_ms: r.latencyMs } : {}),
+    ...(beforeTurn !== undefined ? { before_turn: beforeTurn } : {}),
+  });
+}

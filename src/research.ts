@@ -200,6 +200,10 @@ async function researchOne(
         maxTokens: Math.max(256, Math.min(OUTPUT_CAP, remaining)),
         ...(opts.signal ? { signal: opts.signal } : {}),
       });
+      // S3: report EVERY child call, not the batch. The aggregate charge-back (`chargeReportedUsage`
+      // below) is precisely what hides a fan-out, so per-call is the only emission that answers
+      // "how many calls did this cost and on which lane".
+      baseCtx.onUtilityCall?.("research", res);
       if (!res.ok) {
         if (res.aborted) return { task, ok: false, text: "[research cancelled]", usage };
         return { task, ok: false, text: `[research failed: ${res.error}]`, usage };

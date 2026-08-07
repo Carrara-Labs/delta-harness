@@ -290,7 +290,12 @@ export class Queue {
    * already durably delivered before reflection starts). The `WHERE` keeps this cheap:
    * it rides the runs(status, …) index and touches only active rows, so a host can poll
    * it freely without scanning the whole run history. */
-  activity(): { busy: boolean; running: number; queued: number } {
+  activity(): {
+    busy: boolean;
+    running: number;
+    queued: number;
+    lastEventMsAgo?: number;
+  } {
     const row = this.deps.db
       .query(
         `SELECT COALESCE(SUM(status = 'running'), 0) AS running,
@@ -298,7 +303,29 @@ export class Queue {
          FROM runs WHERE status IN ('queued', 'running')`,
       )
       .get() as { running: number; queued: number };
-    return { busy: row.running + row.queued > 0, running: row.running, queued: row.queued };
+    // S7: how long the daemon has been SILENT, not how old the turn is. A turn emitting tool calls
+    // every 20s is healthy at four minutes old, so turn age would card it; silence would not.
+    // Every consumer currently guesses this constant on its own — Aperture's reconciler treated two
+    // minutes as a stall and offered a Resume on a healthy 12-hour run, which would have duplicated
+    // it. Only meaningful while running: a queued-but-not-started daemon has nothing to be silent
+    // about, and an idle one is not being watched.
+    let lastEventMsAgo: number | undefined;
+    if (row.running > 0) {
+      const ev = this.deps.db
+        .query(
+          `SELECT MAX(e.ts) AS ts FROM events e
+             JOIN runs r ON r.id = e.run_id
+            WHERE r.status = 'running'`,
+        )
+        .get() as { ts: number | null } | undefined;
+      if (ev?.ts) lastEventMsAgo = Math.max(0, Date.now() - ev.ts);
+    }
+    return {
+      busy: row.running + row.queued > 0,
+      running: row.running,
+      queued: row.queued,
+      ...(lastEventMsAgo !== undefined ? { lastEventMsAgo } : {}),
+    };
   }
 
   /** Boot: resume crashed mid-flight runs, then drain queued ones. */

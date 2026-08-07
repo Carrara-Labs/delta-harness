@@ -4,6 +4,7 @@
 // tools re-fire; non-idempotent tools get a synthetic interrupted result and the
 // model decides (spec §B sub-turn resume).
 
+import type { UtilityPurpose } from "./events";
 import type { ChatRequest, ModelResult, ToolSpec, Usage } from "./provider";
 
 /** One `recall` hit: a matching earlier message in this thread, with a pointer to the
@@ -77,6 +78,11 @@ export type ToolCtx = {
   chat?: (req: ChatRequest) => Promise<ModelResult>;
   /** Cheap-model lane for auxiliary calls (judging, summarizing) — falls back to `chat`. */
   chatUtility?: (req: ChatRequest) => Promise<ModelResult>;
+  /** S3: report a utility-lane model call for telemetry. A callback rather than `events` + `spine`
+   *  on this type, because the closure already carries both and this keeps the reporting seam one
+   *  optional field wide instead of threading two types through every tool context. Purely
+   *  observational — it never charges usage, so it cannot double-bill. */
+  onUtilityCall?: (purpose: UtilityPurpose, r: ModelResult) => void;
   /** Per-run bearer for act-as-user MCP calls (act-as-token passthrough, §E). */
   authToken?: string;
   /** The run's owning principal (the seam-asserted user_id), or null for an unowned/dev run. Lets a

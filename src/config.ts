@@ -7,6 +7,7 @@ import { hostname } from "node:os";
 import { resolve } from "node:path";
 import { BrokerCredential } from "./broker";
 import type { McpServerConfig } from "./mcp";
+import { deriveContextCeiling, maxSafeCeiling } from "./pricing";
 import { getProfile } from "./profiles";
 import {
   KNOWN_EFFORTS,
@@ -311,9 +312,28 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     // ≥200k model; raise for performance up to `model_window − max_output`, lower for cost.
     // Validated to a finite positive integer — NaN/Inf would silently DISABLE the gate (every
     // comparison false), a negative would force pathological compaction (codex).
+    // S6 (0.2.13): DERIVE the ceiling from what the models can actually take, and demote the env
+    // var from the only input to an override. A hand-set number that disagrees with the model is
+    // silent in BOTH directions — too low burns money on needless compaction (Aperture ran a 200k
+    // ceiling against a 207-245k working set), too high turns compaction into overflow.
     compactAtTokens: (() => {
+      const models = [...new Set(providers.flatMap((p) => p.models))];
       const n = Number(env.DELTA_COMPACT_AT_TOKENS);
-      return Number.isFinite(n) && n > 0 ? Math.floor(n) : 120_000;
+      const derived = deriveContextCeiling(models, 120_000);
+      if (!(Number.isFinite(n) && n > 0)) return derived ?? 120_000;
+      // Clamp an override that exceeds what the cascade can survive, and say so once at boot. The
+      // operator asked for something the model cannot do; obeying silently is how compaction stops
+      // being compaction. Protects the OVERRIDE only — a wrong `window` in the table still
+      // overflows, and only the post-provider retry guards that.
+      const ceiling = maxSafeCeiling(models);
+      const want = Math.floor(n);
+      if (ceiling !== null && want > ceiling) {
+        console.error(
+          `delta: DELTA_COMPACT_AT_TOKENS=${want} exceeds the smallest configured model's usable window (${ceiling}) — clamped. Above it the engine overflows instead of compacting.`,
+        );
+        return ceiling;
+      }
+      return want;
     })(),
     // Task-start hydration (§E) — read tools called at task start. NEUTRAL by default
     // (a product names its own reads); empty = the agent hydrates nothing.
