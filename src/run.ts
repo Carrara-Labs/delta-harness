@@ -980,12 +980,16 @@ export async function executeRun(
       spine_hash: prefixDigest(system),
       tools_bytes: utf8(JSON.stringify(specs)),
       tools_hash: prefixDigest(JSON.stringify(specs)),
-      // Disambiguators, both already computed. `buildSpine` embeds the pinned tool index AND the
-      // `searchable` count (spine.ts:34-36), so an activation moves spine_hash and tools_hash
-      // TOGETHER. Without these two a reader would blame the spine for every activation:
-      //   tools_n changed              → activation or breaker withdrawal (S4 says which)
-      //   tools_n same, self_bytes ≠   → a `remember` self-write
-      //   both same, spine_hash moved  → the stable context/policy block — the interesting case
+      // Disambiguators. `buildSpine` embeds the pinned tool index AND the `searchable` count
+      // (spine.ts:34-36), so an activation moves spine_hash and tools_hash TOGETHER; without
+      // `tools_n` a reader would blame the spine for every activation:
+      //   tools_n changed             → activation or breaker withdrawal (S4 says which)
+      //   tools_n same, spine moved   → the self-file, stable context, or policy
+      // `self_bytes` narrows that second row ACROSS runs but not within one: `self` is a per-run
+      // snapshot (run.ts ~:332 — a mid-run `remember` lands on disk and takes effect next run), so
+      // it is constant for every turn of a run by construction. A same-size self edit between runs
+      // therefore still reads as context/policy drift. Stated rather than papered over: the spec's
+      // table claimed within-run resolution it does not have (codex).
       tools_n: specs.length,
       self_bytes: self.bytes,
       history_bytes: msgBytes(history),
@@ -1063,6 +1067,10 @@ export async function executeRun(
             force: true,
             workspace: deps.workspace,
             argCap: deps.toolArgCap ?? 0,
+            // S5: the overflow-recovery path needs the atomic anchor reset just as much as the
+            // proactive one — arguably more, since it runs on a turn that already failed. Omitting
+            // it here left the crash gap open on exactly this path (codex P1).
+            anchorRunId: run.id,
           },
         );
         if (cu) {
@@ -1073,7 +1081,7 @@ export async function executeRun(
           if (cu.shrank) {
             lastInputTokens = 0;
             lastEstimate = 0;
-            db.query("UPDATE runs SET last_input = 0 WHERE id = ?").run(run.id);
+            // Already 0 on disk — cleared inside the rewrite transaction (S5).
             events.emit(
               "error",
               { ...spine, turn },

@@ -336,6 +336,11 @@ export async function runResearch(
   const baseCtx: ToolCtx = {
     workspace: ctx.workspace,
     activate: () => {},
+    // S3: the child context is built field-by-field, so an omitted callback silently disables
+    // research telemetry entirely while every unit test still passes (codex P1 — it was omitted).
+    // Research is the ONE site where per-call emission matters most: the fan-out is charged as a
+    // single aggregate, so the batch is exactly what the aggregate hides.
+    ...(ctx.onUtilityCall ? { onUtilityCall: ctx.onUtilityCall } : {}),
     ...(ctx.authToken ? { authToken: ctx.authToken } : {}),
     ...(ctx.signal ? { signal: ctx.signal } : {}),
     ...(ctx.vision !== undefined ? { vision: ctx.vision } : {}),

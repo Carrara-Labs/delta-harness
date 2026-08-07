@@ -7,7 +7,7 @@
 // an instrument that reads clean while measuring the wrong thing.
 
 import { describe, expect, test } from "bun:test";
-import { retainedTailBudget } from "../src/compaction";
+import { maybeCompact, retainedTailBudget } from "../src/compaction";
 import { openDb } from "../src/db";
 import { Events, emitUtilityCall } from "../src/events";
 import {
@@ -18,7 +18,11 @@ import {
   parsePrices,
   resolvePrice,
 } from "../src/pricing";
+import type { ChatMsg, ChatRequest, ModelResult } from "../src/provider";
+import { Queue } from "../src/queue";
 import { prefixDigest } from "../src/run";
+import { testTools } from "../src/tools";
+import { makeDeps, textResult } from "./helpers";
 
 // --- S1: prefix identity -----------------------------------------------------------------------
 // The digest itself lives in run.ts as a module-private closure over a per-process salt, so these
@@ -161,53 +165,6 @@ describe("S5 retained-tail budget", () => {
   });
 });
 
-describe("S5 the resume gap", () => {
-  test("the anchor is cleared in the same transaction as the message rewrite", () => {
-    // A crash between the compaction commit and a later `last_input = 0` resumed with a COMPACTED
-    // history and a PRE-compaction anchor, which projects over budget and re-compacts immediately —
-    // this batch's own bug, reachable by crash instead of by config.
-    const db = openDb(":memory:");
-    db.query("INSERT INTO sessions (id, created_at, updated_at) VALUES ('s1',0,0)").run();
-    db.query(
-      "INSERT INTO runs (id, seq, session_id, status, request, created_at, last_input) VALUES ('r1',1,'s1','running','{}',0, 195000)",
-    ).run();
-    // Simulate the transaction shape: rewrite + anchor clear, atomically.
-    const tx = db.transaction(() => {
-      db.query("INSERT INTO messages (run_id, session_id, msg, created_at) VALUES (?,?,?,?)").run(
-        "r1",
-        "s1",
-        JSON.stringify({ role: "user", content: "summary" }),
-        Date.now(),
-      );
-      db.query("UPDATE runs SET last_input = 0 WHERE id = ?").run("r1");
-    });
-    tx();
-    const row = db.query("SELECT last_input FROM runs WHERE id = 'r1'").get() as {
-      last_input: number;
-    };
-    expect(row.last_input).toBe(0);
-  });
-
-  test("a rolled-back rewrite leaves the anchor untouched too", () => {
-    const db = openDb(":memory:");
-    db.query("INSERT INTO sessions (id, created_at, updated_at) VALUES ('s1',0,0)").run();
-    db.query(
-      "INSERT INTO runs (id, seq, session_id, status, request, created_at, last_input) VALUES ('r1',1,'s1','running','{}',0, 195000)",
-    ).run();
-    expect(() =>
-      db.transaction(() => {
-        db.query("UPDATE runs SET last_input = 0 WHERE id = ?").run("r1");
-        throw new Error("crash mid-commit");
-      })(),
-    ).toThrow();
-    const row = db.query("SELECT last_input FROM runs WHERE id = 'r1'").get() as {
-      last_input: number;
-    };
-    // Neither happened. The two states can no longer disagree in either direction.
-    expect(row.last_input).toBe(195000);
-  });
-});
-
 // --- S6: the derived ceiling -------------------------------------------------------------------
 
 describe("S6 context ceiling derivation", () => {
@@ -272,5 +229,308 @@ describe("S6 context ceiling derivation", () => {
     // above that. Seeding at or over the observation would be a guess; under it is an observation.
     const w = resolvePrice("claude-opus-5", BAKED_PRICES)?.window as number;
     expect(w).toBeLessThan(249_127);
+  });
+});
+
+// --- S2 + S5 driven through the REAL maybeCompact --------------------------------------------
+// The first version of these tests hand-rolled the transaction they were meant to verify, so they
+// passed while the production path kept the bug (codex). These call the engine.
+
+function seed(db: ReturnType<typeof openDb>, msgs: ChatMsg[], lastInput = 195_000) {
+  const now = Date.now();
+  db.query(
+    "INSERT INTO sessions (id, user_id, created_at, updated_at) VALUES ('s', NULL, ?, ?)",
+  ).run(now, now);
+  db.query(
+    "INSERT INTO runs (id, session_id, seq, status, request, created_at, last_input) VALUES ('r','s',1,'running','{}',?,?)",
+  ).run(now, lastInput);
+  for (const m of msgs)
+    db.query("INSERT INTO messages (run_id, session_id, msg, created_at) VALUES ('r','s',?,?)").run(
+      JSON.stringify(m),
+      now,
+    );
+}
+
+const bigSession = (): ChatMsg[] => {
+  const out: ChatMsg[] = [];
+  for (let i = 0; i < 14; i++) {
+    out.push({ role: "user", content: `question ${i} ${"q".repeat(400)}` });
+    out.push({ role: "assistant", content: `answer ${i} ${"a".repeat(400)}` });
+  }
+  return out;
+};
+
+const summarizer =
+  (content: string) =>
+  async (req: ChatRequest): Promise<ModelResult> => {
+    const sys = req.messages[0]?.content;
+    if (typeof sys === "string" && sys.startsWith("You compact"))
+      return {
+        ok: true,
+        model: "claude-haiku-4-5",
+        message: { role: "assistant", content },
+        finishReason: "stop",
+        latencyMs: 5,
+        usage: { input: 900, output: 60, cacheRead: 0, cacheWrite: 0, total: 960, costUsd: 0.002 },
+      } as ModelResult;
+    return {
+      ok: true,
+      model: "m",
+      message: { role: "assistant", content: "done" },
+      finishReason: "stop",
+      latencyMs: 1,
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 2, costUsd: 0 },
+    } as ModelResult;
+  };
+
+function capture(db: ReturnType<typeof openDb>, type: string) {
+  const events = new Events(db);
+  const seen: Record<string, unknown>[] = [];
+  events.on((e) => {
+    if (e.type === type) seen.push(e.data as Record<string, unknown>);
+  });
+  return { events, seen };
+}
+
+describe("S5 the resume gap, through maybeCompact", () => {
+  test("a committed compaction clears the anchor in the SAME transaction", async () => {
+    const db = openDb(":memory:");
+    seed(db, bigSession());
+    const { events } = capture(db, "compaction");
+    const before = (
+      db.query("SELECT last_input FROM runs WHERE id='r'").get() as {
+        last_input: number;
+      }
+    ).last_input;
+    expect(before).toBe(195_000);
+
+    const res = await maybeCompact(
+      db,
+      events,
+      summarizer("Goal: g\nProgress: p\nNext: n\nArtifacts: a"),
+      "s",
+      { turn: 1 },
+      { recentBudgetTokens: 600, anchorRunId: "r" },
+    );
+    expect(res?.shrank).toBe(true);
+    // Without `anchorRunId` reaching clearAnchor, this stays 195000 and a crash here resumes with
+    // a compacted history and a pre-compaction anchor — re-compacting on the first turn back.
+    const after = (
+      db.query("SELECT last_input FROM runs WHERE id='r'").get() as {
+        last_input: number;
+      }
+    ).last_input;
+    expect(after).toBe(0);
+  });
+
+  test("a compaction that does NOT commit leaves the anchor alone", async () => {
+    const db = openDb(":memory:");
+    // Two tiny messages: nothing material to shed, so no rewrite and no anchor reset.
+    seed(db, [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ]);
+    const { events } = capture(db, "compaction");
+    await maybeCompact(
+      db,
+      events,
+      summarizer("Goal: g\nProgress: p\nNext: n\nArtifacts: a"),
+      "s",
+      {
+        turn: 1,
+      },
+      { recentBudgetTokens: 600, anchorRunId: "r" },
+    );
+    const after = (
+      db.query("SELECT last_input FROM runs WHERE id='r'").get() as {
+        last_input: number;
+      }
+    ).last_input;
+    expect(after).toBe(195_000);
+  });
+});
+
+describe("S2 billed-but-silent compaction attempts now emit", () => {
+  test("a non-material shrink emits shrank:false with reason=not_material AND its cost", async () => {
+    const db = openDb(":memory:");
+    seed(db, bigSession());
+    const { events, seen } = capture(db, "compaction");
+    // A summary as long as what it replaces → the shrink test fails, but the call was still billed.
+    const res = await maybeCompact(
+      db,
+      events,
+      summarizer(`Goal: g\nProgress: ${"p".repeat(12_000)}\nNext: n\nArtifacts: a`),
+      "s",
+      { turn: 1 },
+      { recentBudgetTokens: 20_000, anchorRunId: "r" },
+    );
+    expect(res?.shrank).toBe(false);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.shrank).toBe(false);
+    expect(seen[0]?.reason).toBe("not_material");
+    expect(seen[0]?.summary_cost_usd as number).toBeGreaterThan(0);
+  });
+
+  test("an empty summary response emits reason=no_summary rather than nothing", async () => {
+    const db = openDb(":memory:");
+    seed(db, bigSession());
+    const { events, seen } = capture(db, "compaction");
+    const res = await maybeCompact(
+      db,
+      events,
+      summarizer(""),
+      "s",
+      { turn: 1 },
+      {
+        recentBudgetTokens: 600,
+        anchorRunId: "r",
+      },
+    );
+    expect(res?.shrank).toBe(false);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.reason).toBe("no_summary");
+    expect(seen[0]?.summary_cost_usd as number).toBeGreaterThan(0);
+  });
+
+  test("a committed compaction reports shrank:true", async () => {
+    const db = openDb(":memory:");
+    seed(db, bigSession());
+    const { events, seen } = capture(db, "compaction");
+    await maybeCompact(
+      db,
+      events,
+      summarizer("Goal: g\nProgress: p\nNext: n\nArtifacts: a"),
+      "s",
+      {
+        turn: 1,
+      },
+      { recentBudgetTokens: 600, anchorRunId: "r" },
+    );
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.shrank).toBe(true);
+  });
+});
+
+describe("S3 the summary call is reported as utility tier", () => {
+  test("maybeCompact emits a model.call per summary attempt", async () => {
+    const db = openDb(":memory:");
+    seed(db, bigSession());
+    const { events, seen } = capture(db, "model.call");
+    await maybeCompact(
+      db,
+      events,
+      summarizer("Goal: g\nProgress: p\nNext: n\nArtifacts: a"),
+      "s",
+      {
+        turn: 4,
+      },
+      { recentBudgetTokens: 600, anchorRunId: "r" },
+    );
+    expect(seen.length).toBeGreaterThanOrEqual(1);
+    expect(seen[0]?.tier).toBe("utility");
+    expect(seen[0]?.purpose).toBe("summary");
+    // The call ran BEFORE turn 5; `turn` stays 4 so existing consumers are unaffected.
+    expect(seen[0]?.before_turn).toBe(5);
+  });
+});
+
+// --- S1 + S4 end-to-end, through a real run ---------------------------------------------------
+// The unit tests above prove the digest has the right PROPERTIES. Only this proves the engine
+// actually emits the attributes, hashes the segments it claims to, and hands `chat` the same specs
+// the digest measured (codex: the earlier tests would all pass with S1 entirely absent).
+
+describe("S1 end-to-end on model.call", () => {
+  test("every prefix attribute is emitted, and the digests match the assembled segments", async () => {
+    const sent: ChatRequest[] = [];
+    const deps = makeDeps(async (req) => {
+      sent.push(req);
+      return textResult("ok");
+    }, new Map(testTools()));
+    const seen: Record<string, unknown>[] = [];
+    deps.events.on((e) => {
+      if (e.type === "model.call") seen.push(e.data as Record<string, unknown>);
+    });
+
+    const queue = new Queue(deps);
+    const done = await queue.wait(queue.enqueue({ input: "hello" }).id);
+    expect(done.status).toBe("done");
+    expect(seen).toHaveLength(1);
+    const a = seen[0] as Record<string, number | string>;
+
+    for (const k of [
+      "spine_bytes",
+      "spine_hash",
+      "tools_bytes",
+      "tools_hash",
+      "tools_n",
+      "self_bytes",
+      "history_bytes",
+      "ephemeral_bytes",
+    ])
+      expect(a[k]).toBeDefined();
+    expect(a.tier).toBe("main");
+
+    // The digest must be OF the system string actually sent — not of some earlier assembly.
+    const req = sent[0] as ChatRequest;
+    const system = req.messages[0]?.content as string;
+    expect(a.spine_hash).toBe(prefixDigest(system));
+    expect(a.spine_bytes).toBe(Buffer.byteLength(system, "utf8"));
+
+    // And `tools` on the wire must be the SAME array the tools digest measured. Drift here is the
+    // one failure this instrument cannot survive, and it is invisible to every other assertion.
+    expect(a.tools_hash).toBe(prefixDigest(JSON.stringify(req.tools)));
+    expect(a.tools_n).toBe((req.tools ?? []).length);
+  });
+
+  test("the digest is stable across an identical second turn", async () => {
+    const deps = makeDeps(async () => textResult("ok"), new Map(testTools()));
+    const seen: Record<string, unknown>[] = [];
+    deps.events.on((e) => {
+      if (e.type === "model.call") seen.push(e.data as Record<string, unknown>);
+    });
+    const queue = new Queue(deps);
+    const first = await queue.wait(queue.enqueue({ input: "hello" }).id);
+    await queue.wait(queue.enqueue({ input: "hello", previous_response_id: first.id }).id);
+    expect(seen).toHaveLength(2);
+    // Same tool surface, same self-file → the two prefix segments must be byte-identical. If this
+    // ever drifts, the prefix is being rebuilt differently every turn and no cache can survive it.
+    expect(seen[1]?.spine_hash).toBe(seen[0]?.spine_hash);
+    expect(seen[1]?.tools_hash).toBe(seen[0]?.tools_hash);
+    // History grew; that is the only segment that should have moved.
+    expect(seen[1]?.history_bytes as number).toBeGreaterThan(seen[0]?.history_bytes as number);
+  });
+});
+
+describe("S7 /v1/busy silence clock", () => {
+  test("absent when idle, present while a run is in flight", async () => {
+    const deps = makeDeps(async () => textResult("ok"), new Map(testTools()));
+    const queue = new Queue(deps);
+    expect(queue.activity().last_event_ms_ago).toBeUndefined();
+    expect(queue.activity().busy).toBe(false);
+
+    const now = Date.now();
+    deps.db
+      .query("INSERT INTO sessions (id, user_id, created_at, updated_at) VALUES ('s2',NULL,?,?)")
+      .run(now, now);
+    deps.db
+      .query(
+        "INSERT INTO runs (id, session_id, seq, status, request, created_at) VALUES ('r2','s2',1,'running','{}',?)",
+      )
+      .run(now);
+    deps.db
+      .query("INSERT INTO events (ts, type, run_id, data) VALUES (?, 'turn.start', 'r2', '{}')")
+      .run(now - 5_000);
+
+    const act = queue.activity();
+    expect(act.busy).toBe(true);
+    // Silence, not turn age: ~5s since the last event.
+    expect(act.last_event_ms_ago as number).toBeGreaterThanOrEqual(4_000);
+    expect(act.last_event_ms_ago as number).toBeLessThan(60_000);
+
+    // A newer event must bring it DOWN — the value tracks silence, it is not monotonic.
+    deps.db
+      .query("INSERT INTO events (ts, type, run_id, data) VALUES (?, 'tool.call', 'r2', '{}')")
+      .run(Date.now());
+    expect(queue.activity().last_event_ms_ago as number).toBeLessThan(1_000);
   });
 });

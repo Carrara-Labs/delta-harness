@@ -294,7 +294,11 @@ export class Queue {
     busy: boolean;
     running: number;
     queued: number;
-    lastEventMsAgo?: number;
+    /** snake_case because this is the JSON field name consumers read (`/v1/status` is snake_case
+     * throughout, and the spec promised `last_event_ms_ago`). `Response.json()` does no case
+     * conversion, so a camelCase property here ships a differently-named field than the docs
+     * describe and reads as the feature being absent (codex P1). */
+    last_event_ms_ago?: number;
   } {
     const row = this.deps.db
       .query(
@@ -309,22 +313,29 @@ export class Queue {
     // minutes as a stall and offered a Resume on a healthy 12-hour run, which would have duplicated
     // it. Only meaningful while running: a queued-but-not-started daemon has nothing to be silent
     // about, and an idle one is not being watched.
-    let lastEventMsAgo: number | undefined;
+    // DAEMON-WIDE, not per-run: this is the newest event across every running run, so on a daemon
+    // serving several runs a noisy one keeps the clock low while a sibling is genuinely stuck. That
+    // is the right scope for `/v1/busy` (whose other fields are daemon-wide too) and the wrong input
+    // for a per-run Resume decision — a host wanting that reads `/v1/tasks/:id/events` (codex).
+    // Ordered by `id` rather than `MAX(ts)` so the `events_run(run_id, id)` index answers it
+    // directly; ids are assigned in insertion order, so the newest id IS the newest event.
+    let last_event_ms_ago: number | undefined;
     if (row.running > 0) {
       const ev = this.deps.db
         .query(
-          `SELECT MAX(e.ts) AS ts FROM events e
+          `SELECT e.ts AS ts FROM events e
              JOIN runs r ON r.id = e.run_id
-            WHERE r.status = 'running'`,
+            WHERE r.status = 'running'
+            ORDER BY e.id DESC LIMIT 1`,
         )
         .get() as { ts: number | null } | undefined;
-      if (ev?.ts) lastEventMsAgo = Math.max(0, Date.now() - ev.ts);
+      if (ev?.ts) last_event_ms_ago = Math.max(0, Date.now() - ev.ts);
     }
     return {
       busy: row.running + row.queued > 0,
       running: row.running,
       queued: row.queued,
-      ...(lastEventMsAgo !== undefined ? { lastEventMsAgo } : {}),
+      ...(last_event_ms_ago !== undefined ? { last_event_ms_ago } : {}),
     };
   }
 

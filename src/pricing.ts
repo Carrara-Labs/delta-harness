@@ -155,6 +155,20 @@ export function priceUsd(
  * sized to the worst of those plus slack. */
 export const OUTPUT_RESERVE = 40_000;
 
+/** Below this a derived ceiling is not a ceiling, it is a compaction loop: every non-trivial
+ * request would exceed it on the first turn. A `window` that cannot clear it is treated as UNKNOWN
+ * rather than obeyed — an operator override of `{window: 30000}` would otherwise derive a ceiling of
+ * 0 and compact every request forever (codex). */
+const MIN_USABLE_CEILING = 16_000;
+
+/** The usable ceiling for one model, or null when its window is unknown or unusably small. */
+function usableCeiling(model: string): number | null {
+  const w = resolvePrice(model, TABLE)?.window;
+  if (!w) return null;
+  const c = w - OUTPUT_RESERVE;
+  return c >= MIN_USABLE_CEILING ? c : null;
+}
+
 /** The compaction ceiling derived from what the MODELS can actually take (S6).
  *
  * Two rules, both learned the hard way:
@@ -170,11 +184,11 @@ export function deriveContextCeiling(models: string[], fallback: number): number
   let known = false;
   let min = Number.POSITIVE_INFINITY;
   for (const m of models) {
-    const w = resolvePrice(m, TABLE)?.window;
-    if (w) known = true;
+    const c = usableCeiling(m);
+    if (c !== null) known = true;
     // An unknown model contributes `fallback`, NOT nothing — skipping it is what would let a known
     // large window set a ceiling that overflows the model actually serving the turn.
-    min = Math.min(min, w ? Math.max(0, w - OUTPUT_RESERVE) : fallback);
+    min = Math.min(min, c ?? fallback);
   }
   return known ? min : null;
 }
@@ -188,8 +202,15 @@ export function deriveContextCeiling(models: string[], fallback: number): number
 export function maxSafeCeiling(models: string[]): number | null {
   let min = Number.POSITIVE_INFINITY;
   for (const m of models) {
-    const w = resolvePrice(m, TABLE)?.window;
-    if (w) min = Math.min(min, Math.max(0, w - OUTPUT_RESERVE));
+    // KNOWN windows only, and this asymmetry with `deriveContextCeiling` is deliberate (codex asked).
+    // The two answer different questions. The DEFAULT is ours to choose, so an unknown member makes
+    // it conservative. An OVERRIDE is the operator's explicit decision, and we overrule it only
+    // where we have positive evidence it cannot work. Counting unknowns here would clamp every
+    // deployment whose cascade contains one unpriced model — which is most of them, since only one
+    // model carries a window today — silently halving ceilings that are working fine. Overruling an
+    // explicit choice on the basis of ignorance is the failure mode this batch exists to remove.
+    const c = usableCeiling(m);
+    if (c !== null) min = Math.min(min, c);
   }
   return Number.isFinite(min) ? min : null;
 }
