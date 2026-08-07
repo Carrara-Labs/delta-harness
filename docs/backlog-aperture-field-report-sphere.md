@@ -98,6 +98,33 @@ needed - the standard turn line already carries input and cache hit rate.
 4. **Emit the signal.** A `cache_hit_pct` + `context_delta` pair per turn in `agent_events` would
    have made this visible on day one instead of requiring a log archaeology session.
 
+### Replication, on a clean uniform workload (2026-08-07, same lane)
+
+The sweep data above is mixed-workload. A later run on the same lane does one thing over and over -
+read 3 pages of a saved list, write notes, repeat - and gives a textbook trace:
+
+| turn | in | cache | delta_in | | turn | in | cache | delta_in |
+| ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: |
+| 2 | 225,895 | 97% | +6,446 | | 6 | 218,104 | 95% | +10,611 |
+| 3 | 224,303 | **9%** | -1,592 | | 7 | 213,974 | **9%** | -4,130 |
+| 4 | 219,165 | **9%** | -5,138 | | 8 | 224,700 | 94% | +10,726 |
+| 5 | 207,493 | **9%** | -11,672 | | 9 | 220,630 | **9%** | -4,070 |
+
+`SHRANK -> 5 miss / 0 hit. GREW -> 0 miss / 3 hit.` Running total across both runs: **21 shrinks,
+21 misses, zero hits.** A -1,592 token step is enough to do it, so this is not a size threshold -
+any net-negative step invalidates.
+
+**The compounding effect, which is the actionable part.** The workload alternates by construction:
+a paged read GROWS the context, the note-write that follows SHRINKS it. So every read/write pair
+buys exactly one cache miss. Aperture's `qs_read_artifact` pages a list at a fixed 10 rows, so
+re-reading its own 520-row roster costs 52 sequential reads - and therefore manufactures on the
+order of 25 cache misses at ~$1.28 each, against ~$0.21 for a cached turn.
+
+That means the consumer-side paging ceiling and this engine bug are **not independent**: the page
+size sets the number of grow/shrink oscillations, and each oscillation costs 6x. Either fix helps;
+both together are multiplicative. Worth saying to consumers explicitly - "batch your reads" is a
+cost instruction, not just a latency one, for as long as a shrinking context nukes the prefix.
+
 ---
 
 ## 2. P2 — turn duration must bound any consumer's liveness heuristic
