@@ -93,6 +93,12 @@ export function createServer(
      *  `/v1/dev/*`. Distinct, higher privilege than driving runs (spec §8). Unset ⇒
      *  `/v1/dev/*` is loopback-only (fail-closed on a public interface). */
     inspectToken?: string;
+    /** Whether DELTA_CAPTURE_CALLS is on. Reported so an EMPTY /calls result can say WHY it is
+     * empty. This flag pair has now cost two engineers a day each: `DELTA_CAPTURE_PAYLOADS`
+     * (telemetry attributes, prod-safe) reads as the one that captures requests, while
+     * `DELTA_CAPTURE_CALLS` (dev-only, the actual request snapshot) is the one that does. An empty
+     * array reads as "no calls happened" rather than "capture was never on". */
+    captureCalls?: boolean;
     /** The daemon's own writable SQLite handle — the Cockpit reads it with fixed,
      *  safe-column `SELECT`s (never a raw table dump). Absent ⇒ `/v1/dev/*` is 404. */
     db?: Database;
@@ -360,7 +366,7 @@ export function createServer(
 
         // True-to-life per-model-call input/output (the `calls` capture). Redacted on read.
         const runCalls = pathname.match(/^\/v1\/dev\/runs\/([^/]+)\/calls$/);
-        if (runCalls) return devRunCalls(db, runCalls[1] as string);
+        if (runCalls) return devRunCalls(db, runCalls[1] as string, opts?.captureCalls === true);
         const runDetail = pathname.match(/^\/v1\/dev\/runs\/([^/]+)$/);
         if (runDetail) return devRunDetail(db, runDetail[1] as string);
 
@@ -1119,7 +1125,19 @@ function devRunDetail(db: Database, id: string): Response {
  *  capture, dev-only). Each is the EXACT assembled request the model saw — system spine
  *  + full message list + tool schemas — paired with the response. Redacted on the read
  *  path (raw on disk stays true), like the journal/transcript. Empty if capture was off. */
-function devRunCalls(db: Database, id: string): Response {
+/** Why a `/calls` read came back empty. Without this an operator cannot tell "this run made no
+ *  model calls" from "the flag that records them was never set" — the second is what actually
+ *  happens, because the flag is dev-only and the similarly-named DELTA_CAPTURE_PAYLOADS is the one
+ *  production lanes set. */
+function emptyHint(captureEnabled: boolean): { note: string } {
+  return {
+    note: captureEnabled
+      ? "No captures recorded for this run."
+      : "DELTA_CAPTURE_CALLS is not set, so no request was ever recorded. It is dev-only and is NOT the same flag as DELTA_CAPTURE_PAYLOADS, which only enriches telemetry attributes. Captures are not recoverable retroactively.",
+  };
+}
+
+function devRunCalls(db: Database, id: string, captureEnabled: boolean): Response {
   let rows: { turn: number; request: string; response: string; created_at: number }[] = [];
   try {
     rows = db
@@ -1129,7 +1147,7 @@ function devRunCalls(db: Database, id: string): Response {
       .all(id) as typeof rows;
   } catch {
     // `calls` table absent (older DB / capture never migrated) → just no calls.
-    return json({ calls: [] });
+    return json({ calls: [], capture_enabled: captureEnabled, ...emptyHint(captureEnabled) });
   }
   const calls = rows.map((r) => ({
     turn: r.turn,
@@ -1137,7 +1155,11 @@ function devRunCalls(db: Database, id: string): Response {
     request: redactSecrets(safeParse(r.request) ?? {}),
     response: redactSecrets(safeParse(r.response) ?? {}),
   }));
-  return json({ calls });
+  return json({
+    calls,
+    capture_enabled: captureEnabled,
+    ...(calls.length ? {} : emptyHint(captureEnabled)),
+  });
 }
 
 const MAX_FILE_BYTES = 1024 * 1024; // 1 MB body cap (spec §4.5)

@@ -218,3 +218,18 @@ Specs: `spec-cache-breakpoints.md`, `spec-compaction-tail.md`.
   initData-authenticated, single-use). On npm + ghcr; site live.
 
 - **Harness 0.2.8 + Connect 0.3.1** (2026-08-01) — command-surface polish: `/status` plain English
+## Found by the 0.2.13 canary (2026-08-08)
+
+- **`calls` has NO retention.** `pruneLocalState` (`retention.ts`) bounds `journal` and `events` and
+  nothing else, so the request-capture table grows unbounded. At Aperture's 115k-160k-token turns a
+  captured request is roughly 0.5-0.7MB, so a 200-turn engagement is ~120MB against volumes that are
+  1GB on nine of ten lanes and shared with the SQLite WAL. Anyone running `DELTA_CAPTURE_CALLS=1` on
+  a real workload must pull and disable promptly. Sibling of the open spill-retention item and it
+  should be fixed with it.
+- **`DELTA_CAPTURE_PAYLOADS` vs `DELTA_CAPTURE_CALLS` has now cost two engineers a day each** — once
+  on our side, once on Aperture's, in the same week, in opposite directions. Partly mitigated in
+  0.2.13: `/v1/dev/runs/:id/calls` now returns `capture_enabled` and, when empty, says *why* rather
+  than returning a bare `[]` that reads as "this run made no calls". The names themselves are still
+  the trap.
+- **A 404 with an empty body reports `(empty error body)` with no status code.** Cost an hour
+  locally when `MODEL_BASE_URL` lacked `/v1`. Include the HTTP status when the body is empty.

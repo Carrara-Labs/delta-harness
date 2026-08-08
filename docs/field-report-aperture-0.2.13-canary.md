@@ -195,11 +195,21 @@ self-file rewrite in §4, isolated exactly as your disambiguators intend. The in
 | `8a92adc3` | 7 | 466 |
 | `8a92adc3` | 17 | 4,993 |
 
-Our raw request/response payloads for these turns are captured on the lane
-(`DELTA_CAPTURE_PAYLOADS=1`) at `/data/delta.db` on machine `8747430b6d7118`, and the lane is
-still up. **Ask and we will pull the exact serialized bodies for those three turns** - that is the
-one artifact that could distinguish "inside history" from "on the wire", and we did not want to
-ship transcript content to you unasked.
+**CORRECTION (2026-08-08, after the first version of this report).** We said these turns' raw
+request bodies were captured on the lane. **They were not, and they do not exist.** We conflated
+two flags:
+
+- `DELTA_CAPTURE_PAYLOADS=1` - what this lane sets. Only adds `data` to payload-class telemetry
+  events (`exporter.ts:173`). Not the assembled request.
+- `DELTA_CAPTURE_CALLS=1` - the one that snapshots the exact assembled request and response into
+  the `calls` table (`db.ts:247`, `run.ts:208`). Explicitly DEV-ONLY, "prod never pays the
+  storage". **This lane has never set it.**
+
+So `calls` is empty for all three turns. Two further things we checked before saying so: `calls`
+is not in `PEEK_TABLES`, so it is not readable over `/v1/dev/*` even in principle, and this lane
+sets no `DELTA_INSPECT_TOKEN`, so that whole surface 404s anyway.
+
+**The bodies are therefore only obtainable by reproduction.** Plan in §10.
 
 ### Re-running the analysis
 
@@ -218,3 +228,44 @@ block. It is deliberately generic - point it at any workspace slug on a 0.2.13+ 
 `attributes ? 'spine_hash'` and `attributes->>'tier' = 'main'`. One trap worth passing on: that
 table is RLS-guarded, and a pooled read **returns zero rows with exit 0** rather than erroring.
 A "no data" result there means check your connection before you conclude the instrument is silent.
+
+---
+
+## 10. Follow-up plan (agreed 2026-08-08)
+
+Two experiments, deliberately NOT combined. Compaction rewrites history, so a lane configured to
+compact cannot also serve as clean evidence about a miss on an unchanged prefix.
+
+### Experiment 1 - S5, the release blocker
+
+Synthetic ceiling pressure on a lab lane, per your instruction not to canary a paying client.
+`DELTA_COMPACT_AT_TOKENS=60000` (above the ~33k no-op floor), identical Quick Search workload run
+on both arms:
+
+| arm | image | ceiling |
+|---|---|---|
+| A | `ghcr.io/carrara-labs/delta-harness:0.2.11` | 60,000 |
+| B | `0213-canary-d705692` | 60,000 |
+
+Our ordinary QS engagements reach 115k-160k input, so a 60k ceiling forces repeated compaction
+without contriving the workload. Scoring, per your own guidance: **compaction attempts (and
+`shrank=true` separately), post-compaction `input_tokens`, `context_irreducible`, turns
+delivered.** Not steady-state cache hit. We will also report `cache_shortfall_tokens` once we are
+on a build that emits it.
+
+The agent is not deterministic, so we will run each arm more than once if the first pair is close.
+If it is not close, we will say so and not manufacture precision we do not have.
+
+### Experiment 2 - the three misses
+
+Requires `DELTA_CAPTURE_CALLS=1` and the ORIGINAL conditions (ceiling 200,000, no compaction), then
+ordinary work until a miss reproduces. Misses ran ~3 in 40 turns, so this is a couple of runs, not
+a guaranteed single shot.
+
+What we will send when one lands: the assembled request for the miss turn and its predecessor, so
+you can diff the two byte strings directly. That is the artifact that separates "inside history"
+from "on the wire".
+
+Two caveats we would rather state now than discover later. `calls` stores the full assembled
+request per turn, so at a 200k ceiling this is real volume against a 1GB lane volume - we will
+watch it and pull promptly. And it is dev-only for a reason; we will turn it back off afterwards.
