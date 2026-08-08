@@ -668,3 +668,86 @@ describe("S3 research fan-out reports every child call", () => {
     expect(new Set(seen)).toEqual(new Set(["research"]));
   });
 });
+
+// --- S10: the honest cache-health metric -------------------------------------------------------
+// From the Aperture canary (2026-08-08). Their 42-turn reading proved `cache_hit_pct` is a ratio
+// whose DENOMINATOR moves: the same byte-identical prefix read anywhere from 65% to 100% purely
+// because of how much history each turn appended. The prediction this batch was built to test
+// failed, and this is the better answer it produced instead.
+
+describe("S10 cache_shortfall_tokens", () => {
+  test("a perfectly cached turn reports a small constant, whatever the hit percentage says", async () => {
+    // Turn 3 of Aperture's task 8a92adc3, verbatim: 68% "hit" and a 45-token shortfall. A healthy
+    // turn that the ratio slanders, which is the whole reason this metric exists.
+    const prevInput = 23_566;
+    const thisCached = 23_521;
+    const thisInput = 34_705;
+    const hitPct = Math.round((thisCached / thisInput) * 100);
+    expect(hitPct).toBe(68); // looks like a third of the prompt was re-read...
+    expect(prevInput - thisCached).toBe(45); // ...but the cache served everything it could.
+  });
+
+  test("a real miss is unmistakable on the shortfall and ambiguous on the ratio", () => {
+    // Turn 17 of the same task: 92% hit, and 4,993 tokens genuinely re-read. The ratio ranks this
+    // HEALTHIER than the 68% turn above, which is exactly backwards.
+    const prevInput = 125_199;
+    const thisCached = 120_206;
+    const thisInput = 130_813;
+    expect(Math.round((thisCached / thisInput) * 100)).toBe(92);
+    expect(prevInput - thisCached).toBe(4_993);
+  });
+
+  test("emitted from the second call of a run onward, absent on the first", async () => {
+    // Driven as a TOOL-CALLING run, because that is the shape the metric is for: many model calls
+    // inside one long task, which is exactly Aperture's 23-turn engagement. `lastInputTokens` is
+    // per-run state, so a fresh run legitimately has no previous request of its own to compare to.
+    let call = 0;
+    const deps = makeDeps(async () => {
+      call++;
+      if (call === 1)
+        return {
+          ok: true,
+          model: "m",
+          message: {
+            role: "assistant",
+            tool_calls: [
+              { id: "c1", type: "function", function: { name: "add", arguments: '{"a":1,"b":2}' } },
+            ],
+          },
+          finishReason: "tool_calls",
+          latencyMs: 1,
+          usage: { input: 5_000, output: 5, cacheRead: 0, cacheWrite: 0, total: 5_005, costUsd: 0 },
+        } as ModelResult;
+      return {
+        ok: true,
+        model: "m",
+        message: { role: "assistant", content: "done" },
+        finishReason: "stop",
+        latencyMs: 1,
+        // Cached 4,955 of the previous request's 5,000 — the healthy shape, 45 short.
+        usage: {
+          input: 6_000,
+          output: 5,
+          cacheRead: 4_955,
+          cacheWrite: 0,
+          total: 6_005,
+          costUsd: 0,
+        },
+      } as ModelResult;
+    }, new Map(testTools()));
+    const seen: Record<string, unknown>[] = [];
+    deps.events.on((e) => {
+      if (e.type === "model.call") seen.push(e.data as Record<string, unknown>);
+    });
+    const queue = new Queue(deps);
+    const done = await queue.wait(queue.enqueue({ input: "add one and two" }).id);
+    expect(done.status).toBe("done");
+    expect(seen).toHaveLength(2);
+    // No previous request on the first call — meaningless, not zero.
+    expect(seen[0]?.cache_shortfall_tokens).toBeUndefined();
+    // 5,000 sent last time, 4,955 served from cache: the healthy constant, and NOT a function of
+    // this turn's 6,000-token input the way cache_hit_pct would be.
+    expect(seen[1]?.cache_shortfall_tokens).toBe(45);
+    expect(seen[1]?.cache_hit_pct).toBe(83); // the ratio, meanwhile, reads as a 17% "miss"
+  });
+});

@@ -1104,6 +1104,26 @@ export async function executeRun(
     }
 
     model = result.model;
+    // S10 (Aperture canary, 2026-08-08): the HONEST cache health metric, captured BEFORE
+    // `lastInputTokens` is overwritten below.
+    //
+    // `cache_hit_pct` is a ratio whose DENOMINATOR moves: appending a big tool result grows this
+    // turn's input, so the same perfectly-cached prefix reads as a lower percentage. Aperture's
+    // canary measured 65-100% swings on 42 turns whose prefix was byte-identical throughout —
+    // and part of the "cache decay" they originally escalated to us was that artifact.
+    //
+    // A healthy turn re-reads the ENTIRE previous request from cache, so `cacheRead` should equal
+    // the previous turn's gross input. The gap is the only number that means anything: it is 45
+    // tokens on 37 of 40 turns in their data (a fixed per-request framing cost), and the three
+    // genuine misses stand out at 466, 4,993 and 7,172. Absolute, not a ratio, so nothing about
+    // how much history was appended can move it.
+    //
+    // Per-RUN by construction: `lastInputTokens` is this run's own anchor, so the first call of a
+    // run has nothing to compare against and emits nothing rather than a misleading zero. That is
+    // the right scope for the long autonomous tasks this measures (Aperture's engagements run 19-23
+    // model calls inside one run); a chat-shaped session of many one-call runs will see it only
+    // when a run makes more than one call.
+    const shortfall = lastInputTokens > 0 ? lastInputTokens - result.usage.cacheRead : undefined;
     lastInputTokens = result.usage.input;
     // Pair the real gross input with a byte-estimate of the SAME (final, post-compaction) request,
     // so next turn can project growth off a provider-measured anchor (S7). `history` is unchanged
@@ -1132,7 +1152,13 @@ export async function executeRun(
         "gen_ai.usage.output_tokens": result.usage.output,
         "gen_ai.usage.cached_tokens": result.usage.cacheRead,
         "gen_ai.usage.cost_usd": result.usage.costUsd,
+        // NOT a health metric — its denominator grows with appended history. Kept because
+        // consumers already chart it, but score on `cache_shortfall_tokens` instead.
         cache_hit_pct: cacheHit,
+        // The number that actually says whether the cache is working (see above). Absent on the
+        // first call of a run and after a compaction, where there is no previous request to
+        // re-read and a "shortfall" would be meaningless rather than zero.
+        ...(shortfall !== undefined ? { cache_shortfall_tokens: shortfall } : {}),
         // S1: which part of the cached prefix changed this turn. A miss with a moved hash names its
         // own culprit; a miss with both hashes stable says the prefix was intact and the cause is
         // elsewhere. That second reading is the one that can falsify the standing prediction.

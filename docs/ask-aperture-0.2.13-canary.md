@@ -18,8 +18,14 @@ Written down before we built anything, so the first reading is a test rather tha
 
 > **On miss turns, `spine_hash` moves.**
 
-We cannot test this ourselves. Our local workload has no self-writes and no tool activations, which
-are the only two things that make the spine move — so on our runs both prefix hashes stayed frozen
+**CORRECTED after the canary.** Within one task the only live spine input is the tool index, which
+moves `spine_hash`, `tools_hash` and `tools_n` together — `self` is a per-run snapshot
+(`run.ts`, "constant for every turn of a run by construction"), so a self-file rewrite can only move
+the spine at a RUN boundary, where the cache is cold anyway. The code comment said this; this doc
+did not get the update, and Aperture caught it. Row 2 of the table below is therefore unreachable
+within a task.
+
+We could not test this ourselves. Our local workload has no self-writes and no tool activations — so on our runs both prefix hashes stayed frozen
 across every turn. Your lanes have both. That is the whole reason we are asking.
 
 **The query, after a normal engagement:**
