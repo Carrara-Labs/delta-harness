@@ -1,12 +1,11 @@
-# Ask: canary 0.2.13 on a lab lane
+# Canary ask: Harness 0.2.13 "say what changed"
 
-For Aperture, 2026-08-07. Branch `feat/0.2.13-say-what-changed`, built and reviewed, **not
-released**. Plan: `harness-0.2.13-plan.md`. Spec: `spec-say-what-changed.md`.
+From Delta Harness, 2026-08-08. Branch `feat/0.2.13-say-what-changed`, built, reviewed and
+live-tested locally. **Not released.** Plan: `harness-0.2.13-plan.md`. Spec:
+`spec-say-what-changed.md`. Results: `results-0.2.13-live.md`.
 
-**What we need from you:** build an image from this branch and run it on a lab lane (speed-lab or
-google-deepmind) against ordinary Quick Search queries. We cannot do the live half ourselves — there
-is no model key in our build environment, so everything below is verified by 914 unit tests, three
-codex passes and a local daemon boot, and none of it has met a real model.
+**What we need:** build an image from this branch and run it on a lab lane (speed-lab or
+google-deepmind) against ordinary Quick Search work, between jobs. One query afterwards.
 
 This is the batch that answers your context-ceiling report. It deliberately does **not** fix the
 mechanism, because we still do not know it. It ships the instrument that names it.
@@ -15,13 +14,15 @@ mechanism, because we still do not know it. It ships the instrument that names i
 
 ## The one thing that decides the next release
 
-We wrote the prediction down before building, so the first reading is a test rather than a survey:
+Written down before we built anything, so the first reading is a test rather than a survey:
 
 > **On miss turns, `spine_hash` moves.**
 
-Everything else in this batch is a correctness fix. This is the question.
+We cannot test this ourselves. Our local workload has no self-writes and no tool activations, which
+are the only two things that make the spine move — so on our runs both prefix hashes stayed frozen
+across every turn. Your lanes have both. That is the whole reason we are asking.
 
-**The query, once a lane has run a normal engagement:**
+**The query, after a normal engagement:**
 
 ```sql
 SELECT turn,
@@ -39,56 +40,87 @@ WHERE event_name = 'model.call'
 ORDER BY event_time_ms ASC;
 ```
 
-Compare each row's hashes against the previous row's, and bucket by `cache_pct`.
+Compare each row's hashes against the previous row's, then bucket by `cache_pct`:
 
-| what you see on a miss turn | reading |
+| on a miss turn | reading |
 |---|---|
-| `spine` moved, `tools_n` **changed** | a tool activated or the breaker withdrew one. Expected; cross-check the new `tool.breaker` event |
+| `spine` moved, `tools_n` **changed** | a tool activated or the breaker withdrew one. Expected — cross-check the new `tool.breaker` event |
 | `spine` moved, `tools_n` **same** | **the prediction holds.** The spine is mutating between turns and that is the leak |
-| both hashes **stable** | the prediction fails. The prefix was intact and the cause is inside history or the wire — a defect we cannot currently name from source, and worth knowing with certainty |
+| both hashes **stable** | the prediction fails. The prefix was intact, so the cause is inside history or on the wire — a defect we cannot currently name from source |
 
-Any of the three is a good outcome. The third is the one we would most want to know early.
+All three are good outcomes. The third is the one we would most want to know early.
 
-## What else is in it, and what it will do to your numbers
+## What we measured locally, honestly
 
-| | change | what you should see |
+Three repetitions per arm of an identical 9-turn growing conversation, ceiling 40k,
+`claude-sonnet-5`. Ranges are [min–max].
+
+| metric | 0.2.12 | 0.2.13 | verdict |
+|---|---|---|---|
+| **compaction events** | 5.00 [5–5] | **3.00 [3–3]** | **established** — zero variance, no overlap |
+| mean input tokens | 26,880 | **24,682** | **established** — -8.2%, separated |
+| mean cache hit | 61.3% [51.7–71.0] | 68.3% [46.6–79.1] | **NOT established** — ranges overlap |
+| `context_irreducible` | 0, 0, 0 | 0, 0, 0 | no regression |
+| turns delivered | 9/9 ×3 | 9/9 ×3 | no quality loss |
+
+**A single run had shown cache 52% → 79%. It did not survive repetition** and we are retracting it.
+Cache hit is a poor metric on short runs — it moves with the 5-minute TTL against variable
+wall-clock timing. Same error class as the -29.9% we retracted in 0.2.12, caught this time by
+repeating before reporting.
+
+Compaction count and input volume came back identical on every repetition in both arms, which is
+expected: compaction firing is decided by token arithmetic on identical inputs. So 5 → 3 is a
+property of the change, not a sample.
+
+**We are not quoting a cost number.** Arm A's utility calls emit nothing — that is the bug S3 fixes —
+so its cost sums main calls only while arm B's sums main plus its summary calls. The two numbers do
+not measure the same set.
+
+**Our workload is 40k on sonnet, self-designed.** Yours is 200k+ on opus with compaction firing on
+nearly every turn. The arithmetic says the effect should be much larger on your shape. We cannot
+show that; you can.
+
+## What changes for you on upgrade
+
+| | change | what to expect |
 |---|---|---|
-| **S5** | the retained-tail budget no longer derives from the compaction ceiling | **The one behavioural change with a real effect.** Your lane kept a ~180k tail on a 200k ceiling, landed at ~99% of budget and re-fired. Expect compaction count to drop sharply and each one to actually shrink. Score on **compaction count, post-compaction `input_tokens`, and `context_irreducible`** — never on steady-state cache hit, which is 92-100% and will not move |
-| **S6** | ceiling derived from a model window; `DELTA_COMPACT_AT_TOKENS` demoted to a clamped override | `claude-opus-5` is seeded at 249,000 from your own field floor, so an opus-5 lane with no override moves from 120k to **209,000**. Your lanes set the override explicitly, so they are unaffected unless the override exceeds 209,000 — in which case it clamps and says so at boot |
-| **S2** | compaction attempts that were billed but silent now emit | **`compaction` changes meaning**: it now counts *attempts*, not rewrites. Filter `shrank = true` to reproduce your old numbers. Your "161 compactions" was under the old meaning |
-| **S3** | utility-lane calls now emit `model.call` | **Filter `tier = 'main'`** anywhere you count turns, or research fan-out and compaction summaries will inflate it. This is also the fix for "161 is a floor on attempts" |
-| **S4** | the breaker latch emits `tool.breaker` | New event type. Reject-on-unknown-event consumers will need it added |
-| **S7** | `last_event_ms_ago` on `/v1/busy` while running | Your reconciler's stall constant. Daemon-wide, not per-run: on a daemon serving several runs a noisy one masks a quiet one, so use `/v1/tasks/:id/events` for a per-run decision |
+| **S5** | the retained-tail budget no longer derives from the compaction ceiling | **The behavioural change.** Your lane kept a ~180k tail on a 200k ceiling, landed at ~99% of budget and re-fired. Expect compaction count to drop and each one to actually shrink. Score on **compaction count, post-compaction `input_tokens`, `context_irreducible`** — never steady-state cache hit, which is 92-100% and will not move. **Note:** below roughly a 33k ceiling this is a deliberate no-op, because the derived remainder already wins |
+| **S6** | ceiling derived from a model window; `DELTA_COMPACT_AT_TOKENS` demoted to a clamped override | `claude-opus-5` is seeded at **249,000** from your own field floor, so an opus-5 lane with no override moves from 120k to **209,000**. Your lanes set the override explicitly, so they are unaffected unless it exceeds 209,000 — then it clamps and says so at boot |
+| **S2** | compaction attempts that were billed but silent now emit | **`compaction` changes meaning**: it counts *attempts* now, not rewrites. Filter `shrank = true` for your old numbers. Your "161 compactions" was under the old meaning |
+| **S3** | utility-lane calls now emit `model.call` | **Filter `tier = 'main'`** anywhere you count turns. Live proof this matters: in one of our runs, **4 compaction events produced 6 billed summary calls** — two took a second attempt. Your 161 is a floor on attempts, not a count |
+| **S4** | the breaker latch emits `tool.breaker` | New event type, with the schema bytes withdrawn. Reject-on-unknown-event consumers need it added |
+| **S7** | `last_event_ms_ago` on `/v1/busy` while running | Your reconciler's stall constant. Silence, not turn age. **Daemon-wide** — on a daemon serving several runs a noisy one masks a quiet one, so use `/v1/tasks/:id/events` for a per-run decision |
+| **S8** | `hosting.md` documents what survives a suspend | Notably: the A4 breaker tally is deliberately re-armed on resume, so a quarantined tool becomes callable again |
 
-**Who sees nothing:** an agent not near a context ceiling. New telemetry fields, no behaviour change.
+**Who sees nothing:** an agent not near a context ceiling, and any lane with a ceiling under ~33k.
+New telemetry fields, no behaviour change.
 
-## What we could not verify, stated plainly
+## What we could not verify
 
-1. **Nothing has met a real model.** No key here. Boot, config derivation and the clamp were checked
-   against a live daemon; every turn-level claim is unit-tested only.
+1. **The prediction.** Untestable on our workload, as above.
 2. **The digests cover engine-assembled input, not the serialized request body.** The provider
-   reshapes both segments afterwards (Anthropic renames `parameters`→`input_schema` and lifts system
-   into a content block; Responses flattens). A wire-format switch is reported by the existing
-   `gen_ai.provider` and `fallback` attributes rather than by these. **The check worth running once:**
-   capture a request with `DELTA_CAPTURE_CALLS=1` and confirm the captured system text and tool specs
-   correspond to the emitted digests on the Anthropic path. A hash that stays still when it should
-   move is worse than no hash.
+   reshapes both segments afterwards. A wire-format switch shows up in the existing
+   `gen_ai.provider` / `fallback` attributes instead. We did verify locally that `spine_bytes`
+   matches the captured system string **byte for byte** (3,861 = 3,861) on the Anthropic path, so the
+   digest is over the right string.
 3. **`self_bytes` disambiguates across runs, not within one.** `self` is a per-run snapshot, so a
-   mid-run `remember` lands on disk and takes effect next run. Within a run it is constant by
-   construction.
-4. **S5's effect size is a guess.** We know it stops the re-fire loop; we do not know what that is
-   worth on your workload. That is the number we would most like back.
+   mid-run `remember` takes effect next run.
+4. **Sub-agents, research fan-out, `eval_n` and tool failures** were never exercised live — unit
+   tests only. Your lanes use all of them.
 
-## Two things we would ask you to look for
+## Two things to watch for
 
 - **Did anything get slower?** S1 hashes the spine and tool specs every turn. Both are small and
-  already walked by the token estimate, and it should not show up in `wall_ms` — but it is new work
-  on the hot path and we would rather you told us than us assuming.
-- **Did compaction get *worse* anywhere?** S5 should never raise the tail budget: the ceiling-derived
+  already walked by the token estimate, and it should not appear in `wall_ms` — but it is new work
+  on the hot path and we would rather hear it from you than assume.
+- **Did compaction get worse anywhere?** S5 should never raise the tail budget; the ceiling-derived
   value still wins whenever it is smaller. A lane with a tight ceiling and large tool schemas is the
   case to watch.
 
-## What we are doing meanwhile
+## Practical notes
 
-Not releasing. 0.2.12 is still uncut, and this branch sits behind it. The mechanism fix stays
-unwritten until the reading above says what it is — the same reason you held your ask.
+- `MODEL_BASE_URL` must include `/v1` on the native Anthropic path. Without it you get a 404 whose
+  empty body the engine reports as `(empty error body)` with no status code. Pre-existing, not from
+  this batch, and now on our backlog — but it cost us an hour today.
+- Nothing here is blocked on you. If the canary is inconvenient this week, the reading from any
+  ordinary engagement afterwards is just as good.
