@@ -38,9 +38,7 @@ Aperture has a pinned fixture and a bench rig and offered to canary; that is the
 
 ## Before it can be cut
 
-1. **The `#8` docs convention.** Promised to Aperture and still unwritten: operator reference
-   material is pointed at, not resident. Cheap, and it stops the next consumer inventing a fifth
-   bundle file and shipping a pointer to nothing.
+1. ~~**The `#8` docs convention.**~~ **DONE** 2026-08-08 — `bundle-reference-material.md`.
 2. **CHANGELOG, `version.ts`, `package.json`, site changelog.** The ceremony in
    `reference_delta_release_ceremony`.
 3. **The release brief**, which must name three things:
