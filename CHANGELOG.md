@@ -6,11 +6,28 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
-## [0.2.13] - unreleased
+## [0.2.13] - 2026-08-09
 
 Say what changed. The engine now reports which part of the prompt moved between turns, so a cache
-miss names its own cause. Compaction also gets under its own ceiling reliably. Same schema as
-0.2.12, so upgrading between them is reversible.
+miss names its own cause. Compaction gets under its own ceiling reliably, and the arguments the
+model itself writes are bounded for the first time.
+
+This release also carries the work prepared as 0.2.12, which was never published. Upgrading from
+0.2.11 is a single one-way step rather than two.
+
+### Upgrade note: this step is one-way
+Two migrations. A lane rolled back to 0.2.11 afterwards will not boot, and recreating the volume to
+recover destroys the agent's learned `DELTA.md`, which lives in the workspace rather than the
+database. Snapshot the workspace and verify the archive before upgrading:
+
+```sh
+fly machine start <machine-id> -a <app>
+fly ssh console -a <app> -C "tar cf - -C /data workspace" > <app>-workspace-$(date +%Y%m%d).tar
+tar tf <app>-workspace-*.tar | head
+```
+
+The workspace is at `/data/workspace`, and a lane that autosuspends must be started first. Full
+procedure in `hosting.md`.
 
 ### Changed
 - **Compaction targets a flat budget instead of one derived from its own trigger.** A high ceiling
@@ -44,38 +61,13 @@ miss names its own cause. Compaction also gets under its own ceiling reliably. S
 - **`capture_enabled` on `/v1/dev/runs/:id/calls`**, plus an explanation when the result is empty.
   Request capture requires `DELTA_CAPTURE_CALLS`, which is dev-only and distinct from
   `DELTA_CAPTURE_PAYLOADS`.
+- `self: {bytes, cap}` on `/v1/status`, and the canonical profile name.
+- `recall` with an empty query lists the thread's spilled and evicted artifacts.
 
 ### Fixed
 - **A compaction interrupted by a crash no longer resumes with a stale context estimate.** The
   provider-anchored estimate is reset inside the same transaction that rewrites history, on both the
   proactive and overflow-recovery paths.
-
-### Documentation
-- `bundle-reference-material.md`: operator reference material belongs in the workspace and is read
-  on demand, not resident in the bundle.
-- `hosting.md`: what survives a suspend, and the one-way upgrade procedure.
-
-## [0.2.12] - unreleased
-
-Bound what the model writes. Every large thing entering the context window passed through a bounding
-rail except the arguments the model itself authors. This closes that, and fixes three defects found
-alongside it.
-
-### Upgrade note: this step is one-way
-Two migrations. A lane rolled back to 0.2.11 afterwards will not boot, and recreating the volume to
-recover destroys the agent's learned `DELTA.md`, which lives in the workspace rather than the
-database. Snapshot the workspace and verify the archive before upgrading:
-
-```sh
-fly machine start <machine-id> -a <app>
-fly ssh console -a <app> -C "tar cf - -C /data workspace" > <app>-workspace-$(date +%Y%m%d).tar
-tar tf <app>-workspace-*.tar | head
-```
-
-The workspace is at `/data/workspace`, and lanes that autosuspend must be started first. Full
-procedure in `hosting.md`.
-
-### Fixed
 - **A succeeded call's arguments are bounded.** Tool results were capped on arrival and demoted at
   compaction; the arguments the model wrote were bounded by neither. They are now elided to a
   pointer once the call has succeeded, at a seam where a resume no longer needs them, so it costs no
@@ -87,9 +79,10 @@ procedure in `hosting.md`.
 - **The self-write breaker no longer quarantines an agent that is converging.** An attempt closing a
   material share of the remaining gap resets the streak, bounded by a hard attempt ceiling.
 
-### Added
-- `self: {bytes, cap}` on `/v1/status`, and the canonical profile name.
-- `recall` with an empty query lists the thread's spilled and evicted artifacts.
+### Documentation
+- `bundle-reference-material.md`: operator reference material belongs in the workspace and is read
+  on demand, not resident in the bundle.
+- `hosting.md`: what survives a suspend, and the one-way upgrade procedure.
 
 ## [0.2.11] - 2026-08-03
 

@@ -1,20 +1,12 @@
-# Release brief: 0.2.12 + 0.2.13
+# Release brief: 0.2.13
 
 For operators upgrading a Delta fleet. Read the first section before touching any lane.
 
-## Upgrade path: go straight to 0.2.13
+## One release, one upgrade step
 
-0.2.12 and 0.2.13 have **identical schemas** (30 migrations each), so upgrading between them is
-reversible. Reaching either from 0.2.11 is not.
-
-| transition | reversible? |
-|---|---|
-| 0.2.11 → 0.2.12 | **NO** - schema 28 → 30 |
-| 0.2.11 → 0.2.13 | **NO** - same one-way step, taken once |
-| 0.2.12 → 0.2.13 | yes |
-
-**So deploy 0.2.13 directly.** Both are published for provenance, but routing the fleet through
-0.2.12 first buys nothing and doubles the disruption on client lanes.
+0.2.13 carries the work prepared as 0.2.12, which was never published. A lane goes straight from
+0.2.11 to 0.2.13 and takes the schema step (28 to 30) once. There is no intermediate version to
+stage through, and nothing to roll back to afterwards.
 
 ## Before any lane you care about
 
