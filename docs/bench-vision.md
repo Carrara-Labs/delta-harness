@@ -31,11 +31,11 @@ The fixtures should be **actual production runs**, not synthetic shapes.
 
 We now have real usage across several agent types. The interesting runs announce themselves:
 
-- **expensive** — top cost per run, or worst cost-per-delivered-unit;
-- **long** — highest turn count, or wall-clock outliers;
-- **repetitive** — the user had to follow up many times, which is the honest signal that the agent
+- **expensive** - top cost per run, or worst cost-per-delivered-unit;
+- **long** - highest turn count, or wall-clock outliers;
+- **repetitive** - the user had to follow up many times, which is the honest signal that the agent
   did not finish the job;
-- **failed or degraded** — `context_irreducible`, budget exhaustion, breaker latches, compaction
+- **failed or degraded** - `context_irreducible`, budget exhaustion, breaker latches, compaction
   storms.
 
 Those runs are the benchmark. They are already in `agent_events`, with their inputs, their turn
@@ -59,7 +59,7 @@ bench replay <run-selector> --arm-a <engine|url> --arm-b <engine|url> --runs N
 
 **Product-specific by construction**, because the fixture IS the product's own run. The rig itself
 stays thin: it drives the harness seam and reads `agent_events`, both of which every agent already
-speaks — Quick Search, Intake, Prep, Ferni, Brain. No product API, no product database.
+speaks - Quick Search, Intake, Prep, Ferni, Brain. No product API, no product database.
 
 ### Two modes, one flag, identical fixtures
 
@@ -90,7 +90,7 @@ engine change, and nobody has a way to do that today.
 
 If it ships as its own package, the loop closes: an operator tunes a bundle, replays their own worst
 runs against the tweak, and gets a table. That is a genuinely differentiated thing to offer, and it
-is the natural end state of "the engine is product-neutral" — the bench should be too.
+is the natural end state of "the engine is product-neutral" - the bench should be too.
 
 ## What we are doing instead, for now
 

@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Delta Bench — design proposal
+# Delta Bench - design proposal
 
 Written 2026-08-07. **Nothing here is built.** This is the full design; `docs/bench-vision.md` is
 the shorter note that preceded it and now defers to this file.
@@ -15,7 +15,7 @@ the shorter note that preceded it and now defers to this file.
 
 During 0.2.12 one change to argument bounding was run once against a control and reported as a
 **-29.9% cost win**. A second run of the identical change measured **+22.9%**. Re-examining the
-first run showed the "cheap" arm had done **18 writes where the control did 10** — it looked cheap
+first run showed the "cheap" arm had done **18 writes where the control did 10** - it looked cheap
 because it was throwing work away.
 
 Three separate failures, only one of which is about the number:
@@ -64,13 +64,13 @@ precisely because they are what caught the 0.2.12 regression after the fact.
 | Verdict | paired diffs, SE, CI | `verdict.md`, `report.html` |
 
 The rig drives two already-public surfaces only: `POST /v1/tasks` and the telemetry outbox. **No
-product API, no product database, no per-app adapter** — that is what lets one rig serve Quick
+product API, no product database, no per-app adapter** - that is what lets one rig serve Quick
 Search, Intake, Prep, Ferni and Brain.
 
 ## 5. Fixtures come from production
 
 Selectors: **expensive** (top cost/run), **long** (turn count, wall-clock outliers), **repetitive**
-(user had to follow up — the honest signal the agent did not finish), **failed**
+(user had to follow up - the honest signal the agent did not finish), **failed**
 (`context_irreducible`, budget exhaustion, breaker latches, compaction storms).
 
 A fixture is a frozen conversation, not a prompt:
@@ -110,12 +110,12 @@ Each playbook carries fixtures, gate, primary metrics, guard metrics and repetit
 | `cache-economics` | completion unchanged | cached-read share, post-warm miss turns, write premium | turns where context shrank | 3, ≥2 routes |
 | `rework-and-reliability` | artefacts byte-comparable | duplicate writes, retries, breaker latches | cost | 3 |
 | `latency` | completion unchanged | p50/p95 TTFT, turn wall clock | cold-resume timed separately | 7 |
-| `quality-regression` | near-100% expected | **pass^k**, not pass@k | — | 3 |
+| `quality-regression` | near-100% expected | **pass^k**, not pass@k | - | 3 |
 | `bundle-tuning` | operator rubric | rubric score, cost/run | refusals, off-policy actions | 5 |
 | `route-comparison` | equivalence across routes | effective $/run, cached share | tool-call fidelity | 5 |
 | `cross-harness` | completion, judged identically | completion rate, $/completed task | declared capability gaps | 5 |
 
-Playbooks are plain files, PR-able and versioned. **The cookbook lives in data, not code** — this
+Playbooks are plain files, PR-able and versioned. **The cookbook lives in data, not code** - this
 is how the rig gets smarter without the binary getting fatter (see §13, rig sprawl).
 
 ## 8. The route axis
@@ -125,9 +125,9 @@ worth different amounts on each.
 
 | Route | Caching | Lever | Cost source |
 |---|---|---|---|
-| `anthropic-native` | explicit `cache_control` breakpoints; write premium, ~10x read discount, ~1024-token minimum, TTL is a choice | **breakpoint placement** — where 0.2.11's fix lived | computed locally |
-| `openai-native` (incl. codex sign-in) | automatic longest-stable-prefix above ~1024 tokens; no breakpoints, no write premium | **prefix stability only** — breakpoint work is worth exactly zero here | computed locally; subscription runs metered but unbilled |
-| `openrouter` | whatever the upstream does, and it can change under you | **none — this is a measurement, not a control** | reported in the usage chunk |
+| `anthropic-native` | explicit `cache_control` breakpoints; write premium, ~10x read discount, ~1024-token minimum, TTL is a choice | **breakpoint placement** - where 0.2.11's fix lived | computed locally |
+| `openai-native` (incl. codex sign-in) | automatic longest-stable-prefix above ~1024 tokens; no breakpoints, no write premium | **prefix stability only** - breakpoint work is worth exactly zero here | computed locally; subscription runs metered but unbilled |
+| `openrouter` | whatever the upstream does, and it can change under you | **none - this is a measurement, not a control** | reported in the usage chunk |
 
 Consequences:
 
@@ -135,11 +135,11 @@ Consequences:
   bench that averages across routes hides that.
 - `openai-native` punishes compaction rewrites hardest, which is where the Sphere finding bites: a
   context that SHRINKS vs the previous turn missed cache 16/16.
-- OpenRouter's value in the bench is as a fidelity check — if a win vanishes there, it depended on
+- OpenRouter's value in the bench is as a fidelity check - if a win vanishes there, it depended on
   control we do not have in the fallback path, and the fleet should know before it fails over.
 - **A subscription arm needs its own accounting.** Real tokens at zero marginal dollars wins every
   cost column by construction. Report subscription arms in tokens and turns; mark the dollar column
-  `n/a — subscription`, never `$0.00`.
+  `n/a - subscription`, never `$0.00`.
 
 ## 9. Execution: ephemeral Fly Machines
 
@@ -177,7 +177,7 @@ arms:
 
 The bench is a reader. Every daemon already emits structured events on the spine
 `user → agent → session/run → task → turn` into SQLite-as-outbox, shipped as NDJSON.
-`DELTA_CAPTURE_PAYLOADS=1` is off in production and **on in every bench cell** — a bench with no
+`DELTA_CAPTURE_PAYLOADS=1` is off in production and **on in every bench cell** - a bench with no
 transcripts cannot grade anything.
 
 | Event | Feeds |
@@ -192,10 +192,10 @@ transcripts cannot grade anything.
 
 **Metric tiers:**
 
-- **Gate** — did it do the job? Read FIRST. Fail here and no cost number is printed at all.
-- **Primary** — what the change is trying to move. 1-3 metrics, declared in the plan.
-- **Guard** — what this class of change is known to break. A guard regression blocks a primary win.
-- **Report** — context, never a decision input.
+- **Gate** - did it do the job? Read FIRST. Fail here and no cost number is printed at all.
+- **Primary** - what the change is trying to move. 1-3 metrics, declared in the plan.
+- **Guard** - what this class of change is known to break. A guard regression blocks a primary win.
+- **Report** - context, never a decision input.
 
 Gate-before-cost is the single most important rule in the rig, because the failure it prevents is
 the one that actually happened: an arm that filed 4 of 10 pages as garbage looked 60% cheaper.
@@ -234,28 +234,28 @@ type ForeignArm = {
 
 | Arm | Driven via | Comparable | Not comparable |
 |---|---|---|---|
-| Delta | `POST /v1/tasks` | everything | — |
+| Delta | `POST /v1/tasks` | everything | - |
 | OpenClaw | gateway / headless CLI in its container | completion, turns, tokens, cost, cache r/w | much larger built-in toolset |
 | Pi | `AgentSession` in isolated temp project dir | completion, turns, tokens | coding-agent shaped; some fixtures out of scope |
 | Hermes | Python agent runner over a task record | completion, turns, tool-call counts | cost accounting differs, thinner cache reporting |
 
 **Three rules or don't publish:** portable fixture subset (no Delta-specific tools); identical
 grader for every arm, blind to which arm produced the output; capability gaps **declared, not
-scored as failures** — a harness that cannot do a fixture is a footnote, not a zero that flatters
+scored as failures** - a harness that cannot do a fixture is a footnote, not a zero that flatters
 us.
 
-## 13. Prior art — and we would not be first
+## 13. Prior art - and we would not be first
 
 Read from source in `~/delta/.refs`:
 
-- **OpenClaw `extensions/qa-lab` — ahead of us.** ~250 files: scenario catalogue, Docker harness,
+- **OpenClaw `extensions/qa-lab` - ahead of us.** ~250 files: scenario catalogue, Docker harness,
   `jsonl-replay.ts`, `runtime-parity.ts` (openclaw↔codex), `runtime-parity-cache-diagnostics.ts`,
   a 551-line `token-efficiency-report.ts`, mock-openai vs live-frontier provider modes, lab server
   with UI. Closest thing to this proposal that exists.
-- **Pi `packages/evals` — partly.** Real `AgentSession` in isolated temp dirs, `harness-table.ts`
-  with `baseline` vs `candidates` and `repetitions` — genuine statistical intent. Fixtures are
+- **Pi `packages/evals` - partly.** Real `AgentSession` in isolated temp dirs, `harness-table.ts`
+  with `baseline` vs `candidates` and `repetitions` - genuine statistical intent. Fixtures are
   hand-written smoke scenarios; no cost or cache metrics.
-- **Hermes `batch_runner.py` — partly.** Parallel batch over JSONL with multiprocessing,
+- **Hermes `batch_runner.py` - partly.** Parallel batch over JSONL with multiprocessing,
   checkpoint/resume, trajectory capture, tool-usage aggregation. Built for training-data
   generation, but the fault-tolerance design is the right one to copy.
 
@@ -300,7 +300,7 @@ welded into the runtime it tests.
 │   ├── score.ts       deterministic checks, then calibrated judge
 │   ├── stats.ts       paired diffs · clustered SE · CI · pass^k
 │   └── report.ts      verdict.md + self-contained report.html
-├── playbooks/         the cookbook — plain files, PR-able, versioned
+├── playbooks/         the cookbook - plain files, PR-able, versioned
 └── adapters/          delta.ts · openclaw.ts · pi.ts · hermes.ts
 ```
 
@@ -314,7 +314,7 @@ bench playbook list|show|add
 ```
 
 **Why a consumer installs it:** the engine is product-neutral, so the bench should be too. An
-operator has the same question one level up — *did my DELTA.md edit make this agent better?* Today
+operator has the same question one level up - *did my DELTA.md edit make this agent better?* Today
 they ship the edit and watch the bill. This closes the loop from "the engine is configurable" to
 "the configuration is tunable", which is a materially different product claim.
 
@@ -322,11 +322,11 @@ they ship the edit and watch the bill. This closes the loop from "the engine is 
 
 | Risk | Mitigation |
 |---|---|
-| **Money** — 120 real agent runs per plan | local rung for iteration, lane for gates only; hard budget ceiling in the plan that aborts rather than overruns |
-| **Replay fidelity** — stubs and time-dependent state | declare live/replayed/stubbed per tool on the verdict; never let a heavily-stubbed fixture carry a gate alone |
-| **Fixture staleness** — frozen fixtures drift from the product | date-stamp sets, re-select quarterly, keep old sets runnable so historical verdicts stay meaningful |
-| **Judge drift** — the grader is itself a model | pin judge model + prompt in the plan; keep a human-labelled calibration set; re-check agreement on any judge change |
-| **Rig sprawl** — OpenClaw's lab is ~250 files | cookbook lives in data, not code |
+| **Money** - 120 real agent runs per plan | local rung for iteration, lane for gates only; hard budget ceiling in the plan that aborts rather than overruns |
+| **Replay fidelity** - stubs and time-dependent state | declare live/replayed/stubbed per tool on the verdict; never let a heavily-stubbed fixture carry a gate alone |
+| **Fixture staleness** - frozen fixtures drift from the product | date-stamp sets, re-select quarterly, keep old sets runnable so historical verdicts stay meaningful |
+| **Judge drift** - the grader is itself a model | pin judge model + prompt in the plan; keep a human-labelled calibration set; re-check agreement on any judge change |
+| **Rig sprawl** - OpenClaw's lab is ~250 files | cookbook lives in data, not code |
 | **Measuring the wrong thing well** | fixtures come from real complaints and real cost outliers, so the population is chosen by production |
 
 ## 16. Build order
@@ -338,17 +338,17 @@ they ship the edit and watch the bill. This closes the loop from "the engine is 
 | **M2 · the axes** | route comparison across all three wires, foreign-harness adapters, HTML report, overnight release-gate battery | a sprint |
 | **M3 · ship it** | publish as `@carrara-labs/delta-bench` with the consumer story | after it has gated two releases |
 
-**M0 is not speculative.** There is an open engine question right now — whether eliding a tool
+**M0 is not speculative.** There is an open engine question right now - whether eliding a tool
 call's arguments once it is N turns old beats both seams already tried (see
-`docs/spec-arg-eviction.md` §15) — and it has three existing arms to compare against. Building M0
+`docs/spec-arg-eviction.md` §15) - and it has three existing arms to compare against. Building M0
 to answer that question is how the rig gets specified by real use instead of by design, which is
 the only way it ends up lean.
 
 ## 17. Sources
 
-- Anthropic, *Demystifying evals for AI agents* — https://anthropic.com/engineering/demystifying-evals-for-ai-agents
-- Anthropic, *Adding Error Bars to Evals* — https://www.anthropic.com/research/statistical-approach-to-model-evals
-- Anthropic, *Building Effective Agents* — https://www.anthropic.com/research/building-effective-agents
-- *Holistic Agent Leaderboard* — https://arxiv.org/abs/2510.11977 · https://github.com/princeton-pli/hal-harness
-- *Inspect AI* (UK AISI) — https://inspect.aisi.org.uk/
+- Anthropic, *Demystifying evals for AI agents* - https://anthropic.com/engineering/demystifying-evals-for-ai-agents
+- Anthropic, *Adding Error Bars to Evals* - https://www.anthropic.com/research/statistical-approach-to-model-evals
+- Anthropic, *Building Effective Agents* - https://www.anthropic.com/research/building-effective-agents
+- *Holistic Agent Leaderboard* - https://arxiv.org/abs/2510.11977 · https://github.com/princeton-pli/hal-harness
+- *Inspect AI* (UK AISI) - https://inspect.aisi.org.uk/
 - Competitor rigs read from source in `~/delta/.refs/{openclaw,pi,hermes-agent}`

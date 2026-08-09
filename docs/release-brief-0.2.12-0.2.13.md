@@ -9,8 +9,8 @@ reversible. Reaching either from 0.2.11 is not.
 
 | transition | reversible? |
 |---|---|
-| 0.2.11 → 0.2.12 | **NO** — schema 28 → 30 |
-| 0.2.11 → 0.2.13 | **NO** — same one-way step, taken once |
+| 0.2.11 → 0.2.12 | **NO** - schema 28 → 30 |
+| 0.2.11 → 0.2.13 | **NO** - same one-way step, taken once |
 | 0.2.12 → 0.2.13 | yes |
 
 **So deploy 0.2.13 directly.** Both are published for provenance, but routing the fleet through
@@ -18,8 +18,8 @@ reversible. Reaching either from 0.2.11 is not.
 
 ## Before any lane you care about
 
-A lane rolled back after upgrading **crash-loops to its restart cap**, and the obvious recovery —
-destroying the volume — also destroys the agent's learned `DELTA.md`, a workspace file that is not
+A lane rolled back after upgrading **crash-loops to its restart cap**, and the obvious recovery -
+destroying the volume - also destroys the agent's learned `DELTA.md`, a workspace file that is not
 in the database. That loss is permanent.
 
 ```sh
@@ -74,4 +74,4 @@ difference was discounted by the reporting team because their arms shared a warm
 - One cache miss per ~25 turns remains unexplained. Diagnosing it needs request capture below the
   provider serializer, which does not exist yet.
 - The `calls` capture table has **no retention**. If you enable `DELTA_CAPTURE_CALLS` on a real
-  workload, pull the data and disable it promptly — a captured request runs 0.5-0.7MB at scale.
+  workload, pull the data and disable it promptly - a captured request runs 0.5-0.7MB at scale.

@@ -38,7 +38,7 @@ Aperture has a pinned fixture and a bench rig and offered to canary; that is the
 
 ## Before it can be cut
 
-1. ~~**The `#8` docs convention.**~~ **DONE** 2026-08-08 — `bundle-reference-material.md`.
+1. ~~**The `#8` docs convention.**~~ **DONE** 2026-08-08 - `bundle-reference-material.md`.
 2. **CHANGELOG, `version.ts`, `package.json`, site changelog.** The ceremony in
    `reference_delta_release_ceremony`.
 3. **The release brief**, which must name three things:
@@ -51,10 +51,10 @@ Aperture has a pinned fixture and a bench rig and offered to canary; that is the
 5. **Aperture canaries** on `speed-lab` with `room-bench.ts`, scored on compaction count,
    post-compaction `input_tokens` and `context_irreducible` - never on steady-state cache hit.
 
-## P1 - next release (0.2.13) "say what changed" — **BUILT on `feat/0.2.13-say-what-changed`**
+## P1 - next release (0.2.13) "say what changed" - **BUILT on `feat/0.2.13-say-what-changed`**
 
 **Status 2026-08-07:** Tier 1 + Tier 2 (S1-S7) implemented, 914 tests green, typecheck + lint clean,
-three codex passes (the last returned clean). **Not released, and the live half is unrun** — there is
+three codex passes (the last returned clean). **Not released, and the live half is unrun** - there is
 no model key in the build environment, so every turn-level claim is unit-tested only. The canary ask
 is `ask-aperture-0.2.13-canary.md`. Tier 3 and the mechanism fix remain deliberately unwritten until
 that reading lands.
@@ -135,13 +135,13 @@ collapse to a two-column join); correctness (high - S5/S3/S6); mechanism (**cont
 - **Live-test the thing reviews cannot see.** Five source-reading review rounds passed the marker
   design. The first real agent broke it.
 
-## Shipped — Harness 0.2.11 "Context economics" (2026-08-03)
+## Shipped - Harness 0.2.11 "Context economics" (2026-08-03)
 
 The cache-breakpoint fix, the compaction-tail fix, `prompt_cache_key` on the OpenAI-compatible wire,
 and the `max_tokens` deprecation. Published to npm + ghcr; Ferni is on it and the site is deployed.
 Specs: `spec-cache-breakpoints.md`, `spec-compaction-tail.md`.
 
-## Next — fleet upgrade, then what 0.2.11 deliberately left
+## Next - fleet upgrade, then what 0.2.11 deliberately left
 
 1. **Aperture QS lab lane to 0.2.11**, then the rest of QS, then Intake. Beneficiary and volume rig
    in one.
@@ -149,37 +149,37 @@ Specs: `spec-cache-breakpoints.md`, `spec-compaction-tail.md`.
 3. **Anthropic's block-count cache lookback.** Demotion shrinks a tool result's size, not its block
    count, so a turn with many parallel tool calls can still miss the previous cached tail.
 4. **Budget pre-flight headroom.** A `$10` cap produced `$12.02`.
-5. **Idle compaction** (Hermes' `_should_idle_compact`) — compact while idle rather than only under
+5. **Idle compaction** (Hermes' `_should_idle_compact`) - compact while idle rather than only under
    pressure. Needs a scheduler hook and has its own failure modes.
 
-## P1 — leapfrog + robustness fast-follows
+## P1 - leapfrog + robustness fast-follows
 
-- **Connect — stream the reply text itself.** 0.5.0 ships rich rendering and a live "what I am
+- **Connect - stream the reply text itself.** 0.5.0 ships rich rendering and a live "what I am
   doing" line, but deliberately not the answer as it is written: only a step with no tool calls
   becomes the answer, so the model's narration can claim things that are never sent, and the token
   deltas are not persisted so it needs a live SSE per task with its own abort and restart story.
   Worth doing on its own terms, not folded into a rendering release.
-- ~~Harness — spill demotion.~~ **SHIPPED in 0.2.11**, at the compaction commit rather than per
+- ~~Harness - spill demotion.~~ **SHIPPED in 0.2.11**, at the compaction commit rather than per
   turn, so it costs no extra prefix-cache churn.
-- **Harness — subagent reliability.** `spawn_subagent` returned "(no output)" on a big extraction
+- **Harness - subagent reliability.** `spawn_subagent` returned "(no output)" on a big extraction
   task, which pushed Ferni onto the costly direct-`web_fetch` path.
-- **Connect — the intake 409 durability gap.** If the vault write commits but its response is
+- **Connect - the intake 409 durability gap.** If the vault write commits but its response is
   lost, the retry hits the create-only 409 and neither the confirmation nor the agent note fires,
   so a stored credential looks like a failure. Codex found it during the 0.4.3 review. Deliberately
   NOT fixed there: the cheap fix (treat 409 as success) would tell someone their value was saved
   when a different value is in the vault. Wants a real answer, so it waits for a batch.
 
-## P2 — self-extension frontier (earn-it, deferred)
+## P2 - self-extension frontier (earn-it, deferred)
 
-- **Harness 0.3.0 — self-extension.** Gated self-wiring MCP (curated registry + name-referenced key
+- **Harness 0.3.0 - self-extension.** Gated self-wiring MCP (curated registry + name-referenced key
   + runtime commit) + skill authoring (`create_skill` validated write-rail). The vault's
   name-referenced credentials are the prerequisite this was waiting on.
-- **Connect 0.6.0 — self-extension edge.** One-time-link secret fallback + a self-wiring
+- **Connect 0.6.0 - self-extension edge.** One-time-link secret fallback + a self-wiring
   approve/confirm surface. Needs H0.3.0.
 
 ## Cross-cutting
 
-- **Cookbook — autonomous agent setup (Ferni-style).** Update
+- **Cookbook - autonomous agent setup (Ferni-style).** Update
   `reference_telegram_assistant_recipe` + the cookbook doc so a new Ferni-style agent is configured
   to survive heavy loads from day one (async delivery, utility model, heavy-run POLICY, compaction
   tuning, the subagent caveat), and now the vault + intake wiring.
@@ -195,27 +195,27 @@ Specs: `spec-cache-breakpoints.md`, `spec-compaction-tail.md`.
 
 ## Recently shipped (context)
 
-- **Connect 0.5.0** (2026-08-02) — rich streaming: replies render as Telegram Rich Messages
+- **Connect 0.5.0** (2026-08-02) - rich streaming: replies render as Telegram Rich Messages
   (native tables, task lists, headings, code, math) by handing the agent's markdown to Telegram's
   own parser rather than our renderer, plus an ephemeral progress line naming the tool in flight,
   driven by the daemon's existing `?since=` event poll. Four codex passes (the first two returned
   DO-NOT-RELEASE) and live-verified on Ferni against the real Bot API. Corrects a claim this list
   carried: OpenClaw ships Rich Messages already, and Hermes ships rich drafts too, so this is
   parity done in far less code rather than a leapfrog.
-- **Connect 0.4.3** (2026-08-02) — what Ferni was already running: the agent is told when a
+- **Connect 0.4.3** (2026-08-02) - what Ferni was already running: the agent is told when a
   credential lands (no restart, and no more routing around a tool that started working),
   intra-word underscores stay literal so a credential name is never renamed by the renderer, an
   outcome-first confirmation, and the note attributed to the actual submitter. Ferni ran all four
   in production before the release; codex then found a double-underscore case
   (`mcp__brain__authenticate`) and a Unicode word-boundary case that live use had not hit.
 
-- **Harness 0.2.10 + Connect 0.4.0** (2026-08-01) — the security track. Final combined battery
+- **Harness 0.2.10 + Connect 0.4.0** (2026-08-01) - the security track. Final combined battery
   passed 16/16 on a fresh agent running BOTH published artifacts. Encrypted secret vault
   (values never reach model-readable state; `{{vault:NAME}}` resolved at egress; exact-value
   redaction) and in-chat secure intake (Telegram Mini App form POSTing straight to Connect,
   initData-authenticated, single-use). On npm + ghcr; site live.
 
-- **Harness 0.2.8 + Connect 0.3.1** (2026-08-01) — command-surface polish: `/status` plain English
+- **Harness 0.2.8 + Connect 0.3.1** (2026-08-01) - command-surface polish: `/status` plain English
 ## Found by the 0.2.13 canary (2026-08-08)
 
 - **`calls` has NO retention.** `pruneLocalState` (`retention.ts`) bounds `journal` and `events` and
@@ -224,7 +224,7 @@ Specs: `spec-cache-breakpoints.md`, `spec-compaction-tail.md`.
   1GB on nine of ten lanes and shared with the SQLite WAL. Anyone running `DELTA_CAPTURE_CALLS=1` on
   a real workload must pull and disable promptly. Sibling of the open spill-retention item and it
   should be fixed with it.
-- **`DELTA_CAPTURE_PAYLOADS` vs `DELTA_CAPTURE_CALLS` has now cost two engineers a day each** — once
+- **`DELTA_CAPTURE_PAYLOADS` vs `DELTA_CAPTURE_CALLS` has now cost two engineers a day each** - once
   on our side, once on Aperture's, in the same week, in opposite directions. Partly mitigated in
   0.2.13: `/v1/dev/runs/:id/calls` now returns `capture_enabled` and, when empty, says *why* rather
   than returning a bare `[]` that reads as "this run made no calls". The names themselves are still

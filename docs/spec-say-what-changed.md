@@ -407,7 +407,7 @@ outcome that should be suspicious.
 ## What the CODE review killed (round 2 and 3)
 
 The spec review above caught six design errors. Two code reviews then caught six more, and three of
-them were fixes that were *present but dead in production* while every test passed — the exact
+them were fixes that were *present but dead in production* while every test passed - the exact
 failure this batch exists to remove, arriving inside the batch itself.
 
 **P1, round 2:**
@@ -425,7 +425,7 @@ failure this batch exists to remove, arriving inside the batch itself.
 
 4. A `window <= OUTPUT_RESERVE` derived a ceiling of **0**, compacting every request forever. Windows
    that cannot clear `MIN_USABLE_CEILING` are now treated as unknown.
-5. **`self_bytes` does not disambiguate within a run** — `self` is a per-run snapshot. The spec's
+5. **`self_bytes` does not disambiguate within a run** - `self` is a per-run snapshot. The spec's
    table claimed resolution it does not have; the code comment now says what it actually resolves.
 6. **`loadConfig(env)` ignored an injected `DELTA_MODEL_PRICES`**, because `pricing.ts` freezes its
    table from `process.env` at import. Both derivation functions now take the table.
@@ -438,7 +438,7 @@ failure this batch exists to remove, arriving inside the batch itself.
    carries a window today.
 
 **And the tests were wrong twice.** First round: two of them hand-rolled the logic they were meant to
-verify. Second round: two more would have gone green again if their fix were reverted — the anchor
+verify. Second round: two more would have gone green again if their fix were reverted - the anchor
 test supplied `anchorRunId` itself, and nothing drove `runResearch` at all. A third attempt at the
 overflow test passed trivially because a fresh run's anchor is `0` from birth, so the run needed a
 real anchor before the assertion meant anything.
