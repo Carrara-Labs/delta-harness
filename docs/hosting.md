@@ -153,17 +153,20 @@ protects you from silent corruption. But the consequences are sharper than they 
 #    like a broken lane rather than a sleeping one.
 fly machine start <machine-id> -a <app>
 
-# 2. Take the WHOLE workspace directory, not named files. The bundle lives at /data/workspace
-#    (DELTA_WORKSPACE), not /data. Taking the directory also catches notes/, vocab.json and
+# 2. Take the WHOLE volume, not named files and not an assumed path. DELTA_WORKSPACE is NOT the
+#    same on every deployment: the image default is /data/workspace, but a product can point it
+#    anywhere (Ferni uses /data/bundle). Taking the volume also catches notes/, vocab.json and
 #    PROMPT_CONTEXT.md, and cannot silently miss a file someone renamed.
-fly ssh console -a <app> -C "tar cf - -C /data workspace" > <app>-workspace-$(date +%Y%m%d).tar
+fly ssh console -a <app> -C "printenv DELTA_WORKSPACE"     # know what you are protecting
+fly ssh console -a <app> -C "tar cf - -C /data ." > <app>-data-$(date +%Y%m%d).tar
 
 # 3. VERIFY BEFORE UPGRADING. Not optional.
-tar tf <app>-workspace-*.tar | head
+tar tf <app>-data-*.tar | head
+tar tf <app>-data-*.tar | grep DELTA.md    # the self-file must actually be in there
 ```
 
-**Step 3 matters as much as step 2.** Both failure modes above - wrong path, sleeping machine -
-produce a file that exists and looks fine. An operator who skips `tar tf` learns nothing is wrong
+**Step 3 matters as much as step 2.** Every failure mode here - a sleeping machine, a workspace
+path that is not where you assumed - produces a file that exists and looks fine. An operator who skips `tar tf` learns nothing is wrong
 until after the volume is gone, and by then the agent's learned state is unrecoverable. This is the
 one backup where being wrong cannot be undone, and it runs in the ninety seconds before an
 irreversible action.

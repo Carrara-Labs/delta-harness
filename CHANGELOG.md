@@ -22,11 +22,18 @@ database. Snapshot the workspace and verify the archive before upgrading:
 
 ```sh
 fly machine start <machine-id> -a <app>
-fly ssh console -a <app> -C "tar cf - -C /data workspace" > <app>-workspace-$(date +%Y%m%d).tar
-tar tf <app>-workspace-*.tar | head
+
+# The workspace is wherever DELTA_WORKSPACE points, which is NOT the same on every deployment
+# (the image default is /data/workspace; Ferni uses /data/bundle). Ask the machine rather than
+# assuming, or just take the whole volume.
+fly ssh console -a <app> -C "printenv DELTA_WORKSPACE"
+fly ssh console -a <app> -C "tar cf - -C /data ." > <app>-data-$(date +%Y%m%d).tar
+
+tar tf <app>-data-*.tar | head        # verify: non-empty
+tar tf <app>-data-*.tar | grep DELTA.md   # verify: the self-file is actually in there
 ```
 
-The workspace is at `/data/workspace`, and a lane that autosuspends must be started first. Full
+A lane that autosuspends must be started first. Full
 procedure in `hosting.md`.
 
 ### Changed

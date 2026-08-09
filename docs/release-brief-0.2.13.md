@@ -16,13 +16,19 @@ in the database. That loss is permanent.
 
 ```sh
 fly machine start <machine-id> -a <app>
-fly ssh console -a <app> -C "tar cf - -C /data workspace" > <app>-workspace-$(date +%Y%m%d).tar
-tar tf <app>-workspace-*.tar | head    # NOT optional
+
+# The workspace is wherever DELTA_WORKSPACE points, which is NOT the same on every deployment
+# (the image default is /data/workspace; Ferni uses /data/bundle). Ask the machine rather than
+# assuming, or just take the whole volume.
+fly ssh console -a <app> -C "printenv DELTA_WORKSPACE"
+fly ssh console -a <app> -C "tar cf - -C /data ." > <app>-data-$(date +%Y%m%d).tar
+
+tar tf <app>-data-*.tar | head        # verify: non-empty
+tar tf <app>-data-*.tar | grep DELTA.md   # verify: the self-file is actually in there    # NOT optional
 ```
 
-The workspace is `/data/workspace`, not `/data`, and lanes autosuspend so the machine must be woken
-first. **Both failure modes write a file that exists and looks fine**, which is why the verify step
-is where the safety actually lives. Roll forward, never back.
+**Both failure modes write a file that exists and looks fine**, which is why the verify step is
+where the safety actually lives. Roll forward, never back.
 
 ## Who sees nothing
 
