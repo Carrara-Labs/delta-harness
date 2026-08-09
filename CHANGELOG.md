@@ -6,6 +6,110 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.13] — unreleased
+
+Say what changed. Aperture reported that a turn whose context came out shorter than the previous
+turn's missed the prompt cache, 27 times out of 27. Two mechanisms were proposed for it and both
+were killed by data, because every instrument either side reached for measured *size* when the cache
+keys on *identity*. This release ships the instruments that name the difference, plus the compaction
+fix that turned out to be a correctness bug rather than the cost optimisation it was filed as.
+
+**Same schema as 0.2.12** (no migrations), so upgrading between them is reversible. Upgrading from
+0.2.11 or earlier is **not** — see the 0.2.12 notes.
+
+### Fixed
+- **Compaction can get under its own ceiling.** The retained-tail budget was derived from the
+  trigger that fires compaction, so a 200k ceiling kept a ~180k tail: compaction landed at ~99% of
+  budget and the next turn pushed it straight back over. Measured on a consumer lane at a 60k
+  ceiling, the old behaviour compacted 8 times, still failed to get under budget 5 times, and
+  overran its own ceiling by 18% (70,969 input tokens against 60,000). The new behaviour compacted
+  4 times, every one of them shrinking, with zero `context_irreducible` and peak input under the
+  ceiling. The target is now a flat budget independent of the trigger, matching what pi and OpenClaw
+  both do. **No effect below roughly a 33k ceiling**, where the derived remainder already wins.
+- **A stale context estimate can no longer survive a crash.** The provider-anchored input estimate
+  was reset *after* the compaction transaction committed, so a crash in that window resumed with a
+  rewritten history and a pre-compaction anchor, re-compacting immediately on the first turn back.
+  The reset now happens inside the same transaction, on both the proactive and the overflow-recovery
+  paths.
+
+### Added
+- **Per-turn prefix identity on `model.call`.** `spine_hash` and `tools_hash` (salted per daemon
+  process, never exported raw), with `spine_bytes`, `tools_bytes`, `tools_n`, `self_bytes`,
+  `history_bytes` and `ephemeral_bytes`. A cache miss with a moved hash names its own culprit; a
+  miss with both hashes stable proves the prefix was intact and the cause is elsewhere. Answers in
+  one query what previously took three rounds of correspondence and a 12-hour forensic session.
+- **`cache_shortfall_tokens`.** The honest cache-health number: the previous request's gross input
+  minus this call's cache reads. `cache_hit_pct` is a ratio whose denominator grows when history is
+  appended, so a byte-identical prefix can read anywhere from 65% to 100% — on real data a turn
+  reading 68% was perfectly cached while one reading 92% had genuinely re-read 4,993 tokens. The
+  shortfall is absolute, so workload shape cannot move it. The floor equals `ephemeral_bytes`,
+  which is structural: the per-turn blocks sit last and are rebuilt every turn, so their size is
+  re-read forever.
+- **Utility-tier model calls are visible.** `model.call` fired only for the main loop, while
+  compaction summaries, research fan-out, reflection and `eval_n` judging ran the cheap model and
+  charged the run silently. All now emit with `tier` and `purpose`. **Filter `tier = 'main'`
+  anywhere you count turns.**
+- **Compaction attempts that produce nothing now emit.** An attempt that summarised up to 60k of
+  transcript and then discarded the result was billed and reported nothing. **`compaction` now
+  counts attempts rather than rewrites** — filter `shrank = true` for the previous meaning.
+- **`tool.breaker`** when the A4 breaker quarantines a tool, with the schema bytes withdrawn.
+- **A context ceiling derived from the model.** `pricing.ts` gains an optional `window`, and
+  `DELTA_COMPACT_AT_TOKENS` becomes an override that is clamped, with a boot warning, when it
+  exceeds what the smallest model in the cascade can take. An unknown model in the cascade keeps
+  today's 120k default. `claude-opus-5` is seeded at 249,000 from a field observation, not a spec
+  sheet.
+- **`last_event_ms_ago` on `/v1/busy`** while running: how long the daemon has been silent, which is
+  what a stall detector is actually asking. Daemon-wide, so use `/v1/tasks/:id/events` for a
+  per-run decision.
+- **`capture_enabled` on `/v1/dev/runs/:id/calls`**, and an explanation when the result is empty.
+  `DELTA_CAPTURE_CALLS` (dev-only, records requests) and `DELTA_CAPTURE_PAYLOADS` (telemetry
+  attributes) have now cost two engineers a day each in one week, because an empty array reads as
+  "this run made no calls" rather than "the flag was never set".
+
+### Documentation
+- `bundle-reference-material.md` — operator reference material is pointed at, not resident in the
+  bundle, and the pointer and the file ship together or neither ships.
+- `hosting.md` — what survives a suspend, and the one-way upgrade procedure with a verify step.
+
+
+## [0.2.12] — unreleased
+
+Bound what the model writes. Every large thing entering the context window passed through a bounding
+rail except the one thing the model itself authors: its own tool-call arguments. This closes that,
+and fixes a resume bug and a budget bug found while doing it.
+
+### ⚠️ This upgrade is ONE-WAY. Snapshot first.
+Two migrations (schema 28 → 30). A lane rolled back to 0.2.11 afterwards **crash-loops to its
+restart cap**, and the obvious recovery — destroying the volume — also destroys the agent's learned
+`DELTA.md`, which is a workspace file and not in the database. Before upgrading any lane you care
+about, take the snapshot **and verify it**:
+
+```sh
+fly machine start <machine-id> -a <app>
+fly ssh console -a <app> -C "tar cf - -C /data workspace" > <app>-workspace-$(date +%Y%m%d).tar
+tar tf <app>-workspace-*.tar | head    # non-optional: both failure modes write a file that looks fine
+```
+
+The workspace is at `/data/workspace`, not `/data`, and lanes autosuspend so the machine must be
+started first. Full procedure in `hosting.md`.
+
+### Fixed
+- **A succeeded call's arguments are bounded.** Tool results were capped on arrival and demoted at
+  compaction; the arguments the model wrote were bounded by nothing in either direction. They are
+  now elided to a pointer once the call has succeeded, at the seam where a resume no longer needs
+  them, so it costs no prefix-cache churn.
+- **A crash mid-batch no longer strands uncommitted parallel tool calls.** Pre-existing, uncovered
+  by any test, found while reviewing the elision seam.
+- **Concurrent `spawn_subagent` cannot overspend the run budget.** Each child read the full
+  remaining budget at spawn, before any sibling had charged a token, so three children could spend
+  3× the ceiling. Replaced with a live reservation reconciled on exit.
+- **The self-write breaker no longer latches on converging attempts.** An agent shrinking its
+  self-file toward the cap was quarantined 45 bytes short.
+
+### Added
+- `self: {bytes, cap}` on `/v1/status`, and the canonical profile name.
+- `recall` with an empty query lists the thread's spilled and evicted artifacts.
+
 ## [0.2.11] — 2026-08-03
 
 Context economics. Prompt caching and compaction were each defeating themselves; both are fixed and
