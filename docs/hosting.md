@@ -145,16 +145,32 @@ protects you from silent corruption. But the consequences are sharper than they 
 2. The obvious recovery, destroying the volume, **also destroys the agent's learned `DELTA.md`**,
    which is a workspace file and not in the database. That loss is permanent.
 
-So, before upgrading a lane you care about:
+#### The snapshot, and the verify that has to go with it
 
 ```sh
-# snapshot the volume, or at minimum copy the bundle off
-fly ssh console -a <app> -C "tar cf - -C /data DELTA.md POLICY.md" > bundle-backup.tar
+# 1. Wake the machine. Lanes autosuspend, and `fly ssh` against a stopped machine fails with
+#    "app has no started VMs, it may be unhealthy or not have been deployed yet" - which reads
+#    like a broken lane rather than a sleeping one.
+fly machine start <machine-id> -a <app>
+
+# 2. Take the WHOLE workspace directory, not named files. The bundle lives at /data/workspace
+#    (DELTA_WORKSPACE), not /data. Taking the directory also catches notes/, vocab.json and
+#    PROMPT_CONTEXT.md, and cannot silently miss a file someone renamed.
+fly ssh console -a <app> -C "tar cf - -C /data workspace" > <app>-workspace-$(date +%Y%m%d).tar
+
+# 3. VERIFY BEFORE UPGRADING. Not optional.
+tar tf <app>-workspace-*.tar | head
 ```
+
+**Step 3 matters as much as step 2.** Both failure modes above - wrong path, sleeping machine -
+produce a file that exists and looks fine. An operator who skips `tar tf` learns nothing is wrong
+until after the volume is gone, and by then the agent's learned state is unrecoverable. This is the
+one backup where being wrong cannot be undone, and it runs in the ninety seconds before an
+irreversible action.
 
 **Roll forward, not back.** If an upgrade misbehaves, the recovery is a newer image or a restored
 snapshot, never an older image against the same volume. If you are already stuck: copy the workspace
-files off the volume *before* recreating it. The boot error names them.
+off the volume *before* recreating it. The boot error names what is salvageable.
 
 Schema changes are called out per release in the CHANGELOG. If a release notes a migration, treat
 the upgrade as one-way for every lane it touches.

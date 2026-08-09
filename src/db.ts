@@ -326,10 +326,11 @@ export function openDb(path: string): Database {
         `Refusing to open — a downgrade would corrupt state.\n` +
         `  Fix: run a daemon at or above the version that wrote this database. An upgrade is ` +
         `one-way; roll FORWARD, not back.\n` +
-        `  Before destroying this volume: your workspace files are NOT in this database and are ` +
-        `intact on disk. Copy DELTA.md (the agent's learned self-file), POLICY.md and any ` +
-        `artifacts off first — recreating the volume loses everything the agent has learned, and ` +
-        `that loss is permanent.`,
+        `  Before destroying this volume: your workspace is NOT in this database and is intact on ` +
+        `disk. Copy the WHOLE directory at $DELTA_WORKSPACE (the container default is ` +
+        `/data/workspace, not /data) off first — it holds DELTA.md, the agent's learned self-file. ` +
+        `Recreating the volume loses everything the agent has learned, permanently. Verify the ` +
+        `copy is non-empty before you destroy anything.`,
     );
   }
   for (let v = version; v < MIGRATIONS.length; v++) {
