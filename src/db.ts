@@ -316,10 +316,20 @@ export function openDb(path: string): Database {
   // guards against. Refuse to open; an upgrade is forward-only, a rollback restores a
   // pre-upgrade snapshot (see the guide at https://deltaharness.dev).
   if (version > MIGRATIONS.length) {
+    // The refusal is correct and stays. What was missing is what the operator does NEXT: a lane
+    // rolled back to an older image crash-loops to its restart cap, and the obvious recovery —
+    // destroy the volume — also destroys the agent's LEARNED DELTA.md, which is a workspace file
+    // and not in this database at all. Aperture hit exactly this rolling Speed Lab back from
+    // 0.2.12 to 0.2.11. So say what is salvageable before someone reaches for the destructive fix.
     throw new Error(
       `delta: database schema v${version} is newer than this binary supports (v${MIGRATIONS.length}). ` +
-        `Refusing to open — a downgrade would corrupt state. Run a daemon at or above the version ` +
-        `that wrote this database, or restore a compatible backup.`,
+        `Refusing to open — a downgrade would corrupt state.\n` +
+        `  Fix: run a daemon at or above the version that wrote this database. An upgrade is ` +
+        `one-way; roll FORWARD, not back.\n` +
+        `  Before destroying this volume: your workspace files are NOT in this database and are ` +
+        `intact on disk. Copy DELTA.md (the agent's learned self-file), POLICY.md and any ` +
+        `artifacts off first — recreating the volume loses everything the agent has learned, and ` +
+        `that loss is permanent.`,
     );
   }
   for (let v = version; v < MIGRATIONS.length; v++) {

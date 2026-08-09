@@ -110,3 +110,72 @@ backlog line: include the HTTP status when the body is empty.
 - No suspend/resume, so S8's claims are documentation.
 - No tool failures, so S4's breaker event never fired live.
 - Sonnet, not Opus, and 40k rather than 200k+ — an order of magnitude below Aperture's shape.
+
+
+---
+
+# Aperture canary round 2 (2026-08-08): S5 answered
+
+Their run, not ours. Speed Lab, ceiling 60,000, arm A on **0.2.12** (verified a direct ancestor of
+the 0.2.13 branch, so the delta is exactly this batch), identical question both arms.
+
+| metric | 0.2.12 | 0.2.13 |
+|---|---|---|
+| compaction | 8 rewrites | 4 attempts, 4 shrank |
+| **`context_irreducible`** | **5** | **0** |
+| max input | **70,969 — over its own 60k ceiling** | 56,521, under |
+| cost | $3.31 | $2.19 |
+
+**The headline is not the compaction count, it is the five errors.** 0.2.12 compacted eight times,
+still failed to get under budget five times, and overran its own ceiling by 18%. 0.2.13 never did.
+That reframes S5 from a cost optimisation to a **correctness fix**: deriving the retained tail from
+the trigger did not merely waste money, it left compaction unable to do its job.
+
+**Delivery: no regression.** Zero repeated provider calls on both arms — the direct "did it forget
+what it just did" test, and the question that actually gated this release. Zero unidentified people
+either side. They explicitly **discounted** a favourable 6-vs-14 rows difference because the arms ran
+sequentially on one workspace and Fiber observations persist, so arm B started warm. Rows delivered
+is not a valid A/B metric under that design, and they retired their own good number rather than
+report it.
+
+## The 45-token floor is explained, and we are deliberately not fixing it
+
+`messages` is not append-only: the ephemeral blocks sit **last** and are rebuilt every turn, so the
+reusable prefix can never extend past where the previous turn's ephemerals began. Their floor traced
+to a 123-byte `# Context` block carrying a `now:` UTC clock.
+
+Same root object as the 0.2.11 bug — that fix moved the cache marks off the ephemerals, not the
+ephemerals themselves. A `# Context` without `now:` would be byte-stable and the floor would go to
+zero.
+
+**Not worth doing.** 45 tokens a turn is 0.05% of their run, against an agent that can no longer tell
+the time. The floor is structural and correct.
+
+**But it makes `ephemeral_bytes` actionable**, which is the useful half: every byte of ephemeral is
+re-read on every single turn. On a lane mounting retrieval or plan blocks the floor is proportionally
+larger, and that is now measurable rather than folkloric.
+
+## Still open: the 7,172
+
+`calls.request` carries **zero `cache_control` markers** — breakpoint placement happens in provider
+serialization, exactly as caveat 2 of the spec warned. So the capture cannot settle it and the
+diagnosis needs a capture one layer lower. Tools-block arithmetic fits at 3.36 bytes/token, but 466
+and 4,993 do not.
+
+**This is the second time the engine-input-vs-wire gap has blocked a diagnosis.** Filed as the
+argument for capturing the serialized body, which the spec rejected as too invasive. That call now
+has a cost attached to it.
+
+## Production risk found: the upgrade is one-way
+
+0.2.12 adds two migrations. A lane rolled back to 0.2.11 **crash-loops to its restart cap**, and the
+obvious recovery — destroying the volume — also destroys the agent's learned `DELTA.md`, which is a
+workspace file and not in the database.
+
+The refusal itself is correct and stays. What was missing was what the operator does next, so:
+
+- the boot error now names the workspace files as salvageable and says to copy them off **before**
+  recreating the volume;
+- `hosting.md` gains "Upgrades are one-way. Snapshot before you roll", with the backup command.
+
+This must be in the 0.2.12 release notes, not the 0.2.13 ones — the migrations are 0.2.12's.

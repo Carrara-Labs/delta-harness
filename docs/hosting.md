@@ -134,6 +134,31 @@ quiet point. If `/v1/busy` ever races (you suspend a machine that took a task a 
 later), the worst case is that the task waits, frozen and intact, until the next wake — no
 work is dropped. Suspend on idle and trust the WAL.
 
+### Upgrades are one-way. Snapshot before you roll.
+
+**A database migrated by a newer binary cannot be opened by an older one.** The daemon refuses,
+fail-closed, rather than operating a schema it does not recognise - that refusal is deliberate and
+protects you from silent corruption. But the consequences are sharper than they look:
+
+1. The refusal happens at boot, so a rolled-back machine **crash-loops to its restart cap**. It does
+   not degrade, it goes down.
+2. The obvious recovery, destroying the volume, **also destroys the agent's learned `DELTA.md`**,
+   which is a workspace file and not in the database. That loss is permanent.
+
+So, before upgrading a lane you care about:
+
+```sh
+# snapshot the volume, or at minimum copy the bundle off
+fly ssh console -a <app> -C "tar cf - -C /data DELTA.md POLICY.md" > bundle-backup.tar
+```
+
+**Roll forward, not back.** If an upgrade misbehaves, the recovery is a newer image or a restored
+snapshot, never an older image against the same volume. If you are already stuck: copy the workspace
+files off the volume *before* recreating it. The boot error names them.
+
+Schema changes are called out per release in the CHANGELOG. If a release notes a migration, treat
+the upgrade as one-way for every lane it touches.
+
 ### What survives a suspend, and what does not
 
 The guarantee above is about the *run*, not about process memory. A suspend/resume normally restores

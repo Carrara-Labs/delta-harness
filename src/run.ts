@@ -1113,10 +1113,18 @@ export async function executeRun(
     // and part of the "cache decay" they originally escalated to us was that artifact.
     //
     // A healthy turn re-reads the ENTIRE previous request from cache, so `cacheRead` should equal
-    // the previous turn's gross input. The gap is the only number that means anything: it is 45
-    // tokens on 37 of 40 turns in their data (a fixed per-request framing cost), and the three
-    // genuine misses stand out at 466, 4,993 and 7,172. Absolute, not a ratio, so nothing about
-    // how much history was appended can move it.
+    // the previous turn's gross input. The gap is the only number that means anything: the three
+    // genuine misses stood out at 466, 4,993 and 7,172 against a floor of 45. Absolute, not a
+    // ratio, so nothing about how much history was appended can move it.
+    //
+    // THE FLOOR IS `ephemeral_bytes`, and it is structural, not waste. The ephemeral blocks sit
+    // LAST in `messages` and are rebuilt every turn, so the reusable prefix can never extend past
+    // where the previous turn's ephemerals began: their size is re-read forever. Aperture traced
+    // their 45 to a 123-byte `# Context` block carrying a `now:` clock. Removing the clock would
+    // take the floor to zero and save ~45 tokens a turn (0.05% of their run), which is not worth
+    // an agent that cannot tell the time. On a lane that also mounts retrieval or plan blocks the
+    // floor is proportionally larger — which is the operator lesson `ephemeral_bytes` exists to
+    // surface: every byte of ephemeral is paid on every single turn.
     //
     // Per-RUN by construction: `lastInputTokens` is this run's own anchor, so the first call of a
     // run has nothing to compare against and emits nothing rather than a misleading zero. That is
