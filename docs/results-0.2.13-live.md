@@ -179,3 +179,37 @@ The refusal itself is correct and stays. What was missing was what the operator 
 - `hosting.md` gains "Upgrades are one-way. Snapshot before you roll", with the backup command.
 
 This must be in the 0.2.12 release notes, not the 0.2.13 ones - the migrations are 0.2.12's.
+
+---
+
+# Post-release: Ferni on 0.2.13 (2026-08-09)
+
+Published to npm, merged to `main`, tagged `v0.2.13`. Ferni upgraded from 0.2.11, which is the
+one-way schema step. Snapshot taken and verified first: 143 entries, 5.6MB, `DELTA.md` present.
+
+**The snapshot caught a second bug in my own procedure.** Ferni sets `DELTA_WORKSPACE=/data/bundle`,
+not the `/data/workspace` image default, so the documented command would have written an empty tar
+here. The same silent-success failure Aperture caught one layer up. The procedure now takes the whole
+volume, prints `DELTA_WORKSPACE` first, and greps the archive for `DELTA.md` rather than only
+checking it is non-empty.
+
+**First four turns after the upgrade:**
+
+| turn | cache_hit_pct | cache_shortfall_tokens | spine_hash | tools_n | ephemeral_bytes |
+|---|---|---|---|---|---|
+| 1 | 0% | (first call) | 72553e20341c | 18 | 751 |
+| 2 | 70% | 257 | 72553e20341c | 18 | 751 |
+| 3 | 59% | 258 | 72553e20341c | 18 | 751 |
+| 4 | 91% | 258 | 72553e20341c | 18 | 751 |
+
+**`cache_hit_pct` swings 32 points while the prefix never moves and the shortfall holds flat at
+~258.** That is the entire argument of this release, reproduced in production on the first run
+without anyone looking for it. Turn 3 reading 59% is a perfectly cached turn; under the old metric
+it would have been logged as a problem worth investigating.
+
+The floor tracks `ephemeral_bytes` (751 bytes) as predicted, and a `tier: utility` /
+`purpose: reflection` call appeared on the same run, so S3 is live too.
+
+**One observation from the agent worth following up:** Ferni reported `list_schedules` returning a
+409 on first call, and that its own `skills/delta-self-check/facts.md` is pinned four releases stale
+at 0.2.9. Neither is caused by this release; both are filed.
