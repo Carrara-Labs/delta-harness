@@ -8,12 +8,35 @@
 
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
-import type { Events, Spine } from "./events";
+import { type Events, emitUtilityCall, type Spine } from "./events";
 import type { ChatMsg, ChatRequest, ModelResult, Usage } from "./provider";
-import { elide, spillPathFor } from "./tools";
+import { elide, elideArgs, spillPathFor } from "./tools";
 import { untrustedToolResult } from "./untrusted";
 
-const RECENT_TOKENS_DEFAULT = 24_000; // tail kept verbatim, sized by token budget (was a fixed 4)
+/** The retained tail's TARGET, deliberately independent of the compaction TRIGGER (S5). Exported
+ * because `run.ts` clamps the ceiling-derived remainder against it — deriving the tail from the
+ * trigger is what made compaction land at ~99% of budget and re-fire every turn. pi keeps the same
+ * split (`keepRecentTokens` 20k vs `contextWindow - reserveTokens`); openclaw exposes it as an
+ * operator int. No env knob here on purpose: the bug being fixed WAS a knob disagreeing with a
+ * derived value. */
+export const RECENT_TOKENS_DEFAULT = 24_000;
+
+/** The retained-tail budget for one compaction (S5). Exported and used by `run.ts` rather than
+ * inlined there, so a test exercises THIS function instead of a copy of the formula — a duplicated
+ * clamp in a test passes happily while the engine keeps the old behaviour. */
+export function retainedTailBudget(
+  ceilingTokens: number,
+  fixedTokens: number,
+  summaryReserveTokens: number,
+): number {
+  // The ceiling-derived remainder is a CAP (never keep more than is left), the flat constant is the
+  // TARGET (never keep more than we need). Deriving the target FROM the trigger is what made
+  // compaction land at ~99% of budget and re-fire on the next turn.
+  return Math.min(
+    Math.max(0, ceilingTokens - fixedTokens - summaryReserveTokens),
+    RECENT_TOKENS_DEFAULT,
+  );
+}
 /** Versioned sentinel opening a DEMOTED tool result, so a later compaction returns the row
  *  byte-identical instead of re-stubbing it (codex: idempotence must be explicit, not inferred). */
 const DEMOTED_MARK = "[delta:demoted/1]";
@@ -31,6 +54,14 @@ const MATERIAL = 0.95;
 /** UTF-8 byte length. `.length` counts UTF-16 code units, so a CJK-heavy summary could pass a
  *  size test while GROWING the real serialized request (codex P1). One metric, both sides. */
 const bytes = (s: string): number => Buffer.byteLength(s, "utf8");
+
+/** Invalidate the run's provider-anchored input estimate INSIDE the compaction transaction (S5).
+ * `runs.last_input` measured the PRE-compaction prompt; once history is rewritten it is a lie that
+ * survives a crash, and `run.ts` reading it on resume would project over budget and re-compact
+ * immediately. Committing it with the rewrite makes the two states impossible to separate. */
+const clearAnchor = (db: Database, runId?: string): void => {
+  if (runId) db.query("UPDATE runs SET last_input = 0 WHERE id = ?").run(runId);
+};
 
 const zeroUsage = (): Usage => ({
   input: 0,
@@ -197,6 +228,47 @@ function demoteSpilled(row: Row, workspace: string): string {
   });
 }
 
+/** The other half of the retained tail. `demoteSpilled` above bounds a spilled tool RESULT; this
+ * bounds the assistant's own tool-call ARGUMENTS, which live on the assistant row and which nothing
+ * has ever been able to shrink. Measured across two 10-turn sessions: 10 of 10 compactions moved
+ * `tail_bytes_before` to an identical `tail_bytes_after` — each paying for a summary call to
+ * discover that the floor had not moved, while the tail grew monotonically underneath.
+ *
+ * Elision happens HERE, and not at the tool-result commit where 0.2.12 first put it, because the
+ * live rig showed the early seam makes the agent redo work: it sees its own recent call carrying a
+ * hollowed-out argument and writes again to be sure (one run wrote the same page ten times). By the
+ * time a row reaches the retained tail the agent is no longer reasoning about it, so there is
+ * nothing to second-guess.
+ *
+ * Same properties as demotion, for the same reasons: it runs at the compaction commit, which is
+ * already rewriting the prefix, so it costs no extra prefix-cache churn; the full arguments stay in
+ * `journal.args` for `recall`; and it is idempotent by size. */
+function elideRowArgs(row: Row, cap: number): string {
+  if (!Number.isFinite(cap) || cap <= 0) return row.msg;
+  let m: ChatMsg & { tool_calls?: Array<{ function: { arguments: string } }> };
+  try {
+    m = JSON.parse(row.msg) as typeof m;
+  } catch {
+    return row.msg;
+  }
+  if (m.role !== "assistant" || !m.tool_calls?.length) return row.msg;
+  let changed = false;
+  for (const call of m.tool_calls) {
+    let args: Record<string, unknown>;
+    try {
+      args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (!args || typeof args !== "object" || Array.isArray(args)) continue;
+    const elided = elideArgs(args, cap);
+    if (!elided) continue;
+    call.function.arguments = elided;
+    changed = true;
+  }
+  return changed ? JSON.stringify(m) : row.msg;
+}
+
 /** Scan compacted rows for spilled-result paths → the unique set, bounded by count AND bytes.
  * These pointers otherwise die with the tool message compaction deactivates. */
 function collectArtifacts(rows: Row[]): string[] {
@@ -264,7 +336,19 @@ export async function maybeCompact(
   chat: (req: ChatRequest) => Promise<ModelResult>,
   sessionId: string,
   spine: Spine,
-  opts: { recentBudgetTokens?: number; force?: boolean; workspace?: string } = {},
+  opts: {
+    recentBudgetTokens?: number;
+    force?: boolean;
+    workspace?: string;
+    /** `DELTA_TOOL_ARG_MAX_BYTES` — bounds the assistant arguments in the retained tail. */
+    argCap?: number;
+    /** The run whose provider-anchored input estimate must be invalidated ATOMICALLY with the
+     * message rewrite (S5). The caller used to reset `runs.last_input` after this returned, so a
+     * crash in that window resumed with a COMPACTED history and a STALE pre-compaction anchor —
+     * which re-triggers compaction on the first turn back, i.e. exactly the per-turn compaction
+     * this batch exists to remove, reachable by crash instead of by config (codex). */
+    anchorRunId?: string;
+  } = {},
 ): Promise<CompactResult | null> {
   const rows = db
     .query("SELECT id, run_id, msg FROM messages WHERE session_id = ? AND active = 1 ORDER BY id")
@@ -330,10 +414,13 @@ export async function maybeCompact(
   let demotedAny = false;
   for (const r of kept) {
     if (tailTokens <= budget) break;
-    const demoted = opts.workspace ? demoteSpilled(r, opts.workspace) : r.msg;
-    if (demoted === r.msg) continue;
-    tailTokens -= tokEst(r.msg) - tokEst(demoted);
-    r.msg = demoted;
+    // Both halves of the tail, oldest-first: the tool result's spilled body, and the assistant's
+    // own arguments. Either one alone leaves a floor the other cannot move.
+    const shrunk = opts.workspace ? demoteSpilled(r, opts.workspace) : r.msg;
+    const both = elideRowArgs({ ...r, msg: shrunk }, opts.argCap ?? 0);
+    if (both === r.msg) continue;
+    tailTokens -= tokEst(r.msg) - tokEst(both);
+    r.msg = both;
     demotedAny = true;
   }
 
@@ -354,11 +441,17 @@ export async function maybeCompact(
         db.query(
           "INSERT INTO messages (run_id, session_id, msg, created_at) VALUES (?, ?, ?, ?)",
         ).run(r.run_id, sessionId, r.msg, Date.now());
+      clearAnchor(db, opts.anchorRunId);
     })();
     events.emit("compaction", spine, {
       compacted_turns: 0,
       kept: kept.length,
+      shrank: true,
+      reason: "demoted",
       demoted_only: true,
+      demoted: true,
+      tail_bytes_before: tail.reduce((n, r) => n + bytes(r.msg), 0),
+      tail_bytes_after: kept.reduce((n, r) => n + bytes(r.msg), 0),
       summary_tokens: 0,
       summary_cost_usd: 0,
       identifiers_audited: 0,
@@ -423,6 +516,10 @@ export async function maybeCompact(
         { role: "user", content: bounded },
       ],
     });
+    // S3: report the summary call. Emitted per ATTEMPT, since this loop runs twice when the first
+    // summary drops load-bearing identifiers — the aggregate would report one call where two were
+    // billed. A failed attempt carries no usage and the emitter no-ops on it.
+    emitUtilityCall(events, spine, "summary", res, (spine.turn ?? 0) + 1);
     if (!res.ok) break; // summary call failed — use a prior attempt if any, else no-op below
     sumUsage.input += res.usage.input;
     sumUsage.output += res.usage.output;
@@ -438,7 +535,30 @@ export async function maybeCompact(
   }
   // No usable summary. If we DID bill an attempt (ok response, empty/short content), charge it but
   // don't commit; only a first-call failure (no usage) is a true null no-op (codex).
-  if (!summaryRaw) return sumUsage.total > 0 ? { usage: sumUsage, shrank: false } : null;
+  // S2: a billed attempt that produced nothing usable was silent — the utility model summarized up
+  // to 60k of transcript, we paid for it, and no consumer could see it. A true first-call failure
+  // (no usage at all) stays null: that is a real no-op with nothing to report.
+  if (!summaryRaw) {
+    if (sumUsage.total > 0) {
+      events.emit("compaction", spine, {
+        shrank: false,
+        reason: "no_summary",
+        compacted_turns: 0,
+        kept: tail.length,
+        demoted_only: false,
+        demoted: demotedAny,
+        tail_bytes_before: activeBytes,
+        tail_bytes_after: activeBytes,
+        summary_tokens: sumUsage.output,
+        summary_cost_usd: sumUsage.costUsd,
+        identifiers_audited: ids.length,
+        identifiers_missing: missing.length,
+        merged: hasPrior,
+      });
+      return { usage: sumUsage, shrank: false };
+    }
+    return null;
+  }
   const summary = elide(summaryRaw, SUMMARY_CAP); // hard bound in CODE, not just the prompt
 
   // Deterministic pointer ledger (W1): the summarizer is TOLD to preserve paths, but don't
@@ -482,7 +602,28 @@ export async function maybeCompact(
   // spinning on sub-5% wobbles; applying it to last-resort recovery would turn a recoverable turn
   // into a terminal failure (caught by the overflow-retry integration test).
   const shrank = newBytes < oldBytes * (opts.force ? 1 : MATERIAL);
-  if (!shrank) return { usage: sumUsage, shrank: false };
+  // S2: the other billed-but-silent exit. This return guards the MESSAGES transaction against a
+  // non-shrinking rewrite; a telemetry insert is not that, so emitting here weakens nothing. On a
+  // lane sitting permanently above its threshold this fires in front of nearly every turn, costing
+  // a utility-model call and its latency, and reported nothing at all.
+  if (!shrank) {
+    events.emit("compaction", spine, {
+      shrank: false,
+      reason: "not_material",
+      compacted_turns: 0,
+      kept: tail.length,
+      demoted_only: false,
+      demoted: demotedAny,
+      tail_bytes_before: oldBytes,
+      tail_bytes_after: newBytes,
+      summary_tokens: sumUsage.output,
+      summary_cost_usd: sumUsage.costUsd,
+      identifiers_audited: ids.length,
+      identifiers_missing: missing.length,
+      merged: hasPrior,
+    });
+    return { usage: sumUsage, shrank: false };
+  }
 
   const lastRunId = tail[tail.length - 1]?.run_id ?? prefix[prefix.length - 1]?.run_id ?? "";
   db.transaction(() => {
@@ -500,11 +641,24 @@ export async function maybeCompact(
         "INSERT INTO messages (run_id, session_id, msg, created_at) VALUES (?, ?, ?, ?)",
       ).run(r.run_id, sessionId, r.msg, Date.now());
     }
+    clearAnchor(db, opts.anchorRunId);
   })();
 
   events.emit("compaction", spine, {
     compacted_turns: prefix.length,
     kept: tail.length,
+    // Emitted on BOTH paths (0.2.12). It was previously set only on the demotion-only early return,
+    // so a consumer whose compactions all summarize — which is all of them under pressure — could
+    // never tell whether demotion ran and was not enough. That is the single number that says
+    // whether a tail-shrinking change worked, and Aperture could not read it.
+    shrank: true,
+    reason: "committed",
+    demoted_only: false,
+    demoted: demotedAny,
+    // The RETAINED TAIL only. Measuring the whole active set (or including the new summary) lets
+    // the prefix-to-summary reduction dominate and hides the tail change this is meant to score.
+    tail_bytes_before: tail.reduce((n, r) => n + bytes(r.msg), 0),
+    tail_bytes_after: kept.reduce((n, r) => n + bytes(r.msg), 0),
     summary_tokens: sumUsage.output,
     summary_cost_usd: sumUsage.costUsd,
     identifiers_audited: ids.length,

@@ -23,14 +23,26 @@ import {
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import type { DeltaEvent, Events } from "./events";
 import { saveInbox, sniffMime } from "./files";
+import { getProfile } from "./profiles";
 import { type Queue, SessionOwnershipError, UnknownPreviousResponse } from "./queue";
 import type { RunRequest } from "./run";
 import { scrubText } from "./scrub";
-import { currentSelf, listRevisions, revertSelf, writeSelf } from "./self";
+import { currentSelf, listRevisions, revertSelf, SELF_FILE, writeSelf } from "./self";
 import type { Vault } from "./vault";
 import { HARNESS_VERSION } from "./version";
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
+
+/** On-disk size of the agent's self-file against its cap (0.2.12). Best-effort: an absent file is
+ * 0, which is the truthful answer for an agent that has not written one yet. */
+function selfFullness(workspace: string | undefined, cap: number): { bytes: number; cap: number } {
+  if (!workspace) return { bytes: 0, cap };
+  try {
+    return { bytes: statSync(resolve(workspace, SELF_FILE)).size, cap };
+  } catch {
+    return { bytes: 0, cap };
+  }
+}
 
 // Hard ceiling on an upload body's ACTUAL bytes. The content-length header is only a
 // hint — a chunked body sends none, and a hostile client can declare a small length then
@@ -81,6 +93,12 @@ export function createServer(
      *  `/v1/dev/*`. Distinct, higher privilege than driving runs (spec §8). Unset ⇒
      *  `/v1/dev/*` is loopback-only (fail-closed on a public interface). */
     inspectToken?: string;
+    /** Whether DELTA_CAPTURE_CALLS is on. Reported so an EMPTY /calls result can say WHY it is
+     * empty. This flag pair has now cost two engineers a day each: `DELTA_CAPTURE_PAYLOADS`
+     * (telemetry attributes, prod-safe) reads as the one that captures requests, while
+     * `DELTA_CAPTURE_CALLS` (dev-only, the actual request snapshot) is the one that does. An empty
+     * array reads as "no calls happened" rather than "capture was never on". */
+    captureCalls?: boolean;
     /** The daemon's own writable SQLite handle — the Cockpit reads it with fixed,
      *  safe-column `SELECT`s (never a raw table dump). Absent ⇒ `/v1/dev/*` is 404. */
     db?: Database;
@@ -348,7 +366,7 @@ export function createServer(
 
         // True-to-life per-model-call input/output (the `calls` capture). Redacted on read.
         const runCalls = pathname.match(/^\/v1\/dev\/runs\/([^/]+)\/calls$/);
-        if (runCalls) return devRunCalls(db, runCalls[1] as string);
+        if (runCalls) return devRunCalls(db, runCalls[1] as string, opts?.captureCalls === true);
         const runDetail = pathname.match(/^\/v1\/dev\/runs\/([^/]+)$/);
         if (runDetail) return devRunDetail(db, runDetail[1] as string);
 
@@ -427,7 +445,10 @@ export function createServer(
         return json({
           version: c.version,
           ...(c.agent_id ? { agent_id: c.agent_id } : {}),
-          profile: c.profile,
+          // The CANONICAL name, not the configured alias (0.2.12). `DELTA_PROFILE=work` reported
+          // "work" here while the 0.2.7 changelog and the guide both promise "trusted" — a
+          // docs-vs-wire disagreement an edge tool cannot reconcile.
+          profile: getProfile(c.profile).name,
           safe_mode: c.safe_mode ?? false,
           model: c.model,
           ...(c.budget ? { budget: c.budget } : {}),
@@ -441,6 +462,12 @@ export function createServer(
             count: opts?.vault?.list().length ?? 0,
             declared: opts?.vaultDeclared ?? [],
           },
+          // Self-file fullness (0.2.12). Read LIVE for the same reason `vault` is: self bytes are
+          // per-run, so a boot snapshot would report the seed forever. A nearly-full DELTA.md
+          // refuses every `remember` — the lane silently stops learning — and across the Aperture
+          // fleet fullness turned out to be the single best predictor of degraded self-learning.
+          // It was computed on every run and dropped, discoverable only by querying the collector.
+          self: selfFullness(opts?.workspace, opts?.selfMaxBytes ?? 3200),
         });
       }
 
@@ -1098,7 +1125,19 @@ function devRunDetail(db: Database, id: string): Response {
  *  capture, dev-only). Each is the EXACT assembled request the model saw — system spine
  *  + full message list + tool schemas — paired with the response. Redacted on the read
  *  path (raw on disk stays true), like the journal/transcript. Empty if capture was off. */
-function devRunCalls(db: Database, id: string): Response {
+/** Why a `/calls` read came back empty. Without this an operator cannot tell "this run made no
+ *  model calls" from "the flag that records them was never set" — the second is what actually
+ *  happens, because the flag is dev-only and the similarly-named DELTA_CAPTURE_PAYLOADS is the one
+ *  production lanes set. */
+function emptyHint(captureEnabled: boolean): { note: string } {
+  return {
+    note: captureEnabled
+      ? "No captures recorded for this run."
+      : "DELTA_CAPTURE_CALLS is not set, so no request was ever recorded. It is dev-only and is NOT the same flag as DELTA_CAPTURE_PAYLOADS, which only enriches telemetry attributes. Captures are not recoverable retroactively.",
+  };
+}
+
+function devRunCalls(db: Database, id: string, captureEnabled: boolean): Response {
   let rows: { turn: number; request: string; response: string; created_at: number }[] = [];
   try {
     rows = db
@@ -1108,7 +1147,7 @@ function devRunCalls(db: Database, id: string): Response {
       .all(id) as typeof rows;
   } catch {
     // `calls` table absent (older DB / capture never migrated) → just no calls.
-    return json({ calls: [] });
+    return json({ calls: [], capture_enabled: captureEnabled, ...emptyHint(captureEnabled) });
   }
   const calls = rows.map((r) => ({
     turn: r.turn,
@@ -1116,7 +1155,11 @@ function devRunCalls(db: Database, id: string): Response {
     request: redactSecrets(safeParse(r.request) ?? {}),
     response: redactSecrets(safeParse(r.response) ?? {}),
   }));
-  return json({ calls });
+  return json({
+    calls,
+    capture_enabled: captureEnabled,
+    ...(calls.length ? {} : emptyHint(captureEnabled)),
+  });
 }
 
 const MAX_FILE_BYTES = 1024 * 1024; // 1 MB body cap (spec §4.5)

@@ -18,7 +18,7 @@ Do **not** delegate suspend/resume to a connection-counting proxy (for example F
 
 1. **It suspends work that is still running.** A Delta task is fire-and-forget:
    `POST /v1/tasks` returns `202` immediately with a task id, and the agent then works
-   *outbound* — calling models and tools — with no inbound connection held open. A
+   *outbound* - calling models and tools - with no inbound connection held open. A
    connection-based idle detector sees zero open connections and suspends the machine
    **mid-run**. The work is not lost (see the safety guarantee below), but it is stalled
    until something happens to wake the machine again.
@@ -81,13 +81,22 @@ spinner.
 Never suspend a machine that still owes work. Ask the daemon:
 
 ```
-GET http://<machine>:<port>/v1/busy   → { "busy": true|false, "running": N, "queued": N }
+GET http://<machine>:<port>/v1/busy   → { "busy": true|false, "running": N, "queued": N,
+                                          "last_event_ms_ago": N }   // only while running
 ```
 
 `busy` is the durable truth: it is `true` when **anything** is queued *or* running, read
 straight from the daemon's run table (not an in-memory flag). A queued-but-not-yet-dispatched
 run keeps `busy` true, so you will never suspend a machine with a task waiting to start.
 Suspend only when `busy` is `false`.
+
+`last_event_ms_ago` (0.2.13) is present only while something is running: how long the daemon has
+been **silent**, meaning the age of the newest event across every running run. It answers "is this
+stuck?", which is the question a reconciler is really asking - turn age would card a healthy turn
+that has been emitting tool calls every 20 seconds for four minutes. Long turns are normal; one
+lane measured a 227s turn on a healthy 12-hour run. Pick a threshold from this rather than from
+wall-clock turn duration, and note it is **daemon-wide**: on a daemon serving several runs a busy
+one masks a quiet one, so use `/v1/tasks/:id/events` for a per-run decision.
 
 `/v1/busy` is behind the `/v1/` gate, so it takes the same `DELTA_CONTROL_TOKEN` bearer your
 control plane already sends on every daemon call. It is deliberately *not* folded into
@@ -117,30 +126,94 @@ awake exactly as long as there is work, and suspends the moment there is none.
 Every turn checkpoints to the local SQLite WAL before it advances. The runs table and the
 per-turn journal **are** the checkpoint: on resume, the daemon reloads the active run and
 continues from the last completed turn. A suspend in the middle of a run is therefore a
-**continuation, not a loss** — the machine freezes, and when it wakes the agent picks up
+**continuation, not a loss** - the machine freezes, and when it wakes the agent picks up
 where it left off.
 
 This is what makes the pattern safe: you do not need to drain the machine or wait for a
 quiet point. If `/v1/busy` ever races (you suspend a machine that took a task a millisecond
-later), the worst case is that the task waits, frozen and intact, until the next wake — no
+later), the worst case is that the task waits, frozen and intact, until the next wake - no
 work is dropped. Suspend on idle and trust the WAL.
+
+### Upgrades are one-way. Snapshot before you roll.
+
+**A database migrated by a newer binary cannot be opened by an older one.** The daemon refuses,
+fail-closed, rather than operating a schema it does not recognise - that refusal is deliberate and
+protects you from silent corruption. But the consequences are sharper than they look:
+
+1. The refusal happens at boot, so a rolled-back machine **crash-loops to its restart cap**. It does
+   not degrade, it goes down.
+2. The obvious recovery, destroying the volume, **also destroys the agent's learned `DELTA.md`**,
+   which is a workspace file and not in the database. That loss is permanent.
+
+#### The snapshot, and the verify that has to go with it
+
+```sh
+# 1. Wake the machine. Lanes autosuspend, and `fly ssh` against a stopped machine fails with
+#    "app has no started VMs, it may be unhealthy or not have been deployed yet" - which reads
+#    like a broken lane rather than a sleeping one.
+fly machine start <machine-id> -a <app>
+
+# 2. Take the WHOLE workspace directory, not named files. The bundle lives at /data/workspace
+#    (DELTA_WORKSPACE), not /data. Taking the directory also catches notes/, vocab.json and
+#    PROMPT_CONTEXT.md, and cannot silently miss a file someone renamed.
+fly ssh console -a <app> -C "tar cf - -C /data workspace" > <app>-workspace-$(date +%Y%m%d).tar
+
+# 3. VERIFY BEFORE UPGRADING. Not optional.
+tar tf <app>-workspace-*.tar | head
+```
+
+**Step 3 matters as much as step 2.** Both failure modes above - wrong path, sleeping machine -
+produce a file that exists and looks fine. An operator who skips `tar tf` learns nothing is wrong
+until after the volume is gone, and by then the agent's learned state is unrecoverable. This is the
+one backup where being wrong cannot be undone, and it runs in the ninety seconds before an
+irreversible action.
+
+**Roll forward, not back.** If an upgrade misbehaves, the recovery is a newer image or a restored
+snapshot, never an older image against the same volume. If you are already stuck: copy the workspace
+off the volume *before* recreating it. The boot error names what is salvageable.
+
+Schema changes are called out per release in the CHANGELOG. If a release notes a migration, treat
+the upgrade as one-way for every lane it touches.
+
+### What survives a suspend, and what does not
+
+The guarantee above is about the *run*, not about process memory. A suspend/resume normally restores
+memory intact, but a **wake failure degrades into a cold boot** - the machines API times out, the
+platform starts a fresh process, and anything that lived only in RAM is gone. Aperture hit this
+mid-engagement in August 2026. Plan for it rather than assuming resume always means resume.
+
+| | survives | why |
+| --- | --- | --- |
+| Run position, turn history, tool results | **yes** | checkpointed to the SQLite WAL every turn |
+| The workspace, spill files, artifacts | **yes** | on the mounted volume |
+| `DELTA.md` self-file edits | **yes** | committed to disk the instant `remember` succeeds |
+| The run's activated tool set | **yes** | persisted to `runs.tools` and reloaded |
+| Queued and running task rows | **yes** | the queue recovers them at boot |
+| The A4 tool-breaker tally | **no, by design** | a quarantine is re-armed on resume, so a tool disabled by repeated failure becomes callable again |
+| In-flight provider connections | **no** | the wire is refreshed on a detected heartbeat gap; a dead pooled socket is evicted in seconds |
+| Anything else held only in process memory | **no** | assume a cold boot is possible on any wake |
+
+**What this means for a host.** Nothing needs draining before a suspend. But do not treat a resumed
+daemon as a process that never stopped: re-read state from the seam (`/v1/status`, `/v1/busy`,
+`/v1/tasks/:id`) rather than from anything you cached across the gap, and expect a re-armed breaker
+to retry a tool that had been quarantined.
 
 ## Stable contracts you can build on
 
 A host's reconciler and lifecycle code end up depending on more than the three hooks. The
 four behaviors below are now **documented guarantees**, not incidental implementation
-details — they do not change semantics without a major-version note. Each is pinned by a
+details - they do not change semantics without a major-version note. Each is pinned by a
 named guard test in [`test/contracts.test.ts`](../test/contracts.test.ts); if a change
 would break one, that test fails before it ever reaches you.
 
 1. **Idempotency keys are freed on terminal runs (by default).** `POST /v1/tasks` with an
    `idempotency_key` dedupes only against runs still `queued` or `running`. Once a run
    reaches a terminal state, the key is free and a later dispatch starts fresh. This is
-   what makes a resume-is-the-dispatch pattern — re-POSTing the same key with a resume
-   preamble — safe rather than a silent no-op. **Opt-in exception:** a request that sets
+   what makes a resume-is-the-dispatch pattern - re-POSTing the same key with a resume
+   preamble - safe rather than a silent no-op. **Opt-in exception:** a request that sets
    `idempotency_terminal: true` (with a durable run, i.e. not `store:false`) also dedupes
    against its own *terminal* run, so a re-POST after a lost `202` re-attaches to the
-   accepted run instead of starting a second — exactly-once for a key that is unique per
+   accepted run instead of starting a second - exactly-once for a key that is unique per
    intent. The default is unchanged; only a caller that sets the flag gets this behavior,
    and the dedupe stays scoped to the run's owner.
 
@@ -148,12 +221,12 @@ would break one, that test fails before it ever reaches you.
    process stopped is picked up and continued from its last checkpointed turn when the
    daemon comes back. So a staleness detector can treat a machine that never returns as the
    zombie case. (One caveat: a tool that blocks the event loop *synchronously* can still wedge a
-   live daemon — a documented runtime limit, not a recovery gap.)
+   live daemon - a documented runtime limit, not a recovery gap.)
 
 3. **`/v1/busy` tells the durable truth.** `busy` is `true` whenever a run is `queued` OR
    `running` in the table, not merely when a session is in flight in memory. It is the
    don't-suspend gate: durable work is owed, so keep the machine awake. (It reports durable
-   status, not live progress — a host's stuck-run detector watches for the *mismatch*,
+   status, not live progress - a host's stuck-run detector watches for the *mismatch*,
    `busy:false` while its own record still says a run is live.)
 
 4. **Seeding never touches an existing `DELTA.md`.** Bundle seeding is write-if-absent: it
@@ -164,10 +237,10 @@ would break one, that test fails before it ever reaches you.
    To *update* the fixed operator files (not just seed missing ones), run
    **`delta bundle apply`** (also run automatically on every container boot). It re-seeds
    `POLICY.md` / `vocab.json` / `PROMPT_CONTEXT.md` from their base64 env vars and never
-   touches `DELTA.md` — the write set is the bundle manifest's fixed entries, which exclude
+   touches `DELTA.md` - the write set is the bundle manifest's fixed entries, which exclude
    the self-file by construction. It validates every payload first (a bad `vocab.json` or an
    over-budget `POLICY.md` is refused and *nothing* is written), so you can change a Fly
-   secret and redeploy — or `fly ssh console -C "delta bundle apply"` on a live machine —
+   secret and redeploy - or `fly ssh console -C "delta bundle apply"` on a live machine -
    instead of the old hand-edit dance.
 
 ## Boot gotchas
@@ -177,7 +250,7 @@ Three things that are easy to get wrong when you first stand up a production dae
 ### The bare daemon does not read `delta.env`
 
 `delta dev <dir>` loads a project's `delta.env` for local development. The bare production
-daemon (`delta`) does **not** — it reads its configuration from the process environment only.
+daemon (`delta`) does **not** - it reads its configuration from the process environment only.
 In production, inject `DELTA_*` (model keys, budgets, `DELTA_CONTROL_TOKEN`, `DELTA_MCP_SERVERS`,
 …) as real environment variables from your platform's secret store, not a file in the
 workspace.
@@ -198,16 +271,16 @@ If you omit `transport`, Delta infers it from the entry shape (`url` → `http`,
 `command` → `stdio`) and logs that it did so. Being explicit is still clearer, and it is the
 only way to be unambiguous when an entry carries both fields.
 
-### A malformed `DELTA_MCP_SERVERS` boots the agent tool-less — but says so
+### A malformed `DELTA_MCP_SERVERS` boots the agent tool-less - but says so
 
 If `DELTA_MCP_SERVERS` is not valid JSON, or an individual entry is unusable (no `name`, an
 `http` entry with no `url`, a `stdio` entry with no `command`), Delta drops it and continues
-— an agent that fails open to *fewer tools* beats a daemon that refuses to boot. Every drop
+- an agent that fails open to *fewer tools* beats a daemon that refuses to boot. Every drop
 is logged loudly at startup:
 
 ```
-delta: DELTA_MCP_SERVERS is not valid JSON — IGNORED, booting with no MCP backends: …
-delta: DELTA_MCP_SERVERS[0] (myproduct) is transport:http but has no "url" — skipped.
+delta: DELTA_MCP_SERVERS is not valid JSON - IGNORED, booting with no MCP backends: …
+delta: DELTA_MCP_SERVERS[0] (myproduct) is transport:http but has no "url" - skipped.
 ```
 
 Watch your boot logs. A silent tool-less agent will otherwise burn a full model run before

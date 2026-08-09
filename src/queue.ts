@@ -290,7 +290,16 @@ export class Queue {
    * already durably delivered before reflection starts). The `WHERE` keeps this cheap:
    * it rides the runs(status, …) index and touches only active rows, so a host can poll
    * it freely without scanning the whole run history. */
-  activity(): { busy: boolean; running: number; queued: number } {
+  activity(): {
+    busy: boolean;
+    running: number;
+    queued: number;
+    /** snake_case because this is the JSON field name consumers read (`/v1/status` is snake_case
+     * throughout, and the spec promised `last_event_ms_ago`). `Response.json()` does no case
+     * conversion, so a camelCase property here ships a differently-named field than the docs
+     * describe and reads as the feature being absent (codex P1). */
+    last_event_ms_ago?: number;
+  } {
     const row = this.deps.db
       .query(
         `SELECT COALESCE(SUM(status = 'running'), 0) AS running,
@@ -298,7 +307,38 @@ export class Queue {
          FROM runs WHERE status IN ('queued', 'running')`,
       )
       .get() as { running: number; queued: number };
-    return { busy: row.running + row.queued > 0, running: row.running, queued: row.queued };
+    // S7: how long the daemon has been SILENT, not how old the turn is. A turn emitting tool calls
+    // every 20s is healthy at four minutes old, so turn age would card it; silence would not.
+    // Every consumer currently guesses this constant on its own — Aperture's reconciler treated two
+    // minutes as a stall and offered a Resume on a healthy 12-hour run, which would have duplicated
+    // it. Only meaningful while running: a queued-but-not-started daemon has nothing to be silent
+    // about, and an idle one is not being watched.
+    // DAEMON-WIDE, not per-run: this is the newest event across every running run, so on a daemon
+    // serving several runs a noisy one keeps the clock low while a sibling is genuinely stuck. That
+    // is the right scope for `/v1/busy` (whose other fields are daemon-wide too) and the wrong input
+    // for a per-run Resume decision — a host wanting that reads `/v1/tasks/:id/events` (codex).
+    // Cost, stated honestly because an earlier comment here claimed an optimization that EXPLAIN
+    // does not support: there is no `(run_id, ts)` index, so this scans the events of currently
+    // RUNNING runs. `ORDER BY id DESC LIMIT 1` was tried and is worse — it adds a TEMP B-TREE for
+    // the ordering on top of the same scan. Acceptable because `/v1/busy` is a suspend-gate poll,
+    // not a hot path, and terminal runs are excluded by the join.
+    let last_event_ms_ago: number | undefined;
+    if (row.running > 0) {
+      const ev = this.deps.db
+        .query(
+          `SELECT MAX(e.ts) AS ts FROM events e
+             JOIN runs r ON r.id = e.run_id
+            WHERE r.status = 'running'`,
+        )
+        .get() as { ts: number | null } | undefined;
+      if (ev?.ts) last_event_ms_ago = Math.max(0, Date.now() - ev.ts);
+    }
+    return {
+      busy: row.running + row.queued > 0,
+      running: row.running,
+      queued: row.queued,
+      ...(last_event_ms_ago !== undefined ? { last_event_ms_ago } : {}),
+    };
   }
 
   /** Boot: resume crashed mid-flight runs, then drain queued ones. */

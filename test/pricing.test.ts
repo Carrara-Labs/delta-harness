@@ -14,7 +14,10 @@ describe("resolvePrice", () => {
     expect(resolvePrice("some/unknown-model", BAKED_PRICES)).toBeNull();
   });
   test("opus-5 is priced on every id form (A10 — native + prefixed + versioned)", () => {
-    const opus5 = { in: 5, out: 25, cacheRead: 0.5 };
+    // `window` rides along on this entry (S6) and must survive every id form — a versioned or
+    // provider-prefixed slug that resolved the price but LOST the window would silently fall back
+    // to the 120k compaction default on exactly the lanes this was seeded for.
+    const opus5 = { in: 5, out: 25, cacheRead: 0.5, window: 249_000 };
     expect(resolvePrice("claude-opus-5", BAKED_PRICES)).toEqual(opus5);
     expect(resolvePrice("anthropic/claude-opus-5", BAKED_PRICES)).toEqual(opus5);
     expect(resolvePrice("claude-opus-5-20260601", BAKED_PRICES)).toEqual(opus5);

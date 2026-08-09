@@ -55,6 +55,27 @@ const SAFE_ATTRS = new Set([
   "gen_ai.usage.cached_tokens",
   "gen_ai.usage.cost_usd",
   "cache_hit_pct",
+  // The honest cache-health number (S10). `cache_hit_pct` is a ratio whose denominator moves with
+  // appended history; this is an absolute token gap against the previous request, so nothing about
+  // workload shape can flatter or slander it. Engine-authored counter, no payload consent needed.
+  "cache_shortfall_tokens",
+  // S1 prefix identity (0.2.13): engine-authored counters plus per-daemon-SALTED digests of
+  // engine-assembled prompt segments. Safe without payload consent because the salt is random per
+  // process and never exported, so a digest is not correlatable across daemons and not testable
+  // against a candidate spine. An UNSALTED digest would NOT belong here — the spine carries
+  // DELTA.md and POLICY.md, which are low-entropy enough to dictionary-test (codex).
+  "spine_bytes",
+  "spine_hash",
+  "tools_bytes",
+  "tools_hash",
+  "tools_n",
+  "self_bytes",
+  "history_bytes",
+  "ephemeral_bytes",
+  // Closed enums: which model lane served the call and what it was for (S3).
+  "tier",
+  "purpose",
+  "before_turn",
   "latency_ms",
   "wall_ms",
   "duration_ms",

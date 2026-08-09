@@ -7,6 +7,7 @@ import { hostname } from "node:os";
 import { resolve } from "node:path";
 import { BrokerCredential } from "./broker";
 import type { McpServerConfig } from "./mcp";
+import { deriveContextCeiling, maxSafeCeiling, parsePrices } from "./pricing";
 import { getProfile } from "./profiles";
 import {
   KNOWN_EFFORTS,
@@ -117,6 +118,9 @@ export type Config = {
   streamIdleMs: number;
   toolTimeoutMs: number;
   toolResultCap: number;
+  /** Ceiling on a succeeded call's stored ARGUMENTS before structural elision (0.2.12).
+   * 0 disables. `DELTA_TOOL_ARG_MAX_BYTES`. */
+  toolArgCap: number;
   /** Cheap model for auxiliary calls (compaction/reflection/judging). Empty string disables
    * the lane (everything rides the main cascade). */
   utilityModel: string;
@@ -198,7 +202,30 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const toolTimeoutMs = Number(env.DELTA_TOOL_TIMEOUT_MS ?? 120_000); // per-tool default; 0 unbounded
   // Inline cap before spill — 20k matches the old per-builtin elide, so the token budget is
   // unchanged; what's new is the full output now survives in a re-readable spill file.
-  const toolResultCap = Number(env.DELTA_TOOL_RESULT_MAX_BYTES ?? 20_000);
+  // Clamped, not just parsed: 0 / negative / NaN previously flowed straight into slice arithmetic
+  // in every consumer. A cap below the floor cannot express even a bounded marker or a pointer
+  // sentence, so it is not a smaller budget, it is a broken one (codex).
+  const CAP_FLOOR = 512;
+  const rawResultCap = Number(env.DELTA_TOOL_RESULT_MAX_BYTES ?? 20_000);
+  const toolResultCap =
+    Number.isFinite(rawResultCap) && rawResultCap >= CAP_FLOOR ? rawResultCap : 20_000;
+  // Ceiling on a SUCCEEDED call's stored arguments (0.2.12). Lower than the result cap on purpose:
+  // a result is read once by the next turn, while arguments are replayed on EVERY turn until
+  // compaction, so they are worth more per byte. 4KB also has to sit below the reported case —
+  // Aperture handed over a 143,905-char artifact in ~12.4KB chunks, and a 20KB cap would have
+  // elided none of it. Nothing an agent types by hand reaches 4KB; what does is a banked payload.
+  // Number.isFinite, not Number(): a typo'd env var yields NaN, and every `<=` against NaN is
+  // false, which would elide EVERYTHING (codex P2). 0 disables.
+  // OPT-IN for its first cycle (default 0 = off). The rail itself is sound and measured, but the
+  // guard that stops a model echoing the marker back is new, was written in response to a live
+  // data-loss bug, and cannot be proven complete against arbitrary MCP argument schemas. A
+  // consumer who wants the win turns it on knowingly and canaries it; nobody else's transcripts
+  // change on upgrade. Every other fix in this release is unconditional.
+  // 0 disables entirely; anything else must clear the floor, so the root marker can always fit
+  // inside the bound it promises.
+  const rawArgCap = Number(env.DELTA_TOOL_ARG_MAX_BYTES ?? 0);
+  const toolArgCap =
+    rawArgCap === 0 ? 0 : Number.isFinite(rawArgCap) && rawArgCap >= CAP_FLOOR ? rawArgCap : 4_096;
   const leaseTtl = Number(env.DELTA_LEASE_TTL_MS ?? 30_000);
   const provider: ProviderConfig = {
     baseUrl: env.MODEL_BASE_URL ?? "https://openrouter.ai/api/v1",
@@ -285,9 +312,37 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     // ≥200k model; raise for performance up to `model_window − max_output`, lower for cost.
     // Validated to a finite positive integer — NaN/Inf would silently DISABLE the gate (every
     // comparison false), a negative would force pathological compaction (codex).
+    // S6 (0.2.13): DERIVE the ceiling from what the models can actually take, and demote the env
+    // var from the only input to an override. A hand-set number that disagrees with the model is
+    // silent in BOTH directions — too low burns money on needless compaction (Aperture ran a 200k
+    // ceiling against a 207-245k working set), too high turns compaction into overflow.
     compactAtTokens: (() => {
+      const models = [...new Set(providers.flatMap((p) => p.models))];
       const n = Number(env.DELTA_COMPACT_AT_TOKENS);
-      return Number.isFinite(n) && n > 0 ? Math.floor(n) : 120_000;
+      // Build the table from the INJECTED env, not `process.env`. `pricing.ts` freezes its module
+      // table at import time, so an embedder calling `loadConfig({...})` with its own
+      // DELTA_MODEL_PRICES would have derived the ceiling from a table that never saw it (codex).
+      // Only re-parse when the injected value actually differs from the one the module already
+      // read, so ordinary boot does the work once and a malformed JSON warns once, not twice.
+      const table =
+        env.DELTA_MODEL_PRICES === process.env.DELTA_MODEL_PRICES
+          ? undefined
+          : parsePrices(env.DELTA_MODEL_PRICES);
+      const derived = deriveContextCeiling(models, 120_000, table);
+      if (!(Number.isFinite(n) && n > 0)) return derived ?? 120_000;
+      // Clamp an override that exceeds what the cascade can survive, and say so once at boot. The
+      // operator asked for something the model cannot do; obeying silently is how compaction stops
+      // being compaction. Protects the OVERRIDE only — a wrong `window` in the table still
+      // overflows, and only the post-provider retry guards that.
+      const ceiling = maxSafeCeiling(models, table);
+      const want = Math.floor(n);
+      if (ceiling !== null && want > ceiling) {
+        console.error(
+          `delta: DELTA_COMPACT_AT_TOKENS=${want} exceeds the smallest configured model's usable window (${ceiling}) — clamped. Above it the engine overflows instead of compacting.`,
+        );
+        return ceiling;
+      }
+      return want;
     })(),
     // Task-start hydration (§E) — read tools called at task start. NEUTRAL by default
     // (a product names its own reads); empty = the agent hydrates nothing.
@@ -327,6 +382,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     streamIdleMs,
     toolTimeoutMs,
     toolResultCap,
+    toolArgCap,
     // Auxiliary-call model (Sprint 2): compaction summaries, reflection, eval_n judging are
     // summarize/pick tasks — haiku does them at 1/2–1/5 the price. DELTA_UTILITY_MODEL=""
     // disables the lane. Falls back to the main cascade per-call on any failure.

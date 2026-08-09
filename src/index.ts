@@ -88,6 +88,7 @@ function buildDeps(cfg: Config, dbPath: string): Deps {
     compactAtTokens: cfg.compactAtTokens,
     toolTimeoutMs: cfg.toolTimeoutMs,
     toolResultCap: cfg.toolResultCap,
+    toolArgCap: cfg.toolArgCap,
     hydrateTools: cfg.hydrateTools,
     ...(cfg.hydrateSearchTool ? { hydrateSearchTool: cfg.hydrateSearchTool } : {}),
     reflect: cfg.reflect,
@@ -356,6 +357,7 @@ try {
     // Cockpit (spec §4): compiled into every binary. The inspect token is a DISTINCT,
     // higher privilege than driving runs; unset ⇒ /v1/dev/* is loopback-only.
     ...(process.env.DELTA_INSPECT_TOKEN ? { inspectToken: process.env.DELTA_INSPECT_TOKEN } : {}),
+    captureCalls: process.env.DELTA_CAPTURE_CALLS === "1",
     ...(process.env.DELTA_BIND ? { hostname: process.env.DELTA_BIND } : {}),
     ...(process.env.DELTA_INSPECT === "off" ? { inspectDisabled: true } : {}),
     ...(process.env.DELTA_INSPECT_WRITE === "1" ? { inspectWrite: true } : {}),

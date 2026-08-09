@@ -10,7 +10,7 @@
 import type { Database } from "bun:sqlite";
 import { DefaultCuratedAdapter, SkillRegistryAdapter } from "./adapter-defaults";
 import { type CapabilityAdapter, type CuratedAdapter, renderSkillIndex } from "./adapters";
-import type { Events, Spine } from "./events";
+import { type Events, emitUtilityCall, type Spine } from "./events";
 import { type ArtifactKind, type Audience, remember } from "./memory";
 import { adapterBinding, drainOnce } from "./promote";
 import type { ChatMsg, ChatRequest, ModelResult, Usage } from "./provider";
@@ -186,6 +186,8 @@ export async function reflect(
     ],
     maxTokens: REFLECT_MAX_TOKENS,
   });
+  // S3: report the reflection call. The emitter no-ops on a failure branch, which carries no usage.
+  emitUtilityCall(deps.events, spine, "reflection", result);
   if (!result.ok) return null;
   // Reflection is a real model call — fold its usage into the run so its spend is
   // visible and accounted, not invisible post-budget cost.

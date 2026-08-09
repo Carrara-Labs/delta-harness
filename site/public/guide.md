@@ -1342,6 +1342,35 @@ The context window is one dial:
 DELTA_COMPACT_AT_TOKENS=120000
 ```
 
+### Bounding what the model writes (0.2.12, opt-in)
+
+Tool *results* have always been capped on arrival and capped again at compaction. A tool call's
+**arguments** never were: they live on the assistant message and are replayed on every later turn,
+so an agent that files large results page by page pays, forever, to re-read text it already banked.
+
+`DELTA_TOOL_ARG_MAX_BYTES` bounds them. It applies as both the per-value threshold and the total
+ceiling, so the invariant is simply "a stored tool call's arguments never exceed N bytes".
+
+```dotenv
+# 0 (the default) disables it entirely — this is also the rollback lever.
+# 4096 is the recommended value if you enable it.
+DELTA_TOOL_ARG_MAX_BYTES=4096
+```
+
+Only a call that **succeeded** is touched, and only its largest values, largest first, until the
+object fits. The keys and every small field survive, so `send_email` keeps `to` and `subject` and
+loses only `body` — the model can still see *what* it did, which is what stops duplicate side
+effects. The full arguments stay in the execution journal under that table's existing retention, and
+`recall` can list them, search inside them, and read one back.
+
+**It ships opt-in for its first cycle.** The rail is measured and sound, but the guard that stops a
+model copying the placeholder back into a later call was written in response to a live data-loss bug
+and cannot be proven complete against arbitrary MCP argument schemas. Turn it on deliberately, on
+one lane, and watch compaction count and post-compaction input rather than steady-state cache hit.
+
+`recall` gains two modes alongside its keyword search: calling it with no arguments lists what has
+been dropped, and passing `artifact: {run_seq, call_id, field}` reads one back a page at a time.
+
 Tight (60,000–90,000) is cheaper and lower latency and compacts more often. The default 120,000 is safe on any model with a 200,000-token window. Large (160,000+) keeps more continuity and performance and is safe to run because compaction is restorable — raise it only up to the model's real window minus output headroom.
 
 ### The summary preserves facts across many generations

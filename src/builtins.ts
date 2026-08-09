@@ -204,6 +204,7 @@ const SUBAGENT_CONFIG_ENV = new Set([
   "DELTA_STREAM_IDLE_MS",
   "DELTA_TOOL_TIMEOUT_MS",
   "DELTA_TOOL_RESULT_MAX_BYTES",
+  "DELTA_TOOL_ARG_MAX_BYTES",
 ]);
 
 /** Build a default-deny environment for a model-directed child process. */
@@ -547,18 +548,81 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
     name: "recall",
     readonly: true,
     description:
-      "Search this conversation's earlier turns — including ones compacted out of the live window — for text/results you saw before. Returns matching snippets + the disk path of any spilled result. Use to pull back context that scrolled off before you finish.",
+      "Look back at THIS conversation. Three ways: pass `query` to search earlier turns (including ones compacted out of the live window) for text you saw before; pass nothing to LIST the large values you sent earlier that have since been dropped from context; pass `artifact` to read one of those values back in full. Use it to reconcile what you have already done without re-doing it.",
     parameters: {
       type: "object",
       properties: {
         query: { type: "string", description: "keywords to search earlier turns for" },
         limit: { type: "number", description: "max hits, 1-25 (default 10)" },
+        artifact: {
+          type: "object",
+          description:
+            "read one earlier large value back, as listed by calling this tool with no arguments",
+          properties: {
+            run_seq: { type: "number" },
+            call_id: { type: "string" },
+            field: {
+              type: ["string", "null"],
+              description: "the elided field, or null for a whole-object artifact",
+            },
+          },
+          required: ["run_seq", "call_id", "field"],
+        },
+        offset: { type: "number", description: "character offset when paging a long artifact" },
       },
-      required: ["query"],
     },
     idempotent: true,
     execute: async (args, ctx) => {
-      const hits = ctx.history?.search(String(args.query ?? ""), Number(args.limit) || 10) ?? [];
+      const limit = Number(args.limit) || 10;
+      // Read one archived value back. A structured reference, not a delimited string: provider call
+      // ids and JSON field names can both contain colons (codex P1).
+      const ref = args.artifact as
+        | { run_seq?: unknown; call_id?: unknown; field?: unknown }
+        | undefined;
+      if (args.artifact !== undefined && (typeof ref !== "object" || ref === null))
+        return "[tool error] artifact must be an object {run_seq, call_id, field} — list them by calling recall with no arguments";
+      if (ref && typeof ref === "object") {
+        if (
+          typeof ref.run_seq !== "number" ||
+          typeof ref.call_id !== "string" ||
+          !(typeof ref.field === "string" || ref.field === null)
+        )
+          return "[tool error] artifact needs run_seq (number), call_id (string) and field (string, or null for a whole-object artifact) — list them by calling recall with no arguments";
+        const page = ctx.history?.read(
+          { runSeq: ref.run_seq, callId: ref.call_id, field: ref.field as string | null },
+          Number(args.offset) || 0,
+          ctx.resultCap ?? 20_000,
+        );
+        if (!page)
+          return "(no such artifact in this thread — call recall with no arguments to list them)";
+        if (!page.retained)
+          return `(that value is no longer retained — ${page.total} bytes were dropped from local history. It is gone from here; if you still need it, get it from wherever you sent it.)`;
+        const more = page.more
+          ? `\n\n… ${page.total - page.offset - page.text.length} chars remain; call again with offset ${page.offset + page.text.length} …`
+          : "";
+        const body = `[${ref.field ?? "(whole argument object)"}, chars ${page.offset}-${page.offset + page.text.length} of ${page.total}]\n${page.text}${more}`;
+        // Hard-bound the ENTIRE result. Sizing only the slice left the framing, the pagination
+        // line and a long field name outside the budget, so a small configured cap still produced
+        // an over-cap result and `capAndSpill` wrote a file into a durable session (codex P1).
+        const cap = ctx.resultCap ?? 20_000;
+        return body.length <= cap ? body : body.slice(0, Math.max(1, cap - 1));
+      }
+      // No query → enumerate what has been dropped, so "what have I filed, and how much" is
+      // answerable without guessing a keyword.
+      const query = String(args.query ?? "").trim();
+      if (!query) {
+        const items = ctx.history?.artifacts(Math.min(Math.max(limit, 1), 25)) ?? [];
+        if (items.length === 0)
+          return "(nothing from this thread has been dropped from context yet)";
+        return [
+          "Large values you sent earlier that are no longer in context. Read one back with recall({artifact:{run_seq, call_id, field}}).",
+          ...items.map(
+            (a) =>
+              `- ${a.tool}.${a.field ?? "(whole argument object — pass field: null)"} — ${a.bytes} bytes · run_seq ${a.runSeq ?? "?"} · call_id ${a.callId}`,
+          ),
+        ].join("\n");
+      }
+      const hits = ctx.history?.search(query, limit) ?? [];
       if (hits.length === 0) return "(nothing earlier in this thread matches)";
       return hits
         .map((h) => {
@@ -764,35 +828,55 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
 
   // One sub-agent run (a oneshot child of this binary). Shared by spawn_subagent
   // and eval_n; returns the child's final answer or a [tool error] value.
-  const runSubagent = async (task: string, ctx: ToolCtx, budgetDivisor = 1): Promise<string> => {
-    const remaining = ctx.remainingBudget?.();
-    const proc = Bun.spawn([...cfg.selfCmd, "run", task], {
-      cwd: process.cwd(),
-      stdout: "pipe",
-      stderr: "pipe",
-      env: {
-        ...childEnv("subagent"),
-        DELTA_SUBAGENT_DEPTH: String(cfg.subagentDepth + 1),
-        DELTA_WORKSPACE: ctx.workspace,
-        ...(remaining
-          ? {
-              DELTA_MAX_TOKENS: String(
-                Math.max(0, Math.floor(remaining.maxTokens / budgetDivisor)),
-              ),
-              DELTA_MAX_COST_USD: String(Math.max(0, remaining.maxCostUsd / budgetDivisor)),
-            }
-          : {}),
-      },
-      ...(ctx.signal ? { signal: ctx.signal } : {}),
-    });
-    const [out, err, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    chargeReportedUsage(err, ctx);
-    if (code !== 0) return `[tool error] subagent exited ${code}: ${clip(err || out)}`;
-    return out.trim() || "(no output)";
+  const runSubagent = async (
+    task: string,
+    ctx: ToolCtx,
+    budgetDivisor = 1,
+    /** A slice already claimed by the caller (eval_n reserves ONE batch share and splits it), so
+     * the candidates get EQUAL budgets instead of a geometric 33/22/15 decay that would bias the
+     * judge toward whichever attempt claimed first (codex P2). */
+    preclaimed?: { maxTokens: number; maxCostUsd: number },
+  ): Promise<string> => {
+    // CLAIM the child's slice up front rather than reading the remainder (0.2.12). The remainder is
+    // derived from the parent's usage, which only moves when a child EXITS and reports back, so
+    // three children launched in one turn each saw the FULL remaining budget and the run could
+    // spend 3x its ceiling. `eval_n` divides by N because it knows N; `spawn_subagent` fans out
+    // under a parallel instruction and cannot, so both now draw from one live pool.
+    // A lone spawn takes half of what is unreserved: enough to do real work, and still leaving room
+    // for the parent to finish and for a sibling to run.
+    const claim = preclaimed ?? ctx.reserveBudget?.(budgetDivisor > 1 ? 1 / budgetDivisor : 0.5);
+    try {
+      const proc = Bun.spawn([...cfg.selfCmd, "run", task], {
+        cwd: process.cwd(),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...childEnv("subagent"),
+          DELTA_SUBAGENT_DEPTH: String(cfg.subagentDepth + 1),
+          DELTA_WORKSPACE: ctx.workspace,
+          ...(claim
+            ? {
+                DELTA_MAX_TOKENS: String(claim.maxTokens),
+                DELTA_MAX_COST_USD: String(claim.maxCostUsd),
+              }
+            : {}),
+        },
+        ...(ctx.signal ? { signal: ctx.signal } : {}),
+      });
+      const [out, err, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      chargeReportedUsage(err, ctx);
+      if (code !== 0) return `[tool error] subagent exited ${code}: ${clip(err || out)}`;
+      return out.trim() || "(no output)";
+    } finally {
+      // Released even on a throw/abort: a leaked reservation would shrink the run's own budget for
+      // the rest of the turn. The child's actual spend is charged separately above. A PRE-claimed
+      // slice belongs to the caller, which releases it once for the whole batch.
+      if (!preclaimed) (claim as { release?: () => void } | undefined)?.release?.();
+    }
   };
 
   if (cfg.subagentDepth < 1) {
@@ -855,16 +939,29 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
           return "[tool error] eval_n needs a model for judging (no provider in context)";
         const n = Math.max(2, Math.min(Number(args.n) || 3, 5));
         const task = String(args.task);
-        // Fan out N independent attempts. Vary each so they don't collapse to one.
-        const variants = await Promise.all(
-          Array.from({ length: n }, (_, i) =>
-            runSubagent(
-              `${task}\n\n(Independent attempt ${i + 1} of ${n} — take your own approach.)`,
-              ctx,
-              n,
+        // ONE claim for the whole batch, split equally. Claiming per candidate would hand each a
+        // fraction of a shrinking pool, so attempt 1 got ~33%, attempt 2 ~22%, attempt 3 ~15% —
+        // unequal attempts make the judge's comparison unfair (codex P2).
+        const batch = ctx.reserveBudget?.(n / (n + 1));
+        const share = batch
+          ? { maxTokens: Math.floor(batch.maxTokens / n), maxCostUsd: batch.maxCostUsd / n }
+          : undefined;
+        let variants: string[];
+        try {
+          // Fan out N independent attempts. Vary each so they don't collapse to one.
+          variants = await Promise.all(
+            Array.from({ length: n }, (_, i) =>
+              runSubagent(
+                `${task}\n\n(Independent attempt ${i + 1} of ${n} — take your own approach.)`,
+                ctx,
+                n,
+                share,
+              ),
             ),
-          ),
-        );
+          );
+        } finally {
+          batch?.release();
+        }
         const valid = variants
           .map((v, i) => ({ i, v }))
           .filter((c) => !c.v.startsWith("[tool error]"));
@@ -877,7 +974,8 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
         const candidates = valid
           .map((c) => `### Candidate ${c.i}\n${c.v.slice(0, 8000)}`)
           .join("\n\n");
-        const judged = await (ctx.chatUtility ?? ctx.chat)({
+        const judgeVia = ctx.chatUtility ?? ctx.chat;
+        const judged = await judgeVia({
           messages: [
             {
               role: "system",
@@ -887,6 +985,10 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
           ],
           maxTokens: 400,
         });
+        // S3: report the judge call. NOTE this call's usage is still never CHARGED to the run —
+        // a pre-existing budget defect, filed separately rather than folded into a telemetry slice
+        // so it does not ship as an invisible behaviour change (codex).
+        ctx.onUtilityCall?.("eval_judge", judged);
         let winnerIdx = valid[0]?.i ?? 0;
         if (judged.ok) {
           try {

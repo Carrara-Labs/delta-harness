@@ -118,12 +118,21 @@ type Outcome = { task: string; ok: boolean; text: string; usage: Usage };
 /** One bounded sub-agent loop (in-memory), with the parent's tools. Never throws — always returns an
  * Outcome carrying whatever usage was spent, so the parent charges every child exactly once. Starts
  * resident on `pinned` and self-serves the rest via `search_tools`, like the parent's own loop. */
+/** The most recent assistant text in a child's transcript, for a partial return. */
+function lastAssistantText(messages: ChatMsg[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role === "assistant" && typeof m.content === "string" && m.content) return m.content;
+  }
+  return "";
+}
+
 async function researchOne(
   task: string,
   child: ChildConfig,
   chat: (req: ChatRequest) => Promise<ModelResult>,
   baseCtx: ToolCtx,
-  opts: { maxTokens: number; signal?: AbortSignal },
+  opts: { maxTokens: number; maxCostUsd?: number; signal?: AbortSignal },
 ): Promise<Outcome> {
   const usage = zero();
   const universe = child.tools;
@@ -169,6 +178,21 @@ async function researchOne(
       if (opts.signal?.aborted) return { task, ok: false, text: "[research cancelled]", usage };
       const tools = callable();
       const remaining = opts.maxTokens - billed(usage);
+      // The DOLLAR half of the claim, which was reserved and then never enforced: only maxTokens
+      // reached the child, so a run with tokens left but almost no dollars left could still admit
+      // several children and overspend the claim before any usage was charged back (codex P1).
+      const overCost = opts.maxCostUsd !== undefined && usage.costUsd >= opts.maxCostUsd;
+      // Over the DOLLAR claim is a hard stop, not a "drop tools and answer": that forcing call is
+      // itself billable, and codex measured a $0.075 claim spending $0.20 across two calls. Tokens
+      // keep the softer treatment — they are the run's own soft-budget model — but dollars are the
+      // ceiling an operator actually set.
+      if (overCost)
+        return {
+          task,
+          ok: true,
+          text: lastAssistantText(messages) || "[research stopped: cost claim exhausted]",
+          usage,
+        };
       const overBudget = remaining <= 0 || toolCalls >= MAX_TOOLCALLS_TOTAL;
       const res = await chat({
         messages,
@@ -176,6 +200,10 @@ async function researchOne(
         maxTokens: Math.max(256, Math.min(OUTPUT_CAP, remaining)),
         ...(opts.signal ? { signal: opts.signal } : {}),
       });
+      // S3: report EVERY child call, not the batch. The aggregate charge-back (`chargeReportedUsage`
+      // below) is precisely what hides a fan-out, so per-call is the only emission that answers
+      // "how many calls did this cost and on which lane".
+      baseCtx.onUtilityCall?.("research", res);
       if (!res.ok) {
         if (res.aborted) return { task, ok: false, text: "[research cancelled]", usage };
         return { task, ok: false, text: `[research failed: ${res.error}]`, usage };
@@ -283,12 +311,21 @@ export async function runResearch(
   // same way), each child targets ~remaining/(N+1), so the batch stays near the parent's remaining
   // rather than N× over it. Reject a batch too small to do useful work — or with no dollar budget
   // left — rather than launching zero-budget children (codex).
-  const rem = ctx.remainingBudget?.() ?? { maxTokens: 200_000, maxCostUsd: 10 };
-  const perChildTokens = Math.floor(rem.maxTokens / (picked.length + 1));
-  if (rem.maxCostUsd <= 0)
+  // 0.2.12: CLAIM the batch's share from the run's live pool rather than reading the gross
+  // remainder. Reading it meant a turn holding both a research batch and a spawn_subagent could
+  // admit ~75% + 50% of the SAME remainder before either charged usage, so the ceiling was still
+  // exceedable (codex P1). N/(N+1) preserves the parent-synthesis reserve this already had.
+  const claim = ctx.reserveBudget?.(picked.length / (picked.length + 1));
+  const rem = claim ?? ctx.remainingBudget?.() ?? { maxTokens: 200_000, maxCostUsd: 10 };
+  const perChildTokens = Math.floor(rem.maxTokens / picked.length);
+  if (rem.maxCostUsd <= 0) {
+    claim?.release();
     return "[tool error] no cost budget left for research — the run is at its dollar ceiling";
-  if (perChildTokens < MIN_CHILD_TOKENS)
+  }
+  if (perChildTokens < MIN_CHILD_TOKENS) {
+    claim?.release();
     return `[tool error] not enough token budget left for research (${rem.maxTokens} remaining) — narrow the task or run fewer`;
+  }
 
   // The child ctx carries a READ-ONLY slice of the parent's capabilities (see childTools):
   // no delegation (no recursion), no parent-thread-bound hands (history/todo → a child is
@@ -299,19 +336,34 @@ export async function runResearch(
   const baseCtx: ToolCtx = {
     workspace: ctx.workspace,
     activate: () => {},
+    // S3: the child context is built field-by-field, so an omitted callback silently disables
+    // research telemetry entirely while every unit test still passes (codex P1 — it was omitted).
+    // Research is the ONE site where per-call emission matters most: the fan-out is charged as a
+    // single aggregate, so the batch is exactly what the aggregate hides.
+    ...(ctx.onUtilityCall ? { onUtilityCall: ctx.onUtilityCall } : {}),
     ...(ctx.authToken ? { authToken: ctx.authToken } : {}),
     ...(ctx.signal ? { signal: ctx.signal } : {}),
     ...(ctx.vision !== undefined ? { vision: ctx.vision } : {}),
   };
 
-  const settled = await Promise.allSettled(
-    picked.map((task) =>
-      researchOne(task, child, chat, baseCtx, {
-        maxTokens: perChildTokens,
-        ...(ctx.signal ? { signal: ctx.signal } : {}),
-      }),
-    ),
-  );
+  let settled: PromiseSettledResult<Awaited<ReturnType<typeof researchOne>>>[];
+  try {
+    settled = await Promise.allSettled(
+      picked.map((task) =>
+        researchOne(task, child, chat, baseCtx, {
+          maxTokens: perChildTokens,
+          // The DOLLAR half of the claim. Reserving it and then not passing it meant the child's
+          // loop never checked cost, so the claim was decorative (codex).
+          maxCostUsd: rem.maxCostUsd / picked.length,
+          ...(ctx.signal ? { signal: ctx.signal } : {}),
+        }),
+      ),
+    );
+  } finally {
+    // The children's real spend is charged below; holding the claim past that would shrink the
+    // parent's own budget for the rest of the turn.
+    claim?.release();
+  }
 
   const total = zero();
   const blocks: string[] = [];

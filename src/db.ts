@@ -9,10 +9,14 @@
 
 import { Database } from "bun:sqlite";
 import type { ChatMsg } from "./provider";
-import type { RecallHit, TodoItem, TodoStatus } from "./tools";
+import { ELIDED_KEY, type RecallHit, type TodoItem, type TodoStatus } from "./tools";
+
+/** One tool call as stored on an assistant message row. */
+type AssistantToolCall = { id: string; function: { name: string; arguments: string } };
+
 import { HARNESS_VERSION } from "./version";
 
-const MIGRATIONS: string[] = [
+export const MIGRATIONS: string[] = [
   `
   CREATE TABLE sessions (
     id TEXT PRIMARY KEY,
@@ -290,6 +294,14 @@ const MIGRATIONS: string[] = [
     updated_at INTEGER NOT NULL
   );
   `,
+  // 0.2.12: the artifact-manifest scan needs a bounded id range within a session, and so does its
+  // floor query. `messages_session(session_id, active, id)` cannot serve `MAX(id)` or an ORDER BY
+  // without a temp b-tree, so a long durable session paid a full-range scan to compute the floor
+  // before the bounded scan even began (codex P1). IF NOT EXISTS so replaying migrations over a
+  // database that already has it is a no-op.
+  `
+  CREATE INDEX IF NOT EXISTS messages_session_id ON messages(session_id, id);
+  `,
 ];
 
 export function openDb(path: string): Database {
@@ -304,10 +316,21 @@ export function openDb(path: string): Database {
   // guards against. Refuse to open; an upgrade is forward-only, a rollback restores a
   // pre-upgrade snapshot (see the guide at https://deltaharness.dev).
   if (version > MIGRATIONS.length) {
+    // The refusal is correct and stays. What was missing is what the operator does NEXT: a lane
+    // rolled back to an older image crash-loops to its restart cap, and the obvious recovery —
+    // destroy the volume — also destroys the agent's LEARNED DELTA.md, which is a workspace file
+    // and not in this database at all. Aperture hit exactly this rolling Speed Lab back from
+    // 0.2.12 to 0.2.11. So say what is salvageable before someone reaches for the destructive fix.
     throw new Error(
       `delta: database schema v${version} is newer than this binary supports (v${MIGRATIONS.length}). ` +
-        `Refusing to open — a downgrade would corrupt state. Run a daemon at or above the version ` +
-        `that wrote this database, or restore a compatible backup.`,
+        `Refusing to open — a downgrade would corrupt state.\n` +
+        `  Fix: run a daemon at or above the version that wrote this database. An upgrade is ` +
+        `one-way; roll FORWARD, not back.\n` +
+        `  Before destroying this volume: your workspace is NOT in this database and is intact on ` +
+        `disk. Copy the WHOLE directory at $DELTA_WORKSPACE (the container default is ` +
+        `/data/workspace, not /data) off first — it holds DELTA.md, the agent's learned self-file. ` +
+        `Recreating the volume loses everything the agent has learned, permanently. Verify the ` +
+        `copy is non-empty before you destroy anything.`,
     );
   }
   for (let v = version; v < MIGRATIONS.length; v++) {
@@ -404,16 +427,25 @@ export function searchHistory(
   }>;
   const ql = q.toLowerCase();
   const seen = new Map<string, RecallHit>();
+  /** (run_id, call_id) pairs a transcript hit already covers, so the archive pass can dedupe. */
+  const matched = new Set<string>();
   for (const row of rows) {
-    let m: ChatMsg;
+    let m: ChatMsg & { tool_calls?: AssistantToolCall[] };
     try {
-      m = JSON.parse(row.msg) as ChatMsg;
+      m = JSON.parse(row.msg) as ChatMsg & { tool_calls?: AssistantToolCall[] };
     } catch {
       continue;
     }
     const text = msgText(m);
     const idx = text.toLowerCase().indexOf(ql);
     if (idx < 0) continue; // matched JSON scaffolding, not readable content — skip
+    if (m.role === "tool")
+      matched.add(`${row.run_id}:${(m as { tool_call_id: string }).tool_call_id}`);
+    // Only the call whose VISIBLE arguments carry the term is covered by this hit. Marking every
+    // call on a multi-call assistant would let a match in call A suppress the archived body of
+    // call B, which is a silent loss rather than a dedupe (codex P1).
+    for (const c of m.tool_calls ?? [])
+      if (c.function.arguments.toLowerCase().includes(ql)) matched.add(`${row.run_id}:${c.id}`);
     const key =
       m.role === "tool"
         ? `tool:${row.run_id}:${(m as { tool_call_id: string }).tool_call_id}`
@@ -439,7 +471,244 @@ export function searchHistory(
       ...(spillPath ? { spillPath } : {}),
     });
   }
-  return [...seen.values()].sort((a, b) => Number(a.active) - Number(b.active)).slice(0, n);
+  const transcript = [...seen.values()]
+    .sort((a, b) => Number(a.active) - Number(b.active))
+    .slice(0, n);
+  // Fill any REMAINING slots from the archive, never the other way round: a run with many elided
+  // payloads must not crowd unrelated live or compacted hits out of the limit (codex P1).
+  if (transcript.length >= n) return transcript;
+  return [...transcript, ...searchArchive(db, sessionId, q, n - transcript.length, matched)];
+}
+
+/** Keyword-search the bodies that S1 elided out of the window. Without this, eliding an argument
+ * would DELETE a capability: `msgText` renders assistant calls as `name(arguments)`, so today
+ * `recall("ABC-123")` finds an identifier inside a stored payload, and an agent that can no longer
+ * find what it filed is worse than one that pays to remember it.
+ *
+ * Bounded by construction: the candidate set comes from the manifest scan (a small explicit list of
+ * references), and each body is then fetched by PRIMARY KEY. Journal growth cannot slow this down,
+ * and nothing ever LIKEs `journal.args`. */
+function searchArchive(
+  db: Database,
+  sessionId: string,
+  query: string,
+  limit: number,
+  matched: Set<string>,
+): RecallHit[] {
+  const ql = query.toLowerCase();
+  const out: RecallHit[] = [];
+  const emitted = new Set<string>(); // one hit per (run, call): two elided fields are one finding
+  for (const ref of listArtifacts(db, sessionId)) {
+    if (out.length >= limit) break;
+    if (emitted.has(`${ref.runId}:${ref.callId}`)) continue;
+    // Deduped against the transcript by (run_id, call_id): a term visible in a SURVIVING field of
+    // the same call already produced a live hit, and one call should yield one hit.
+    if (matched.has(`${ref.runId}:${ref.callId}`)) continue;
+    const row = db
+      .query("SELECT args FROM journal WHERE run_id = ? AND call_id = ?")
+      .get(ref.runId, ref.callId) as { args: string } | null;
+    if (!row) continue; // body pruned by the journal's ordinary retention — nothing to search
+    let value: unknown;
+    try {
+      const parsed = JSON.parse(row.args) as Record<string, unknown>;
+      value = ref.field === null ? parsed : parsed[ref.field];
+    } catch {
+      continue;
+    }
+    const text = typeof value === "string" ? value : (JSON.stringify(value) ?? "");
+    const idx = text.toLowerCase().indexOf(ql);
+    if (idx < 0) continue;
+    emitted.add(`${ref.runId}:${ref.callId}`);
+    const start = Math.max(0, idx - 400);
+    const end = Math.min(text.length, idx + ql.length + 400);
+    out.push({
+      role: "archived",
+      runSeq: ref.runSeq,
+      active: false,
+      snippet:
+        `[${ref.tool}.${ref.field}, ${ref.bytes} bytes, dropped from context — ` +
+        `read it back with recall({artifact:{run_seq:${ref.runSeq},call_id:${JSON.stringify(ref.callId)},field:${JSON.stringify(ref.field)}}})]\n` +
+        `${start > 0 ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`,
+    });
+  }
+  return out;
+}
+
+// --- 0.2.12: the elided-argument archive ---
+//
+// S1 replaces an over-budget tool-call argument value with a ~60-byte marker in the message row and
+// leaves the full arguments in `journal.args`. That split is deliberate: the MANIFEST (what did I
+// file, and how much) is small enough to keep for the life of the message, while the BODY is large,
+// rarely needed, and stays under the journal's EXISTING retention. Nothing here pins a row or adds
+// a retention exception — durable recall, no session expiry and a hard storage ceiling cannot all
+// be true, so the permanent thing is the one that costs ~60 bytes.
+//
+// Discovery runs off the manifest, never off a filesystem path parsed out of model-visible prose:
+// scan the same bounded id window `searchHistory` uses for marker-bearing rows, which yields a
+// small explicit set of (run_id, call_id, field) references, then hit `journal` by PRIMARY KEY.
+// Journal growth therefore cannot slow this down.
+
+/** One elided argument value, as named by the manifest in the transcript. */
+export type ArtifactRef = {
+  runId: string;
+  runSeq: number | null;
+  callId: string;
+  tool: string;
+  /** The elided key, or null for a whole-object collapse. */
+  field: string | null;
+  bytes: number;
+};
+
+/** How many distinct CALLS one manifest scan will surface. Bounding raw field references instead
+ * let a single newer call with 200 elided fields hide every older call from the archive search
+ * (codex P1) — the limit has to be on the thing the search iterates. */
+const ARTIFACT_MAX_CALLS = 200;
+
+/** Default bytes of an archived body per `recall` read. The CALLER passes the run's real result cap
+ * so the page can never itself trip `capAndSpill` and write a spill file into a durable session
+ * (codex P1) — a fixed 8KB was wrong the moment an operator set a smaller cap. The agent pages
+ * through with `offset` instead. */
+export const ARTIFACT_CHUNK = 8_000;
+
+/** The manifest for THIS session: every elided argument value still named in the transcript,
+ * newest first. Deduped by (run_id, call_id, field) so compaction's re-inserted tail copies count
+ * once. Inactive rows are included — compaction deactivates originals and a failed finalize only
+ * deactivates, and the agent's own record of what it filed must survive both. */
+export function listArtifacts(
+  db: Database,
+  sessionId: string,
+  limit = ARTIFACT_MAX_CALLS,
+): ArtifactRef[] {
+  const { floor } = db
+    .query("SELECT COALESCE(MAX(id), 0) - ? AS floor FROM messages WHERE session_id = ?")
+    .get(SCAN_WINDOW, sessionId) as { floor: number };
+  // `_` is a LIKE wildcard — escape it, or this matches far more than the marker. The id range and
+  // the floor above both ride `messages_session_id(session_id, id)`, added for exactly this.
+  const rows = db
+    .query(
+      `SELECT m.msg AS msg, m.run_id AS run_id, r.seq AS seq
+         FROM messages m JOIN runs r ON r.id = m.run_id
+        WHERE m.session_id = ? AND m.id > ? AND m.msg LIKE ? ESCAPE '\\'
+        ORDER BY m.id DESC`,
+    )
+    .all(sessionId, floor, `%\\${ELIDED_KEY}%`) as Array<{
+    msg: string;
+    run_id: string;
+    seq: number;
+  }>;
+  const seen = new Map<string, ArtifactRef>();
+  const calls = new Set<string>(); // the limit counts CALLS, not fields
+  for (const row of rows) {
+    if (calls.size >= limit) break;
+    let m: ChatMsg & { tool_calls?: AssistantToolCall[] };
+    try {
+      m = JSON.parse(row.msg) as ChatMsg & { tool_calls?: AssistantToolCall[] };
+    } catch {
+      continue;
+    }
+    for (const call of m.tool_calls ?? []) {
+      let args: Record<string, unknown>;
+      try {
+        args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      if (!args || typeof args !== "object" || Array.isArray(args)) continue;
+      // The whole-object collapse: `elideArgs` returns ONE root marker when the key count alone
+      // blows the cap. Without this it would be invisible to enumeration, search and readback.
+      const callKey = `${row.run_id}:${call.id}`;
+      if (!seen.size || calls.has(callKey) || calls.size < limit) calls.add(callKey);
+      else continue;
+      const rootBytes = elidedBytes(args);
+      if (rootBytes !== null) {
+        const key = JSON.stringify([row.run_id, call.id, null]);
+        if (!seen.has(key))
+          seen.set(key, {
+            runId: row.run_id,
+            runSeq: row.seq ?? null,
+            callId: call.id,
+            tool: call.function.name,
+            field: null, // the whole argument object
+            bytes: rootBytes,
+          });
+        continue;
+      }
+      for (const [field, value] of Object.entries(args)) {
+        const bytes = elidedBytes(value);
+        if (bytes === null) continue;
+        const key = JSON.stringify([row.run_id, call.id, field]); // colons occur in call ids AND field names
+        if (seen.has(key)) continue;
+        seen.set(key, {
+          runId: row.run_id,
+          runSeq: row.seq ?? null,
+          callId: call.id,
+          tool: call.function.name,
+          field,
+          bytes,
+        });
+      }
+    }
+  }
+  return [...seen.values()];
+}
+
+/** The marker's byte count, or null if this value is not one. Shape-checked, not name-checked:
+ * a legitimate argument could contain the key, and readback resolves from the journal anyway, so a
+ * forged marker can only ever produce a phantom manifest entry — never a false body. */
+function elidedBytes(value: unknown): number | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const mark = (value as Record<string, unknown>)[ELIDED_KEY];
+  if (!mark || typeof mark !== "object") return null;
+  const n = (mark as { bytes?: unknown }).bytes;
+  return typeof n === "number" ? n : null;
+}
+
+/** Read one archived value back, a chunk at a time. Session-bound through `journal → runs`, and the
+ * reference must be named by a real manifest entry, so no caller can aim this at another session or
+ * at a call the transcript never made. Returns null when the reference is unknown; returns
+ * `retained: false` when the journal has since pruned the body, which is the honest answer rather
+ * than an empty one — the marker never promised a file, so nothing here can rot into a lie. */
+export function readArtifact(
+  db: Database,
+  sessionId: string,
+  ref: { runSeq: number; callId: string; field: string | null },
+  offset = 0,
+  maxChars = ARTIFACT_CHUNK,
+): { text: string; offset: number; total: number; more: boolean; retained: boolean } | null {
+  const named = listArtifacts(db, sessionId).find(
+    (a) => a.runSeq === ref.runSeq && a.callId === ref.callId && a.field === ref.field,
+  );
+  if (!named) return null;
+  const row = db
+    .query(
+      `SELECT j.args AS args FROM journal j JOIN runs r ON r.id = j.run_id
+        WHERE j.run_id = ? AND j.call_id = ? AND r.session_id = ?`,
+    )
+    .get(named.runId, named.callId, sessionId) as { args: string } | null;
+  if (!row) return { text: "", offset: 0, total: named.bytes, more: false, retained: false };
+  let value: unknown;
+  try {
+    const parsed = JSON.parse(row.args) as Record<string, unknown>;
+    value = ref.field === null ? parsed : parsed[ref.field];
+  } catch {
+    return { text: "", offset: 0, total: named.bytes, more: false, retained: false };
+  }
+  // A marker-shaped value in the JOURNAL means the model itself sent one — nothing was elided here,
+  // so there is no body to hand back and claiming otherwise would be a false artifact.
+  if (value === undefined || elidedBytes(value) !== null)
+    return { text: "", offset: 0, total: named.bytes, more: false, retained: false };
+  const text = typeof value === "string" ? value : (JSON.stringify(value) ?? "");
+  const start = Math.max(0, Math.floor(offset) || 0);
+  // Leave room for the tool's own framing line, which is also counted against the result cap.
+  const room = Math.max(200, Math.min(ARTIFACT_CHUNK, Math.floor(maxChars * 0.6)));
+  const slice = text.slice(start, start + room);
+  return {
+    text: slice,
+    offset: start,
+    total: text.length,
+    more: start + slice.length < text.length,
+    retained: true,
+  };
 }
 
 // --- W3: per-thread working plan (todo) ---

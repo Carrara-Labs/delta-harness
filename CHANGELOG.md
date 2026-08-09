@@ -6,7 +6,85 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
-## [0.2.11] — 2026-08-03
+## [0.2.13] - 2026-08-09
+
+Say what changed. The engine now reports which part of the prompt moved between turns, so a cache
+miss names its own cause. Compaction gets under its own ceiling reliably, and the arguments the
+model itself writes are bounded for the first time.
+
+This release also carries the work prepared as 0.2.12, which was never published. Upgrading from
+0.2.11 is a single one-way step rather than two.
+
+### Upgrade note: this step is one-way
+Two migrations. A lane rolled back to 0.2.11 afterwards will not boot, and recreating the volume to
+recover destroys the agent's learned `DELTA.md`, which lives in the workspace rather than the
+database. Snapshot the workspace and verify the archive before upgrading:
+
+```sh
+fly machine start <machine-id> -a <app>
+fly ssh console -a <app> -C "tar cf - -C /data workspace" > <app>-workspace-$(date +%Y%m%d).tar
+tar tf <app>-workspace-*.tar | head
+```
+
+The workspace is at `/data/workspace`, and a lane that autosuspends must be started first. Full
+procedure in `hosting.md`.
+
+### Changed
+- **Compaction targets a flat budget instead of one derived from its own trigger.** A high ceiling
+  used to produce a retained tail nearly as large as the ceiling, so compaction landed just under
+  budget and re-fired next turn. It now compacts to a fixed target, fires less often, and reliably
+  gets under the limit. **No effect on lanes with a ceiling below roughly 33,000 tokens**, where the
+  previous calculation was already the smaller of the two.
+- **`compaction` events count attempts, not rewrites.** An attempt that ran the summarizer and
+  produced nothing usable was billed and reported nothing. It now emits with `shrank: false` and a
+  reason. **Filter `shrank = true` to reproduce previous counts.**
+- **`model.call` covers the utility model.** Compaction summaries, research fan-out, reflection and
+  `eval_n` judging previously charged the run without emitting anything. **Filter `tier = 'main'`
+  anywhere you count turns.**
+
+### Added
+- **Prefix identity on `model.call`.** `spine_hash` and `tools_hash`, salted per daemon process,
+  alongside `spine_bytes`, `tools_bytes`, `tools_n`, `self_bytes`, `history_bytes` and
+  `ephemeral_bytes`. A miss with a moved hash names the segment that changed; a miss with both
+  stable proves the prefix was intact.
+- **`cache_shortfall_tokens`**, the previous request's gross input minus this call's cache reads.
+  Prefer it to `cache_hit_pct`, which is a ratio whose denominator grows as history is appended and
+  so moves even when caching is perfect. The shortfall's floor equals `ephemeral_bytes` and is
+  structural.
+- **A context ceiling derived from the model.** `pricing.ts` gains an optional `window`;
+  `DELTA_COMPACT_AT_TOKENS` becomes an override, clamped with a boot warning when it exceeds what
+  the smallest model in the cascade supports. An unknown model keeps the 120,000 default.
+- **`tool.breaker`** when a failing tool is quarantined, with the schema bytes withdrawn.
+- **`last_event_ms_ago` on `/v1/busy`** while a run is in flight: how long the daemon has been
+  silent, which is the signal a stall detector needs. Daemon-wide, so use `/v1/tasks/:id/events` for
+  a per-run decision.
+- **`capture_enabled` on `/v1/dev/runs/:id/calls`**, plus an explanation when the result is empty.
+  Request capture requires `DELTA_CAPTURE_CALLS`, which is dev-only and distinct from
+  `DELTA_CAPTURE_PAYLOADS`.
+- `self: {bytes, cap}` on `/v1/status`, and the canonical profile name.
+- `recall` with an empty query lists the thread's spilled and evicted artifacts.
+
+### Fixed
+- **A compaction interrupted by a crash no longer resumes with a stale context estimate.** The
+  provider-anchored estimate is reset inside the same transaction that rewrites history, on both the
+  proactive and overflow-recovery paths.
+- **A succeeded call's arguments are bounded.** Tool results were capped on arrival and demoted at
+  compaction; the arguments the model wrote were bounded by neither. They are now elided to a
+  pointer once the call has succeeded, at a seam where a resume no longer needs them, so it costs no
+  prefix-cache churn.
+- **A crash mid-batch no longer strands uncommitted parallel tool calls.**
+- **Concurrent `spawn_subagent` cannot overspend the run budget.** Each child read the full
+  remaining budget at spawn, before any sibling had charged a token. Replaced with a live
+  reservation reconciled on exit.
+- **The self-write breaker no longer quarantines an agent that is converging.** An attempt closing a
+  material share of the remaining gap resets the streak, bounded by a hard attempt ceiling.
+
+### Documentation
+- `bundle-reference-material.md`: operator reference material belongs in the workspace and is read
+  on demand, not resident in the bundle.
+- `hosting.md`: what survives a suspend, and the one-way upgrade procedure.
+
+## [0.2.11] - 2026-08-03
 
 Context economics. Prompt caching and compaction were each defeating themselves; both are fixed and
 the pair compounds, because a prompt that stays small needs compacting far less often. No
@@ -14,7 +92,7 @@ configuration change is required and nothing is opt-in.
 
 ### Fixed
 - **Rolling cache breakpoints land on persisted transcript.** They were marking the derived
-  per-turn blocks the engine appends after the history — context, retrieval, plan, budget — one of
+  per-turn blocks the engine appends after the history - context, retrieval, plan, budget - one of
   which carries a clock. A cached prefix ending on a block that changes every turn can never be
   matched, so every turn wrote a cache that could not be read back and only the system prefix was
   ever served from cache. Both wire serializers now share one eligibility rule.
@@ -28,7 +106,7 @@ configuration change is required and nothing is opt-in.
   selected instead, so a group is never split and there is nothing to repair.
 - **Compaction reports progress honestly.** Success compared the summary against the prefix alone,
   in UTF-16 code units. It now compares the whole active set, before and after, in UTF-8 bytes, and
-  requires a material reduction — except on overflow recovery, where any reduction beats failing
+  requires a material reduction - except on overflow recovery, where any reduction beats failing
   the turn.
 - **`prompt_cache_key` on the OpenAI-compatible wire.** It was sent on the Responses wire only, but
   it is a Chat Completions field and OpenAI documents it as required for reliable matching on
@@ -44,7 +122,7 @@ Anthropic's cache lookup scans a bounded number of blocks back from each breakpo
 reduces the size of a tool result but not the number of blocks, so a turn with many parallel tool
 calls can still miss the previous cached tail. Unchanged in this release.
 
-## [0.2.10] — 2026-08-01
+## [0.2.10] - 2026-08-01
 
 The secret vault. An agent's third-party credentials can live encrypted in the daemon instead of
 the deployment environment, under one rule: a secret value never enters model-readable state. Fully
@@ -52,7 +130,7 @@ opt-in; with no vault key set, a deployment runs exactly as 0.2.9.
 
 ### Added
 - **The vault.** `DELTA_VAULT_KEY_FILE` (or `DELTA_VAULT_KEY`) enables an AES-256-GCM store in the
-  daemon database — outside the model-writable workspace, so the workspace-confined file tools
+  daemon database - outside the model-writable workspace, so the workspace-confined file tools
   cannot reach the ciphertext. With neither set there is no vault: the routes `503`, the tool is
   not registered, and a reference fails closed. Safe mode never carries one.
 - **Write-only seam.** `PUT /v1/secrets/:name` stores a credential and `GET /v1/secrets` lists
@@ -60,7 +138,7 @@ opt-in; with no vault key set, a deployment runs exactly as 0.2.9.
   existing name), so a gateway flow cannot silently replace an established credential; rotation and
   deletion are operator acts on `/v1/dev/secrets/:name` behind the inspect token.
 - **`{{vault:NAME}}` references** in MCP HTTP headers and stdio `env`, resolved in engine code at
-  egress — per call for headers, at spawn for a child. Configuration holds the name, never a value.
+  egress - per call for headers, at spawn for a child. Configuration holds the name, never a value.
   A backend that could not connect at boot for want of its credential reconnects when it arrives.
 - **`list_secrets`**, the model's entire view of the vault: names and purposes. There is
   deliberately no tool that returns a value.
@@ -69,7 +147,7 @@ opt-in; with no vault key set, a deployment runs exactly as 0.2.9.
 - **Exact-value redaction.** A value is registered when resolved for egress, in raw,
   percent-encoded, and JSON-escaped form. A later reflection of it is replaced with `[vault:NAME]`
   before reaching the model, the transcript, a spill file, a research artifact, or telemetry.
-- **`/v1/status` reports the vault** live: `enabled`, `count`, and `declared` — the names the
+- **`/v1/status` reports the vault** live: `enabled`, `count`, and `declared` - the names the
   running configuration wires a destination for, so an edge can refuse a request for a credential
   nothing is configured to use.
 
@@ -80,7 +158,7 @@ opt-in; with no vault key set, a deployment runs exactly as 0.2.9.
   broker, control, telemetry, and provider credentials. A server that relied on an inherited
   variable must now declare it in its `env`.
 
-## [0.2.9] — 2026-08-01
+## [0.2.9] - 2026-08-01
 
 Two additive affordances that let a fire-and-forget gateway (Delta Connect) run long chat turns
 correctly. Both are opt-in; with nothing new set, a deployment runs exactly as 0.2.8.
@@ -89,7 +167,7 @@ correctly. Both are opt-in; with nothing new set, a deployment runs exactly as 0
 - **Opt-in exactly-once tasks.** A request may set `idempotency_terminal: true` (on a durable run)
   so its `idempotency_key` also dedupes against its own *terminal* run, not only a live one. A
   fire-and-forget caller that loses the `202` for a run the daemon durably accepted can re-POST the
-  same key and re-attach to that run instead of starting a second — no duplicate billing, no
+  same key and re-attach to that run instead of starting a second - no duplicate billing, no
   stranded result. The dedupe stays scoped to the run's owner. The default (a terminal run frees
   its key, so a stable key reused later runs fresh) is unchanged.
 - **Run identity on self-scheduling.** `schedule_self` / `list_schedules` / `cancel_schedule` now
@@ -97,7 +175,7 @@ correctly. Both are opt-in; with nothing new set, a deployment runs exactly as 0
   to the right conversation even when several users' turns run concurrently. An unowned/dev run
   sends no assertion and the gateway falls back as before.
 
-## [0.2.8] — 2026-08-01
+## [0.2.8] - 2026-08-01
 
 A legible command surface. A deployed agent can describe its own provider and effort in plain
 terms, safe mode is observable and self-aware, and the provider cascade is queryable. All
@@ -119,7 +197,7 @@ additive read-surface plus one honesty fix; with nothing new set, a deployment r
   policy, and the learned self-file are not loaded this run. The agent is honest about its
   footing instead of inferring an identity from conversation history.
 
-## [0.2.7] — 2026-07-31
+## [0.2.7] - 2026-07-31
 
 Agents that know their limits and can't wedge. The two run tiers are renamed to name what
 they are, the tool set becomes an operator knob, and a poisoned config is always recoverable.
@@ -138,7 +216,7 @@ Default behavior is unchanged: with the new env vars unset, a deployment runs ex
   self-file or broken config can never wedge the daemon. Self-file revert via the existing
   Cockpit revision endpoints.
 - Local skills: `DELTA_SKILLS=local` reads a `skills/<name>/SKILL.md` folder (use-only,
-  progressive disclosure — only name and description enter the prompt). `off` hides skills
+  progressive disclosure - only name and description enter the prompt). `off` hides skills
   entirely; `mcp` (default) is unchanged.
 - `GET /v1/status`: a secret-free model / effort / profile / budget read for edge tooling.
 
@@ -149,7 +227,7 @@ Default behavior is unchanged: with the new env vars unset, a deployment runs ex
 - A committed self-file (`remember`) write on a budget-failed turn is now surfaced in the
   failure result instead of silently swallowed (error-as-value).
 
-## [0.2.6] — 2026-07-30
+## [0.2.6] - 2026-07-30
 
 A default deployment that describes itself. Two telemetry blind spots are closed, so a
 default deployment is fully self-describing: cost, fallbacks, and error classes are
@@ -183,7 +261,7 @@ behavior changes when nothing is set; upgrading is a version bump.
   `remember` refusals whose messages vary per call (byte counts, file text) are now
   quarantined at 3 instead of grinding. Conflict, transient, and timeout never latch.
 
-## [0.2.5] — 2026-07-30
+## [0.2.5] - 2026-07-30
 
 The first turn after an idle or suspended machine wakes is now fast and reliable, and a
 misbehaving provider is visible instead of silent. Field data (Aperture, 2026-07-29) traced a rare
@@ -219,11 +297,11 @@ safe by default.
 - Failed model attempts now log one line each, so a retry storm is never silent (previously only
   successful calls printed a line).
 
-## [0.2.4] — 2026-07-28
+## [0.2.4] - 2026-07-28
 
 Harden what shipped + close the remaining Aperture field-report gaps. Five code audits of the 0.2.3
 binary plus a three-way competitor teardown (openclaw / hermes / pi) found that the two roadmap "big
-blocks" — context management and scoped memory — were already shipped, so this release is targeted
+blocks" - context management and scoped memory - were already shipped, so this release is targeted
 correctness, security, and observability, each with tests. The two security surfaces (task tenancy,
 memory widening) were codex-gated to a GO. Every change is provider-agnostic (no wire changes);
 validated end-to-end on a real compiled binary against OpenRouter (Sonnet 5) and native Anthropic
@@ -236,17 +314,17 @@ validated end-to-end on a real compiled binary against OpenRouter (Sonnet 5) and
   now enforce that the caller owns the run: the tenancy principal is the gateway-asserted
   `x-delta-user` header (never a request-body field), a cross-tenant hit and a miss return the same
   `404` (no existence disclosure), and the header is canonicalized into the stored run at ingress so
-  memory recall, reflection, and event identity all key on the same owner — a body `user_id` can no
+  memory recall, reflection, and event identity all key on the same owner - a body `user_id` can no
   longer point them at another tenant. The idempotency dedupe is scoped to the run's owner (a shared
   key can't return another tenant's live run or its streamed result), and the `previous_response_id`
   continuation check no longer leaks existence via a `400`-vs-`403` split. New `DELTA_STRICT_TENANT`
   requires every run to be owned (creation without a principal is `401`, unowned runs are
   inaccessible, `/v1/queue` is principal-scoped with tenant-local positions) for a daemon that serves
-  multiple users behind one control token. `/v1/busy` stays global by design — it is the host's
+  multiple users behind one control token. `/v1/busy` stays global by design - it is the host's
   whole-machine suspend gate, control-token-gated and host-only.
 - **Memory-widening authorization can't be self-asserted.** Reflection widens a `user`-scoped memory
   to a broader audience only on `review_kind = submission_disposition` + `widen_authorized`, both
-  read from run metadata — which a caller controls. A shared control token authenticates the gateway,
+  read from run metadata - which a caller controls. A shared control token authenticates the gateway,
   not that a body field came from a human reviewer, so those fields are now stripped from **every**
   request body by default (an untrusted body could otherwise widen its memory into a cross-user
   audience). `DELTA_TRUST_REVIEW_METADATA=1` is the single-tenant opt-in; a durable trusted
@@ -262,7 +340,7 @@ validated end-to-end on a real compiled binary against OpenRouter (Sonnet 5) and
   oscillation that previously could only be diagnosed forensically) instead of deriving it. Both
   surfaces inherit the task-tenancy gate above.
 - **`delta bundle apply`** (Aperture A12). A first-class command (also run on every container boot)
-  that re-seeds the FIXED operator files — `POLICY.md`, `vocab.json`, `PROMPT_CONTEXT.md` — from
+  that re-seeds the FIXED operator files - `POLICY.md`, `vocab.json`, `PROMPT_CONTEXT.md` - from
   their base64 env vars and **never** touches the agent's learned `DELTA.md`. It validates every
   payload first (a `vocab.json` that isn't a JSON object, or a `POLICY.md` over the byte or token
   budget, is refused and *nothing* is written), so updating operator config on a live machine is one
@@ -281,7 +359,7 @@ validated end-to-end on a real compiled binary against OpenRouter (Sonnet 5) and
 ### Changed
 
 - **Suspend-safe resume** (Aperture A2). The write-lease heartbeat exited the daemon when renewal
-  failed — which, after a Fly suspend/resume across a wall-clock jump, meant the daemon exited
+  failed - which, after a Fly suspend/resume across a wall-clock jump, meant the daemon exited
   *without releasing* and Fly's restart cap turned that into a minutes-long stall. It now
   `renew-or-reacquire`s: it reclaims its own machine-scoped lease and stays up, exiting only when a
   *different* live holder genuinely owns it. Both lease functions now sample the clock inside the
@@ -297,7 +375,7 @@ validated end-to-end on a real compiled binary against OpenRouter (Sonnet 5) and
   request with a byte rule that could sit just under budget while the provider's real input was over,
   wasting a frontier call before the post-provider overflow retry corrected it. It now also projects
   off the last call's *real* gross input plus the estimated growth since, taking the max with the
-  byte estimate — so a long run compacts a call earlier without a tokenizer dependency, and never
+  byte estimate - so a long run compacts a call earlier without a tokenizer dependency, and never
   estimates below the existing floor.
 - **Deterministic memory recall + agent isolation.** Recall ranked partly on a `hits` counter that
   the recall itself mutates, so an identical repeated query drifted its order; `hits` is dropped from
@@ -311,16 +389,16 @@ validated end-to-end on a real compiled binary against OpenRouter (Sonnet 5) and
 - **Concurrent self-writes no longer clobber each other.** Two runs on one daemon both calling
   `remember` wrote `DELTA.md` last-write-wins, silently dropping one run's lesson. `writeSelf` now
   uses optimistic concurrency: a write carries the base revision it read, a diverged base is refused
-  (returning the current content), and the run re-reads, re-merges, and retries — so both concurrent
+  (returning the current content), and the run re-reads, re-merges, and retries - so both concurrent
   lessons survive. An idempotent re-fire (the content already on disk) still no-ops. This is the one
   documented file-level compare-and-swap layer; other file writes remain last-write-wins.
 - **A distilled learning could be silently dropped.** When the utility model returned a non-string
   field in a distilled artifact (a numeric `name`, an object `body`), reflection threw while
-  persisting and the whole learning was lost — latent since 0.1.0. The artifact's `content`, `name`,
+  persisting and the whole learning was lost - latent since 0.1.0. The artifact's `content`, `name`,
   and `body` are now type-guarded with safe fallbacks before use, so a malformed distiller response
   degrades to a best-effort learning instead of none.
 
-## [0.2.3] — 2026-07-28
+## [0.2.3] - 2026-07-28
 
 Failure-visibility + native-wire batch, driven by Aperture's production field report (two prod
 agents, the harness's heaviest real consumer). Every item ships with a test.
@@ -328,7 +406,7 @@ agents, the harness's heaviest real consumer). Every item ships with a test.
 ### Added
 
 - **Run error on the task surface.** `GET /v1/tasks/:id` now returns a first-class `error` field
-  carrying the run's last error — the provider or fatal error that ended it (length-capped) — so a
+  carrying the run's last error - the provider or fatal error that ended it (length-capped) - so a
   plain HTTP poller learns *why* a run failed before its first token instead of seeing a merely-dead
   run. Both motivating incidents were provider errors that failed the run before its first token
   (Opus 5 rejecting `thinking.type=enabled`; an untranslated fallback id). Per-tool errors stay in
@@ -344,7 +422,7 @@ agents, the harness's heaviest real consumer). Every item ships with a test.
   Two specifics worth knowing: on the adaptive path the OpenAI-only `none` and `minimal` efforts
   map to `low` (always-on reasoning models reject a disabled thinking type), and Delta
   automatically raises the request's `max_tokens` by an effort-based headroom so adaptive thinking
-  (which has no fixed budget) has room to breathe — size `DELTA_STEP_MAX_TOKENS` generously at high
+  (which has no fixed budget) has room to breathe - size `DELTA_STEP_MAX_TOKENS` generously at high
   effort regardless.
 - **Opus 5 pricing** baked into the cost table (`claude-opus-5`), so the native/subscription paths
   meter real dollars without a `DELTA_MODEL_PRICES` override.
@@ -353,19 +431,19 @@ agents, the harness's heaviest real consumer). Every item ships with a test.
 
 - **Categorical-failure breaker.** A tool that returns the *same* categorical `[tool error]` on
   three consecutive turns (a missing CLI, a persistent schema reject) is quarantined for the
-  remainder of the run and the model is told to try another approach — a success, a transient
+  remainder of the run and the model is told to try another approach - a success, a transient
   error, or a different error resets the count, and multiple failures in one turn count once. This
   caps the field report's worst case (a missing `code` CLI that burned ~$3.50 of a $5.17 run by
   looping ~17 turns): a live replay spent pennies on the dead end and still filed its output.
 - **`code` tool self-disables when its CLI isn't an executable file.** Probed once at boot: a bare
-  name via `Bun.which` (PATH), an explicit path via `accessSync(X_OK)` — a real executable check, so
+  name via `Bun.which` (PATH), an explicit path via `accessSync(X_OK)` - a real executable check, so
   a path *this process* can't exec (e.g. a root-owned `0700` file) is rejected rather than passing a
   mode-bit glance and then `EACCES`-ing on spawn. This stops the model being handed a tool whose CLI
-  is simply absent. A CLI that passes the probe but fails at *runtime* (the bc8e877e case — the CLI
+  is simply absent. A CLI that passes the probe but fails at *runtime* (the bc8e877e case - the CLI
   was present, its runtime dependency was not) is caught by the breaker above, not here; the two
   layers are complementary.
 - **All native-wire model ids are normalized** (provider prefix stripped, dotted versions →
-  dashes), for the primary *and* every fallback — not just the utility model. An untranslated
+  dashes), for the primary *and* every fallback - not just the utility model. An untranslated
   fallback id was one of the report's two silent zero-token failures (a run that looked merely
   dead to a polling host); `claude-opus-4.8` and `claude-opus-4-8` both reach the wire correctly now.
 
@@ -378,14 +456,14 @@ agents, the harness's heaviest real consumer). Every item ships with a test.
   regress. Hosts (Aperture) already build their reconcilers on these; they now change semantics
   only with a major-version note.
 
-## [0.2.2] — 2026-07-27
+## [0.2.2] - 2026-07-27
 
 ### Added
 
-- **`DELTA_ALLOW_SELF_WRITE` — trusted-gateway self-write.** Off by default. When set, the
-  `remember` self-write tool is granted (and pinned) even on the restricted `chat` profile — for a
+- **`DELTA_ALLOW_SELF_WRITE` - trusted-gateway self-write.** Off by default. When set, the
+  `remember` self-write tool is granted (and pinned) even on the restricted `chat` profile - for a
   daemon fronted by a trusted, authenticated gateway. This is what lets a chat agent learn safely.
-- **`DELTA_STEP_MAX_TOKENS`** — cap the tokens a single tool call may emit, with an honest
+- **`DELTA_STEP_MAX_TOKENS`** - cap the tokens a single tool call may emit, with an honest
   truncation error for oversized tool calls instead of silent corruption.
 
 ### Changed
@@ -395,28 +473,28 @@ agents, the harness's heaviest real consumer). Every item ships with a test.
 
 ### Companion
 
-- **[`@carrara-labs/delta-connect`](https://www.npmjs.com/package/@carrara-labs/delta-connect)** —
+- **[`@carrara-labs/delta-connect`](https://www.npmjs.com/package/@carrara-labs/delta-connect)** -
   a new companion package: a thin, always-on edge that plugs a Delta agent into a chat channel
   (Telegram first). The agent scales to zero between messages; the edge holds the conversation.
   See [/connect](https://deltaharness.dev/connect).
 
-## [0.2.1] — 2026-07-22
+## [0.2.1] - 2026-07-22
 
 ### Added
-- **`GET /v1/busy` — the scale-to-zero lifecycle signal.** A host managing suspend/resume can
+- **`GET /v1/busy` - the scale-to-zero lifecycle signal.** A host managing suspend/resume can
   now ask the daemon "is it safe to suspend?" and get `{ busy, running, queued }`. `busy` is the
   durable queued-**or**-running truth read from the run table, so a host never suspends a Machine
   with work still owed (a queued-but-not-yet-dispatched run keeps `busy` true). Behind the `/v1/`
   control-token gate, deliberately not folded into the open, data-free `/healthz`. Turns the
   scale-to-zero pattern from "read the provisioner source" into a ten-line host integration.
-- **`docs/hosting.md` — the hosting lifecycle contract.** Documents control-plane-owned
+- **`docs/hosting.md` - the hosting lifecycle contract.** Documents control-plane-owned
   suspend/resume (why not `fly-proxy` autostop), the three host hooks (wake before dispatch, busy
   check before suspend, suspend after terminal), and the WAL suspend-safety guarantee that makes
   aggressive suspend safe.
 
 ### Changed
 - **`DELTA_MCP_SERVERS` parsing fails loud, never silent.** A malformed value used to return no
-  backends with zero trace — the agent booted tool-less and burned a full model run before anyone
+  backends with zero trace - the agent booted tool-less and burned a full model run before anyone
   noticed. Malformed JSON, a non-array, and each unusable entry (no `name`, an `http` entry with no
   `url`, a `stdio` entry with no `command`) are now dropped with a specific boot-log warning. A
   **missing `transport` is inferred** from the entry shape (`url` → `http`, `command` → `stdio`)
@@ -428,19 +506,19 @@ agents, the harness's heaviest real consumer). Every item ships with a test.
   throws synchronously (a non-existent binary, an empty argv element) used to escape the startup
   loop and take the daemon down, despite the "one bad server is never fatal" contract. The
   connection is now constructed inside the registry's catch boundary, so any spawn failure is
-  logged (`mcp: <name> failed — …`) and the daemon boots with the remaining backends. Non-string
+  logged (`mcp: <name> failed - …`) and the daemon boots with the remaining backends. Non-string
   or empty `command` elements are also rejected at config time with a clear skip.
 
-## [0.2.0] — 2026-07-22
+## [0.2.0] - 2026-07-22
 
 ### Changed
 - **Sub-agents (`research`) now have the same rights as the parent, not a read-only subset.** A
   `research` child's callable tools are the parent's full registry minus a small *withheld* set
   (the delegation tools `research`/`spawn_subagent`/`eval_n`, plus the run-scheduling tools), so
   nesting stays exactly one level deep. A child can now read, write, run code, use `remember`, and
-  call MCP reads **and** writes — whatever the parent can. Children are built from the **same
+  call MCP reads **and** writes - whatever the parent can. Children are built from the **same
   system spine** as the parent (identity + safety norms + `DELTA.md` + `POLICY.md`), so they inherit
-  the parent's operating rules along with its rights — not powerful-but-unconstrained. Each child
+  the parent's operating rules along with its rights - not powerful-but-unconstrained. Each child
   starts resident on the parent's pinned tool set and can `search_tools` for the rest, so a large
   MCP surface never blows the child's own token budget. Children run concurrently in one shared
   workspace; the child prompt cautions against clobbering a sibling's writes (full worktree
@@ -448,21 +526,21 @@ agents, the harness's heaviest real consumer). Every item ships with a test.
 
 ### Removed
 - **`DELTA_RESEARCH_TOOLS`.** The operator allowlist that gated which MCP read tools a `research`
-  child could use is gone — children inherit the parent's tools directly. The env var is now
+  child could use is gone - children inherit the parent's tools directly. The env var is now
   ignored; remove it from any config.
 
-## [0.1.2] — 2026-07-22
+## [0.1.2] - 2026-07-22
 
 ### Added
 - **Dispatch idempotency for `POST /v1/tasks`.** A run request may now carry an `idempotency_key`;
   `enqueue` returns any existing non-terminal run with the same key instead of starting a duplicate.
-  This makes fire-and-forget async dispatch safe to retry — a client retry, or a controller
+  This makes fire-and-forget async dispatch safe to retry - a client retry, or a controller
   re-driving a slow-but-alive task, dedupes onto the live run rather than spawning a second one. A
   terminal run frees the key. Race-safe (single-writer, synchronous check-before-insert) with no
   schema migration, and composes with `store: false` (the ephemeral transcript is still purged at
   terminal).
 
-## [0.1.1] — 2026-07-16
+## [0.1.1] - 2026-07-16
 
 ### Fixed
 - Subagents inherit the parent's model: `childEnv` forwards `DELTA_MODEL_PRIMARY`, not just the
@@ -476,7 +554,7 @@ agents, the harness's heaviest real consumer). Every item ships with a test.
 - `docker run` published to `ghcr.io/carrara-labs/delta-harness` (on the Deploy docs).
 - Hardened release/secret-scan workflows (checksum-verified gitleaks, tag-gated scan, ghcr publish).
 
-## [0.1.0] — 2026-07-16
+## [0.1.0] - 2026-07-16
 
 Initial public release.
 

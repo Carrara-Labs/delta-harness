@@ -16,7 +16,15 @@
 /** Dollars per 1,000,000 tokens. cacheRead = the (cheap) rate for cache-hit input.
  * Cache WRITES bill at 1.25× the input rate (Anthropic 5-min TTL) — computeCost applies
  * that multiplier to usage.cacheWrite, which the rolling breakpoints produce every turn. */
-export type ModelPrice = { in: number; out: number; cacheRead: number };
+export type ModelPrice = {
+  in: number;
+  out: number;
+  cacheRead: number;
+  /** Context window in tokens (0.2.13 / S6). Optional: an unknown model keeps today's hand-set
+   * compaction default rather than inheriting a guess. Only seed a value the field has PROVEN,
+   * because under-seeding costs a little extra compaction and over-seeding costs overflow. */
+  window?: number;
+};
 
 // The OpenRouter-option fleet + the harness default, priced from
 // the live OpenRouter models API (GET /api/v1/models), verified 2026-07-09. $/M tokens,
@@ -26,7 +34,12 @@ export type ModelPrice = { in: number; out: number; cacheRead: number };
 // a small first-turn undercount, negligible against the cache-HIT-dominated steady state.
 export const BAKED_PRICES: Record<string, ModelPrice> = {
   "claude-sonnet-5": { in: 2, out: 10, cacheRead: 0.2 }, // harness default (config.ts)
-  "claude-opus-5": { in: 5, out: 25, cacheRead: 0.5 }, // frontier default (api pricing 2026-07-27)
+  // window: a FIELD-DERIVED floor, not a published number. Aperture ran 249,127 input tokens on a
+  // production lane with zero overflow, zero "prompt too long" and zero forced-compaction retries,
+  // with no 1M beta header sent (see FAST_MODE_BETA in provider.ts — the only beta we send). A 200k
+  // window rejects that call, so the real window is above 249,127; 249,000 sits under the proven
+  // floor and needs no argument. Raise it only on evidence, never on a spec sheet.
+  "claude-opus-5": { in: 5, out: 25, cacheRead: 0.5, window: 249_000 }, // api pricing 2026-07-27
   "claude-sonnet-4.6": { in: 3, out: 15, cacheRead: 0.3 }, // fleet default (openrouter)
   "claude-opus-4.8": { in: 5, out: 25, cacheRead: 0.5 },
   "claude-haiku-4.5": { in: 1, out: 5, cacheRead: 0.1 }, // utility-model default
@@ -56,8 +69,23 @@ export function parsePrices(raw: string | undefined): Record<string, ModelPrice>
         typeof v.in === "number" &&
         typeof v.out === "number" &&
         typeof v.cacheRead === "number"
-      )
-        out[k.toLowerCase()] = { in: v.in, out: v.out, cacheRead: v.cacheRead };
+      ) {
+        const key = k.toLowerCase();
+        // MERGE over the baked entry rather than replacing it (S6): a plain price override must not
+        // silently DELETE the model's `window` and drop it back to the 120k default. Anyone already
+        // running DELTA_MODEL_PRICES would have lost the new field on upgrade without noticing —
+        // a knob quietly disabling a derived value is the exact failure this batch exists to fix.
+        const window =
+          typeof v.window === "number" && Number.isFinite(v.window) && v.window > 0
+            ? Math.floor(v.window)
+            : out[key]?.window;
+        out[key] = {
+          in: v.in,
+          out: v.out,
+          cacheRead: v.cacheRead,
+          ...(window ? { window } : {}),
+        };
+      }
     }
     return out;
   } catch {
@@ -116,4 +144,80 @@ export function priceUsd(
     return 0;
   }
   return computeCost(p, usage);
+}
+
+/** Tokens held back from the derived compaction ceiling for the model's OWN output.
+ *
+ * Deliberately ONE conservative constant rather than a computed `max_output` (codex): there is no
+ * single output cap to subtract today. The main loop passes no `maxTokens` at all, so the
+ * Chat-Completions and Responses paths send no cap; the Anthropic path applies a private default
+ * plus reasoning headroom that varies with effort. A derived number would be fiction, so this is
+ * sized to the worst of those plus slack. */
+export const OUTPUT_RESERVE = 40_000;
+
+/** Below this a derived ceiling is not a ceiling, it is a compaction loop: every non-trivial
+ * request would exceed it on the first turn. A `window` that cannot clear it is treated as UNKNOWN
+ * rather than obeyed — an operator override of `{window: 30000}` would otherwise derive a ceiling of
+ * 0 and compact every request forever (codex). */
+const MIN_USABLE_CEILING = 16_000;
+
+/** The usable ceiling for one model, or null when its window is unknown or unusably small. */
+function usableCeiling(model: string, table: Record<string, ModelPrice> = TABLE): number | null {
+  const w = resolvePrice(model, table)?.window;
+  if (!w) return null;
+  const c = w - OUTPUT_RESERVE;
+  return c >= MIN_USABLE_CEILING ? c : null;
+}
+
+/** The compaction ceiling derived from what the MODELS can actually take (S6).
+ *
+ * Two rules, both learned the hard way:
+ *  1. Every cascade member counts. Delta fails over between models, so a gate set from one known
+ *     250k model would overflow an unknown fallback. An unknown member therefore contributes the
+ *     conservative default rather than being skipped (codex).
+ *  2. The MINIMUM wins, because the gate is global while the model serving any given turn is not.
+ *
+ * Returns null when no model is known at all, so the caller keeps today's behaviour instead of
+ * inheriting a guess. */
+export function deriveContextCeiling(
+  models: string[],
+  fallback: number,
+  table: Record<string, ModelPrice> = TABLE,
+): number | null {
+  if (!models.length) return null;
+  let known = false;
+  let min = Number.POSITIVE_INFINITY;
+  for (const m of models) {
+    const c = usableCeiling(m, table);
+    if (c !== null) known = true;
+    // An unknown model contributes `fallback`, NOT nothing — skipping it is what would let a known
+    // large window set a ceiling that overflows the model actually serving the turn.
+    min = Math.min(min, c ?? fallback);
+  }
+  return known ? min : null;
+}
+
+/** The largest ceiling the cascade can survive — used to CLAMP an operator override. A
+ * `DELTA_COMPACT_AT_TOKENS` above this turns compaction into overflow, which is silent today and is
+ * the inverse of the bug that motivated this work. Null when no model is known.
+ *
+ * This protects the OVERRIDE, not the table: a wrong `window` entry still overflows, and only
+ * conservative seeding plus the existing post-provider overflow retry guard that. */
+export function maxSafeCeiling(
+  models: string[],
+  table: Record<string, ModelPrice> = TABLE,
+): number | null {
+  let min = Number.POSITIVE_INFINITY;
+  for (const m of models) {
+    // KNOWN windows only, and this asymmetry with `deriveContextCeiling` is deliberate (codex asked).
+    // The two answer different questions. The DEFAULT is ours to choose, so an unknown member makes
+    // it conservative. An OVERRIDE is the operator's explicit decision, and we overrule it only
+    // where we have positive evidence it cannot work. Counting unknowns here would clamp every
+    // deployment whose cascade contains one unpriced model — which is most of them, since only one
+    // model carries a window today — silently halving ceilings that are working fine. Overruling an
+    // explicit choice on the basis of ignorance is the failure mode this batch exists to remove.
+    const c = usableCeiling(m, table);
+    if (c !== null) min = Math.min(min, c);
+  }
+  return Number.isFinite(min) ? min : null;
 }

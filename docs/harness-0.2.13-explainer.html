@@ -1,0 +1,962 @@
+<title>Delta Harness 0.2.13 - Say What Changed</title>
+<style>
+  :root {
+    --ground: #FAF8F4;
+    --surface: #F3EFE7;
+    --surface-2: #EBE5D9;
+    --ink: #23211C;
+    --ink-soft: #4A453C;
+    --muted: #7A7367;
+    --hair: #DED6C7;
+    --hair-strong: #C6BCA8;
+    --sage: #6E8465;
+    --slate: #5F7385;
+    --mauve: #857288;
+    --wheat: #A98A3F;
+    --clay: #9E5539;
+    --sage-wash: #E4EADF;
+    --slate-wash: #E0E6EC;
+    --mauve-wash: #E9E2EA;
+    --clay-wash: #F2E1DA;
+    --wheat-wash: #F0E7D2;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --measure: 34rem;
+    --wide: 62rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #16151300;
+      --ground: #161513;
+      --surface: #1E1C19;
+      --surface-2: #262320;
+      --ink: #EDE7DC;
+      --ink-soft: #CFC7B9;
+      --muted: #948C7E;
+      --hair: #332F29;
+      --hair-strong: #4A443B;
+      --sage: #9DB392;
+      --slate: #92A8BB;
+      --mauve: #B49FB6;
+      --wheat: #D3B064;
+      --clay: #CC8365;
+      --sage-wash: #232A20;
+      --slate-wash: #1F262C;
+      --mauve-wash: #272229;
+      --clay-wash: #2C1F1A;
+      --wheat-wash: #2A2418;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #161513;
+    --surface: #1E1C19;
+    --surface-2: #262320;
+    --ink: #EDE7DC;
+    --ink-soft: #CFC7B9;
+    --muted: #948C7E;
+    --hair: #332F29;
+    --hair-strong: #4A443B;
+    --sage: #9DB392;
+    --slate: #92A8BB;
+    --mauve: #B49FB6;
+    --wheat: #D3B064;
+    --clay: #CC8365;
+    --sage-wash: #232A20;
+    --slate-wash: #1F262C;
+    --mauve-wash: #272229;
+    --clay-wash: #2C1F1A;
+    --wheat-wash: #2A2418;
+  }
+  :root[data-theme="light"] {
+    --ground: #FAF8F4;
+    --surface: #F3EFE7;
+    --surface-2: #EBE5D9;
+    --ink: #23211C;
+    --ink-soft: #4A453C;
+    --muted: #7A7367;
+    --hair: #DED6C7;
+    --hair-strong: #C6BCA8;
+    --sage: #6E8465;
+    --slate: #5F7385;
+    --mauve: #857288;
+    --wheat: #A98A3F;
+    --clay: #9E5539;
+    --sage-wash: #E4EADF;
+    --slate-wash: #E0E6EC;
+    --mauve-wash: #E9E2EA;
+    --clay-wash: #F2E1DA;
+    --wheat-wash: #F0E7D2;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  /* ---------- depth rail ---------- */
+  .rail {
+    position: sticky; top: 0; z-index: 40;
+    background: color-mix(in srgb, var(--ground) 88%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--hair);
+  }
+  .rail-in {
+    max-width: var(--wide); margin: 0 auto;
+    padding: 0.6rem 1.5rem;
+    display: flex; align-items: center; gap: 1.25rem;
+    font-family: var(--mono); font-size: 0.66rem;
+    letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .rail-mark { display: flex; align-items: center; gap: 0.4rem; transition: color 0.25s; }
+  .rail-mark .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--hair-strong); transition: background 0.25s, transform 0.25s;
+  }
+  .rail-mark.on { color: var(--ink); }
+  .rail-mark.on .dot { background: var(--sage); transform: scale(1.5); }
+  .rail-spacer { flex: 1; }
+  .rail-ver { color: var(--muted); }
+  @media (max-width: 640px) { .rail-ver { display: none; } }
+
+  /* ---------- layout ---------- */
+  .band { padding: 0 1.5rem; }
+  .col { max-width: var(--measure); margin: 0 auto; }
+  .col-wide { max-width: var(--wide); margin: 0 auto; }
+
+  section { padding: 3.5rem 0; border-top: 1px solid var(--hair); }
+  section:first-of-type { border-top: 0; }
+
+  h1, h2, h3 { text-wrap: balance; margin: 0; }
+  h1 {
+    font-family: var(--serif); font-weight: 400;
+    font-size: clamp(2.4rem, 6vw, 3.9rem); line-height: 1.04;
+    letter-spacing: -0.02em;
+  }
+  h2 {
+    font-family: var(--serif); font-weight: 400;
+    font-size: clamp(1.6rem, 3.4vw, 2.15rem); line-height: 1.15;
+    letter-spacing: -0.015em; margin-bottom: 1.1rem;
+  }
+  h3 {
+    font-family: var(--sans); font-weight: 600;
+    font-size: 1rem; letter-spacing: -0.005em;
+    margin-bottom: 0.5rem;
+  }
+  .eyebrow {
+    font-family: var(--mono); font-size: 0.66rem;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 0.9rem;
+  }
+  p { margin: 0 0 1.05rem; }
+  .col p { max-width: 100%; }
+  a { color: inherit; text-decoration-color: var(--hair-strong); text-underline-offset: 3px; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--sage); outline-offset: 3px; }
+
+  /* the plain-English layer reads as prose */
+  .plain p { font-family: var(--serif); font-size: 1.2rem; line-height: 1.62; color: var(--ink-soft); }
+  .plain p strong { color: var(--ink); font-weight: 600; }
+  .lede { font-family: var(--serif); font-size: clamp(1.25rem, 2.6vw, 1.5rem) !important; line-height: 1.45 !important; color: var(--ink) !important; }
+
+  .fine { font-size: 0.87rem; color: var(--muted); line-height: 1.55; }
+  code, .m { font-family: var(--mono); font-size: 0.86em; }
+  code { background: var(--surface-2); padding: 0.1em 0.35em; border-radius: 3px; }
+
+  /* ---------- hero ---------- */
+  .hero { padding: 4.5rem 0 3.25rem; }
+  .hero .kicker {
+    font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 1.5rem;
+  }
+  .hero h1 { margin-bottom: 1.4rem; }
+  .hero .thesis {
+    font-family: var(--serif); font-size: clamp(1.15rem, 2.5vw, 1.4rem);
+    line-height: 1.5; color: var(--ink-soft); max-width: 32rem;
+  }
+  .hero-meta {
+    margin-top: 2.25rem; padding-top: 1.25rem; border-top: 1px solid var(--hair);
+    display: flex; flex-wrap: wrap; gap: 1.75rem;
+    font-family: var(--mono); font-size: 0.72rem; color: var(--muted);
+  }
+  .hero-meta b { display: block; color: var(--ink); font-weight: 500; letter-spacing: 0.02em; margin-top: 0.2rem; }
+
+  /* ---------- figures ---------- */
+  figure { margin: 2rem 0; }
+  figcaption {
+    font-size: 0.82rem; color: var(--muted); line-height: 1.5;
+    margin-top: 0.85rem; padding-left: 0.9rem; border-left: 2px solid var(--hair-strong);
+  }
+  .fig-title {
+    font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 0.85rem;
+  }
+
+  /* prefix bar */
+  .prefix { display: flex; width: 100%; height: 62px; border-radius: 5px; overflow: hidden; border: 1px solid var(--hair-strong); }
+  .seg {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--ink-soft); text-align: center; padding: 0 0.3rem; gap: 0.15rem;
+    border-right: 1px solid var(--hair-strong); min-width: 0;
+  }
+  .seg:last-child { border-right: 0; }
+  .seg b { font-size: 0.72rem; letter-spacing: 0; text-transform: none; color: var(--ink); font-weight: 600; }
+  .seg-spine { background: var(--mauve-wash); flex: 0 0 13%; }
+  .seg-tools { background: var(--slate-wash); flex: 0 0 20%; }
+  .seg-hist  { background: var(--sage-wash); flex: 1 1 auto; }
+  .seg-eph   { background: var(--wheat-wash); flex: 0 0 14%; }
+  .seg-break { background: var(--clay-wash); }
+
+  .cachebar { display: flex; margin-top: 0.4rem; font-family: var(--mono); font-size: 0.62rem; color: var(--muted); }
+  .cachebar .fill { border-top: 2px solid var(--sage); padding-top: 0.3rem; color: var(--sage); }
+  .cachebar .cold { border-top: 2px solid var(--clay); padding-top: 0.3rem; color: var(--clay); }
+
+  .stack { display: grid; gap: 1.6rem; }
+
+  /* thesis: identity vs size */
+  .thesis-grid { display: grid; gap: 1.1rem; }
+  .thesis-row {
+    display: grid; grid-template-columns: 7.5rem 1fr; gap: 1rem; align-items: center;
+  }
+  .thesis-row .lab { font-family: var(--mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); text-align: right; }
+  @media (max-width: 620px) {
+    .thesis-row { grid-template-columns: 1fr; }
+    .thesis-row .lab { text-align: left; }
+  }
+  .readout { display: flex; gap: 0.55rem; flex-wrap: wrap; margin-top: 0.7rem; }
+  .chip {
+    font-family: var(--mono); font-size: 0.68rem; padding: 0.28rem 0.6rem;
+    border-radius: 3px; border: 1px solid var(--hair-strong); background: var(--surface);
+    color: var(--ink-soft); white-space: nowrap;
+  }
+  .chip.good { border-color: var(--sage); color: var(--sage); background: var(--sage-wash); }
+  .chip.bad { border-color: var(--clay); color: var(--clay); background: var(--clay-wash); }
+  .chip.blind { border-style: dashed; color: var(--muted); }
+
+  /* rounds */
+  .rounds { display: grid; gap: 0; border-top: 1px solid var(--hair); }
+  .round {
+    display: grid; grid-template-columns: 3.2rem 1fr 8.5rem;
+    gap: 1.2rem; padding: 1.35rem 0; border-bottom: 1px solid var(--hair); align-items: start;
+  }
+  .round .n { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); padding-top: 0.15rem; }
+  .round h3 { margin-bottom: 0.35rem; }
+  .round p { margin: 0 0 0.4rem; font-size: 0.94rem; color: var(--ink-soft); }
+  .round .data { font-family: var(--mono); font-size: 0.76rem; color: var(--muted); line-height: 1.5; }
+  .verdict {
+    font-family: var(--mono); font-size: 0.64rem; letter-spacing: 0.09em; text-transform: uppercase;
+    padding: 0.3rem 0.5rem; border-radius: 3px; text-align: center; align-self: start;
+  }
+  .verdict.killed { background: var(--clay-wash); color: var(--clay); }
+  .verdict.open { background: var(--wheat-wash); color: var(--wheat); }
+  @media (max-width: 700px) {
+    .round { grid-template-columns: 2.4rem 1fr; }
+    .verdict { grid-column: 2; justify-self: start; margin-top: 0.5rem; }
+  }
+
+  /* method cards */
+  .rules { display: grid; gap: 1px; background: var(--hair); border: 1px solid var(--hair); border-radius: 5px; overflow: hidden; }
+  .rule { background: var(--ground); padding: 1.25rem 1.35rem; }
+  .rule .num { font-family: var(--mono); font-size: 0.66rem; color: var(--muted); letter-spacing: 0.1em; }
+  .rule h3 { margin: 0.35rem 0 0.4rem; }
+  .rule p { margin: 0; font-size: 0.92rem; color: var(--ink-soft); }
+  .rule .cost { margin-top: 0.6rem; font-family: var(--mono); font-size: 0.7rem; color: var(--muted); }
+  @media (min-width: 760px) { .rules { grid-template-columns: 1fr 1fr; } }
+
+  /* ladder */
+  .tier { margin-bottom: 1.75rem; }
+  .tier-head {
+    display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap;
+    padding-bottom: 0.6rem; margin-bottom: 0.9rem; border-bottom: 1px solid var(--hair-strong);
+  }
+  .tier-head .t { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+  .tier-head .why { font-size: 0.88rem; color: var(--ink-soft); }
+  .item {
+    display: grid; grid-template-columns: 2rem 1fr; gap: 0.85rem;
+    padding: 0.7rem 0; border-bottom: 1px solid var(--hair);
+  }
+  .item:last-child { border-bottom: 0; }
+  .item .id { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); padding-top: 0.15rem; }
+  .item .t { font-weight: 600; font-size: 0.95rem; }
+  .item .d { font-size: 0.89rem; color: var(--ink-soft); margin-top: 0.15rem; }
+  .item .gate { font-family: var(--mono); font-size: 0.7rem; color: var(--clay); margin-top: 0.3rem; }
+
+  /* roi */
+  .roi { display: grid; gap: 1.4rem; }
+  .roi-row { border-left: 3px solid var(--hair-strong); padding-left: 1.1rem; }
+  .roi-row.c1 { border-color: var(--sage); }
+  .roi-row.c2 { border-color: var(--slate); }
+  .roi-row.c3 { border-color: var(--wheat); }
+  .roi-row .h { display: flex; align-items: baseline; gap: 0.7rem; flex-wrap: wrap; margin-bottom: 0.35rem; }
+  .roi-row .conf { font-family: var(--mono); font-size: 0.64rem; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+  .roi-row .num { font-family: var(--serif); font-size: 1.85rem; line-height: 1; letter-spacing: -0.02em; }
+  .roi-row p { margin: 0.4rem 0 0; font-size: 0.92rem; color: var(--ink-soft); }
+  .band-viz { height: 8px; border-radius: 4px; background: var(--surface-2); margin: 0.7rem 0 0; position: relative; overflow: hidden; }
+  .band-viz i { position: absolute; top: 0; bottom: 0; display: block; border-radius: 4px; }
+
+  /* fan out */
+  .fan { display: grid; gap: 1px; background: var(--hair); border: 1px solid var(--hair); border-radius: 5px; overflow: hidden; }
+  .fan-row { background: var(--ground); padding: 1.15rem 1.3rem; display: grid; grid-template-columns: 9.5rem 1fr; gap: 1.1rem; }
+  .fan-row .who { font-weight: 600; font-size: 0.95rem; }
+  .fan-row .who span { display: block; font-family: var(--mono); font-size: 0.66rem; color: var(--muted); font-weight: 400; margin-top: 0.2rem; letter-spacing: 0.04em; }
+  .fan-row .what { font-size: 0.92rem; color: var(--ink-soft); }
+  @media (max-width: 640px) { .fan-row { grid-template-columns: 1fr; gap: 0.5rem; } }
+
+  /* technical layer */
+  .tech { background: var(--surface); }
+  .tech h2, .tech h3 { }
+  .tech p { color: var(--ink-soft); }
+  .tbl-wrap { overflow-x: auto; margin: 1.5rem 0; border: 1px solid var(--hair); border-radius: 5px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.87rem; min-width: 34rem; }
+  th, td { text-align: left; padding: 0.65rem 0.9rem; border-bottom: 1px solid var(--hair); vertical-align: top; }
+  th {
+    font-family: var(--mono); font-size: 0.64rem; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--muted); font-weight: 500; background: var(--surface-2);
+  }
+  tr:last-child td { border-bottom: 0; }
+  td.m { font-family: var(--mono); font-size: 0.8rem; white-space: nowrap; }
+  .num-cell { font-variant-numeric: tabular-nums; }
+
+  pre {
+    background: var(--surface-2); border: 1px solid var(--hair); border-radius: 5px;
+    padding: 1rem 1.1rem; overflow-x: auto; font-family: var(--mono); font-size: 0.78rem;
+    line-height: 1.65; margin: 1.4rem 0; color: var(--ink-soft);
+  }
+  pre b { color: var(--ink); font-weight: 600; }
+  pre .c { color: var(--muted); }
+
+  .callout {
+    background: var(--surface); border: 1px solid var(--hair-strong);
+    border-radius: 5px; padding: 1.3rem 1.4rem; margin: 1.8rem 0;
+  }
+  .callout .fig-title { color: var(--clay); }
+  .callout.predict { border-color: var(--wheat); background: var(--wheat-wash); }
+  .callout.predict .fig-title { color: var(--wheat); }
+  .callout p:last-child { margin-bottom: 0; }
+
+  .split { display: grid; gap: 1.5rem; }
+  @media (min-width: 760px) { .split { grid-template-columns: 1fr 1fr; } }
+  .split .callout { margin: 0; }
+
+  footer {
+    border-top: 1px solid var(--hair); padding: 2.5rem 0 3.5rem;
+    font-size: 0.85rem; color: var(--muted);
+  }
+  footer p { margin-bottom: 0.5rem; }
+
+  ul { margin: 0 0 1.05rem; padding-left: 1.15rem; }
+  li { margin-bottom: 0.4rem; }
+  .plain li { font-family: var(--serif); font-size: 1.12rem; color: var(--ink-soft); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+  }
+</style>
+
+<nav class="rail" aria-label="Reading depth">
+  <div class="rail-in">
+    <span class="rail-mark on" data-depth="0"><span class="dot"></span>Plain</span>
+    <span class="rail-mark" data-depth="1"><span class="dot"></span>Working</span>
+    <span class="rail-mark" data-depth="2"><span class="dot"></span>Technical</span>
+    <span class="rail-spacer"></span>
+    <span class="rail-ver">Delta Harness 0.2.13</span>
+  </div>
+</nav>
+
+<header class="band hero" data-depth="0">
+  <div class="col">
+    <div class="kicker">Release concept · 7 August 2026 · Scoped, not yet built</div>
+    <h1>Say what changed.</h1>
+    <p class="thesis">We spent three rounds and a twelve-hour forensic session hunting a cache bug, and every instrument either side reached for measured the wrong property. This release fixes the instrument first, and the bug second.</p>
+    <div class="hero-meta">
+      <div>Engine <b>delta-harness</b></div>
+      <div>Batch <b>0.2.13</b></div>
+      <div>Driver <b>Aperture, 8 lanes</b></div>
+      <div>Status <b>scoped &amp; committed</b></div>
+    </div>
+  </div>
+</header>
+
+<!-- =================== PLAIN =================== -->
+<section class="band plain" data-depth="0">
+  <div class="col">
+    <div class="eyebrow">The one-minute version</div>
+    <h2>What this is really about</h2>
+    <p class="lede">Every time an agent takes a turn, it re-reads the entire conversation from the beginning. There is a discount for the part that has not changed. We were losing that discount, badly, and we could not work out why.</p>
+    <p>Delta Harness is the engine that runs our working agents. It sits inside a machine, holds one agent's loop, and talks to a model. Aperture runs eight of them doing paid client work. Ferni runs one on Telegram. Quarry Brain runs more.</p>
+    <p>The model charges for every token it reads. Because the whole conversation is re-sent each turn, a long job would be ruinous, except that providers offer a <strong>prompt cache</strong>: if the beginning of your request is byte-for-byte identical to last time, that part is roughly ten times cheaper. Get it right and a long engagement is affordable. Get it wrong and you pay full price for the same words, over and over.</p>
+    <p>Our biggest consumer measured that on some turns the discount vanished completely. Those turns cost <strong>5.7 times</strong> a normal turn and ate <strong>87% of the bill</strong> for that window. They also spotted a pattern: it happened exactly when the conversation came out <em>shorter</em> than the turn before.</p>
+    <p>So everyone, us included, went looking for what makes a conversation shrink. That was the mistake.</p>
+  </div>
+</section>
+
+<section class="band plain" data-depth="0">
+  <div class="col">
+    <div class="eyebrow">The mistake, in one image</div>
+    <h2>We kept weighing the suitcase</h2>
+    <p>Imagine checking whether someone has tampered with a suitcase by putting it on a scale. If they take something out, the weight drops and you catch it. If they swap a book for a different book of the same weight, the scale reads exactly the same and you notice nothing.</p>
+    <p>The prompt cache does not care what your request <em>weighs</em>. It cares whether it is <em>the same</em>. A change that keeps the size identical breaks the discount just as completely as a change that removes half of it, and every counter anyone proposed, on both sides, would have been blind to it.</p>
+  </div>
+
+  <figure class="col-wide">
+    <div class="fig-title">Figure 1 · Two changes, one instrument, one blind spot</div>
+    <div class="thesis-grid">
+
+      <div class="thesis-row">
+        <div class="lab">Turn 4<br>baseline</div>
+        <div>
+          <div class="prefix" role="img" aria-label="Baseline request: spine, tool schemas, history, ephemeral blocks">
+            <div class="seg seg-spine"><b>Spine</b>identity</div>
+            <div class="seg seg-tools"><b>Tools</b>schemas</div>
+            <div class="seg seg-hist"><b>History</b>the transcript so far</div>
+            <div class="seg seg-eph"><b>Fresh</b>per-turn</div>
+          </div>
+          <div class="readout">
+            <span class="chip">total 218,231 tokens</span>
+            <span class="chip good">cache 100%</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="thesis-row">
+        <div class="lab">Turn 5<br>a shrink</div>
+        <div>
+          <div class="prefix" role="img" aria-label="A shrinking request: history is smaller, cache is lost">
+            <div class="seg seg-spine"><b>Spine</b>identity</div>
+            <div class="seg seg-tools"><b>Tools</b>schemas</div>
+            <div class="seg seg-hist" style="flex:0 0 32%"><b>History</b>smaller</div>
+            <div class="seg seg-eph"><b>Fresh</b>per-turn</div>
+            <div class="seg" style="flex:1 1 auto;background:transparent;border-right:0"></div>
+          </div>
+          <div class="readout">
+            <span class="chip">total 213,974 tokens</span>
+            <span class="chip bad">cache 9%</span>
+            <span class="chip good">bytes caught it</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="thesis-row">
+        <div class="lab">Turn 6<br>a swap</div>
+        <div>
+          <div class="prefix" role="img" aria-label="A same-size mutation: the spine changes content but not length, cache is lost anyway">
+            <div class="seg seg-spine seg-break"><b>Spine</b>changed</div>
+            <div class="seg seg-tools"><b>Tools</b>schemas</div>
+            <div class="seg seg-hist"><b>History</b>the transcript so far</div>
+            <div class="seg seg-eph"><b>Fresh</b>per-turn</div>
+          </div>
+          <div class="readout">
+            <span class="chip">total 218,231 tokens</span>
+            <span class="chip bad">cache 9%</span>
+            <span class="chip blind">bytes saw nothing</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+    <figcaption>Turn 5 and turn 6 cost the same and are equally damaging. Only one of them is visible to a size counter. A single number inside the spine ticking from <span class="m">138</span> to <span class="m">139</span> is enough to produce turn 6, and it moves the byte count by zero.</figcaption>
+  </figure>
+
+  <div class="col plain">
+    <p>That is the whole idea behind this release. Before we fix the leak, we fit a gauge that can actually see it. The gauge is small, it costs almost nothing to run, and had it existed six months ago this entire investigation would have been a single database query.</p>
+  </div>
+</section>
+
+<!-- =================== WORKING =================== -->
+<section class="band" data-depth="1">
+  <div class="col-wide">
+    <div class="eyebrow">How a turn is actually built</div>
+    <h2>Four parts, and only two of them can hurt you</h2>
+  </div>
+  <div class="col">
+    <p>Every request the engine sends is assembled in the same order, and the cache reads it strictly left to right. It matches the longest run of identical material starting from the very first byte, then stops at the first difference. Everything after that point is charged at full price.</p>
+    <p>That ordering is the entire game. A block near the front is load-bearing for every block behind it. A block at the very end can change however it likes.</p>
+  </div>
+
+  <figure class="col-wide">
+    <div class="fig-title">Figure 2 · What each part can do to the discount</div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr><th>Part</th><th>Rebuilt each turn?</th><th>Can it change?</th><th>If it changes</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>Spine</b><br><span class="fine">who the agent is, its policy, its self-file, a count of undiscovered tools</span></td>
+            <td>Yes</td>
+            <td>Yes, and often at the same size</td>
+            <td><span class="chip bad">everything is lost</span></td>
+          </tr>
+          <tr>
+            <td><b>Tool schemas</b><br><span class="fine">the callable surface, described in full</span></td>
+            <td>Yes</td>
+            <td>Grows when a tool activates; shrinks only when one is quarantined</td>
+            <td><span class="chip bad">history is lost</span></td>
+          </tr>
+          <tr>
+            <td><b>History</b><br><span class="fine">the transcript, appended to as work happens</span></td>
+            <td>No, read from disk</td>
+            <td>Only compaction rewrites it</td>
+            <td><span class="chip bad">the rest of history is lost</span></td>
+          </tr>
+          <tr>
+            <td><b>Fresh blocks</b><br><span class="fine">the clock, task instructions, retrieved context, the plan</span></td>
+            <td>Yes, every turn</td>
+            <td>Constantly, by design</td>
+            <td><span class="chip good">nothing, they sit last</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <figcaption>The fresh blocks look like the obvious suspect and are the one part that is safe. They were deliberately moved behind the transcript in 0.2.11, which is what makes the remaining mystery interesting rather than embarrassing.</figcaption>
+  </figure>
+</section>
+
+<section class="band" data-depth="1">
+  <div class="col-wide">
+    <div class="eyebrow">How we got here</div>
+    <h2>Three rounds, two dead theories</h2>
+  </div>
+  <div class="col">
+    <p>Worth reading because the shape of it is the argument for the release. Each round produced a mechanism that fit the evidence, sounded right, and was wrong.</p>
+  </div>
+
+  <figure class="col-wide">
+    <div class="rounds">
+
+      <div class="round">
+        <div class="n">R1</div>
+        <div>
+          <h3>"Compaction is firing every turn"</h3>
+          <p>The lane's threshold sat below its own working set, so the engine summarised history on almost every turn and rewrote the transcript each time. Two rival harnesses had shipped exactly this fix. The ask was to raise the ceiling to 700-800k.</p>
+          <p class="data">Killed by arithmetic before it cost a release: compaction may only alter history when it shrinks it by 5%, and four of the five observed steps were under 2.3%. Then killed by data: <b>68% of misses had no compaction event at all</b>, and a compacting turn was more often a hit than a miss.</p>
+        </div>
+        <div class="verdict killed">Not the cause</div>
+      </div>
+
+      <div class="round">
+        <div class="n">R2</div>
+        <div>
+          <h3>"A failing tool is being withdrawn mid-run"</h3>
+          <p>Ours. The engine quarantines a tool that keeps failing, which removes its schema from the request. Schemas sit ahead of history, so losing one invalidates everything behind it, and one schema is worth roughly the number of tokens the shrinks measured. It explained every observation.</p>
+          <p class="data">Killed by a control: across thirty hours there were only <b>10 tool errors in total</b>, spread across four tools that all kept being called. The quarantine never fired. Ruled out as the dominant cause, and left completely untested as a cause.</p>
+        </div>
+        <div class="verdict killed">Not the cause</div>
+      </div>
+
+      <div class="round">
+        <div class="n">R3</div>
+        <div>
+          <h3>"Measure the size of the prefix"</h3>
+          <p>The instrument both sides then agreed to build. It would have shipped, produced a clean-looking number, and missed any change that preserved length, which the spine is structurally capable of producing on every single turn.</p>
+          <p class="data">Caught before building. Replaced with size <em>and</em> identity: a short hash per part. The mechanism is still unnamed, which is now a fact we can resolve in one reading rather than a fourth theory.</p>
+        </div>
+        <div class="verdict open">Still open</div>
+      </div>
+
+    </div>
+    <figcaption>Two mechanisms that fit a real correlation, both wrong. The correlation was never in doubt and still is not. What was wrong every time was the leap from "these move together" to "this one causes that one".</figcaption>
+  </figure>
+</section>
+
+<section class="band" data-depth="1">
+  <div class="col-wide">
+    <div class="eyebrow">How we should be doing this</div>
+    <h2>Five rules this cost us</h2>
+  </div>
+  <div class="col">
+    <p>None of these are new ideas. All of them were paid for in real money and real days, which is the only reason they are worth writing down.</p>
+  </div>
+
+  <figure class="col-wide">
+    <div class="rules">
+      <div class="rule">
+        <div class="num">01</div>
+        <h3>Instrument before you theorise</h3>
+        <p>A release that fixes a mechanism you inferred is a bet. A release that ships the gauge first turns the next question into a query. When the diagnosis is contested, the instrument is the cheaper thing to build and the only one that compounds.</p>
+        <div class="cost">Cost of skipping it: 3 rounds, one retracted headline number</div>
+      </div>
+      <div class="rule">
+        <div class="num">02</div>
+        <h3>Measure the property the system keys on</h3>
+        <p>A cache keys on identity. A budget keys on size. A rate limit keys on time. Measuring a correlate instead of the real property is how a plausible mechanism survives review by three careful people.</p>
+        <div class="cost">Cost of skipping it: the instrument we nearly shipped</div>
+      </div>
+      <div class="rule">
+        <div class="num">03</div>
+        <h3>A null needs a control</h3>
+        <p>"No misses followed a quarantined tool" sounds like a refutation. It was vacuous: no tool was ever quarantined. Before accepting an absence, confirm the thing you are looking for was capable of occurring.</p>
+        <div class="cost">Cost of skipping it: a wrong conclusion that reads exactly like a right one</div>
+      </div>
+      <div class="rule">
+        <div class="num">04</div>
+        <h3>Check the ask against source before building</h3>
+        <p>Both load-bearing claims in the original request were wrong in ways a single grep settled. Shipping what was asked for would have consumed a release, recovered nothing, and looked like a win to everyone involved.</p>
+        <div class="cost">Cost of skipping it: one release, spent</div>
+      </div>
+      <div class="rule">
+        <div class="num">05</div>
+        <h3>Write the prediction before the data arrives</h3>
+        <p>Committing to "the spine hash moves on miss turns" in advance makes the first reading a test. Reading the numbers first and then explaining them makes it a survey, and a survey can be made to agree with anything.</p>
+        <div class="cost">Cost of skipping it: you can no longer be wrong, which is worse</div>
+      </div>
+      <div class="rule">
+        <div class="num">06</div>
+        <h3>Name who sees nothing</h3>
+        <p>Every release brief says which consumers this changes nothing for. It is the line that keeps the other lines credible, and it once saved our biggest consumer a five-release goose chase.</p>
+        <div class="cost">Standing practice, kept</div>
+      </div>
+    </div>
+  </figure>
+</section>
+
+<section class="band" data-depth="1">
+  <div class="col-wide">
+    <div class="eyebrow">The batch</div>
+    <h2>Nine items, three tiers, one dependency</h2>
+  </div>
+  <div class="col">
+    <p>The ordering is not a priority list. It is a dependency argument: tier one is what makes tier three decidable, and tier two is everything that is provably correct from reading the code, so it does not have to wait for anyone's data.</p>
+  </div>
+
+  <figure class="col-wide">
+
+    <div class="tier">
+      <div class="tier-head">
+        <span class="t">Tier 1 · Ships first</span>
+        <span class="why">Because every remaining decision is currently a guess</span>
+      </div>
+      <div class="item">
+        <div class="id">1</div>
+        <div>
+          <div class="t">Segmented prefix identity</div>
+          <div class="d">Four sizes and two fingerprints per turn: spine, tool schemas, history, fresh blocks. On a miss, the fingerprint that moved names the culprit outright. No capture flag, no personal data, no reproduction run, works on the first miss.</div>
+        </div>
+      </div>
+      <div class="item">
+        <div class="id">2</div>
+        <div>
+          <div class="t">The silent compaction attempt</div>
+          <div class="d">An attempt that summarises sixty thousand tokens and then decides the result was not worth keeping currently emits nothing at all, while still paying for the summary. Real cost and real latency in front of a turn, invisible to everybody.</div>
+        </div>
+      </div>
+      <div class="item">
+        <div class="id">3</div>
+        <div>
+          <div class="t">The cheap model becomes visible</div>
+          <div class="d">Summaries and other background work run on a cheaper model whose calls are billed but never reported. No consumer can currently see or price that tier, and it means every compaction count in this investigation was a floor rather than a count.</div>
+        </div>
+      </div>
+      <div class="item">
+        <div class="id">4</div>
+        <div>
+          <div class="t">The quarantine becomes an event</div>
+          <div class="d">Round two could not be tested directly because the thing it accused leaves no trace. Now it does.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tier">
+      <div class="tier-head">
+        <span class="t">Tier 2 · Rides along</span>
+        <span class="why">Provable from source, so it waits for nothing and nobody</span>
+      </div>
+      <div class="item">
+        <div class="id">5</div>
+        <div>
+          <div class="t">Stop compaction re-firing every turn</div>
+          <div class="d">The budget compaction compacts <em>to</em> is derived from the ceiling it triggers at, so it lands at 99% of budget and the next turn pushes it straight back over. One event becomes a per-turn tax. Compact to a genuine low-water mark instead.</div>
+        </div>
+      </div>
+      <div class="item">
+        <div class="id">6</div>
+        <div>
+          <div class="t">Teach the engine how big the model's window is</div>
+          <div class="d">Today a single hand-set number decides when to compact, and nothing reconciles it against the model in use. A wrong setting is silent, and the only symptom is a bill. Derive it from the model, keep the knob as an override, and shout when the override exceeds what the model can take.</div>
+        </div>
+      </div>
+      <div class="item">
+        <div class="id">7</div>
+        <div>
+          <div class="t">Publish the turn clock</div>
+          <div class="d">Turns can run four minutes with nothing emitted. Every consumer is independently guessing how long silence means trouble, and one of them carded a healthy twelve-hour run with a button that would have duplicated it.</div>
+        </div>
+      </div>
+      <div class="item">
+        <div class="id">8</div>
+        <div>
+          <div class="t">Write down what survives a suspend</div>
+          <div class="d">A wake timeout cold-booted a daemon mid-engagement and lost in-memory state. Hosting agents that sleep is a documented contract or it is a surprise.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tier">
+      <div class="tier-head">
+        <span class="t">Tier 3 · Gated</span>
+        <span class="why">Because shipping it now would be a third guess</span>
+      </div>
+      <div class="item">
+        <div class="id">9</div>
+        <div>
+          <div class="t">Keep a quarantined tool's schema resident</div>
+          <div class="d">Withdrawing a failing tool's description breaks the discount for no benefit that refusing the call does not also give. Cheap, correct, and shipping regardless.</div>
+          <div class="gate">Ships labelled "not the fix for your bill" - the data that motivated it also ruled it out as the dominant cause</div>
+        </div>
+      </div>
+      <div class="item">
+        <div class="id">-</div>
+        <div>
+          <div class="t">The actual mechanism fix</div>
+          <div class="d">Unwritten on purpose. If the spine's fingerprint moves on miss turns, the fix is small and obvious: a per-turn counter has no business living inside a cached prefix. If it does not move, the leak is inside the transcript and we have a defect that is not currently nameable from reading the code.</div>
+          <div class="gate">Waits for tier 1's first reading on a real lane</div>
+        </div>
+      </div>
+    </div>
+
+  </figure>
+</section>
+
+<section class="band" data-depth="1">
+  <div class="col-wide">
+    <div class="eyebrow">What it is worth</div>
+    <h2>Three bets, priced separately and honestly</h2>
+  </div>
+  <div class="col">
+    <p>A single headline number here would repeat the exact error this release exists to correct. So the return is split by how confident we actually are, and the largest number is also the least certain.</p>
+  </div>
+
+  <figure class="col-wide">
+    <div class="roi">
+
+      <div class="roi-row c1">
+        <div class="h">
+          <span class="num">3 rounds → 1 query</span>
+          <span class="conf">Certain</span>
+        </div>
+        <div class="band-viz"><i style="left:0;right:2%;background:var(--sage)"></i></div>
+        <p><b>The diagnostic return.</b> This investigation consumed three exchanges with our largest consumer, a twelve-hour engagement's worth of log forensics on their side, a retracted cost claim on ours, and two mechanisms that were wrong. The instrument turns the next question of this class into a two-column join on a lane already doing paid work. This is the only tier that is not a forecast, and it is the reason the batch is ordered the way it is.</p>
+      </div>
+
+      <div class="roi-row c2">
+        <div class="h">
+          <span class="num">Small but real</span>
+          <span class="conf">High confidence</span>
+        </div>
+        <div class="band-viz"><i style="left:0;right:66%;background:var(--slate)"></i></div>
+        <p><b>The correctness return.</b> Stopping compaction re-firing removes a summary call and its latency from in front of most turns on a saturated lane. Making the cheap model visible does not save money directly, it makes a whole tier of spend priceable for the first time. Deriving the window from the model prevents a class of silent misconfiguration whose only symptom is a bill. Each is modest on its own; together they are the difference between an engine you can reason about and one you cannot.</p>
+      </div>
+
+      <div class="roi-row c3">
+        <div class="h">
+          <span class="num">50-72%</span>
+          <span class="conf">Contingent · unproven</span>
+        </div>
+        <div class="band-viz"><i style="left:34%;right:6%;background:var(--wheat)"></i></div>
+        <p><b>The mechanism return, if the prediction lands.</b> On the measured window, missing turns ran 5.7 times a cached turn and took 87% of spend: <span class="num-cell">$36.62</span> where <span class="num-cell">$10.32</span> was the floor. Recovering every miss is the 72% ceiling and nobody should promise it, because some misses are legitimately cold. Assume the unavoidable ones remain and the realistic band is <b>50-60% off affected lanes</b>. That window was roughly one sixth of a single engagement. It is the largest cost lever anyone has found in the fleet, and it is written here as a hypothesis with a named test, not a plan.</p>
+      </div>
+
+    </div>
+    <figcaption>Tier three is deliberately the widest bar and the last one. If the reading comes back and the spine is stable, this bar does not shrink, it moves: the money is still there, the mechanism is somewhere else, and we will know that in one turn instead of three rounds.</figcaption>
+  </figure>
+</section>
+
+<section class="band" data-depth="1">
+  <div class="col-wide">
+    <div class="eyebrow">Downstream</div>
+    <h2>What this hands to everything built on the engine</h2>
+  </div>
+  <div class="col">
+    <p>Delta Harness is product-neutral by design: an agent is the engine plus a bundle of config plus its state. That means an engine-level instrument arrives in every product at once, without any of them writing code.</p>
+  </div>
+
+  <figure class="col-wide">
+    <div class="fan">
+      <div class="fan-row">
+        <div class="who">Aperture<span>QS · Intake · Prep</span></div>
+        <div class="what">Stops being our measurement rig. Today they pay a forensic tax every time the engine misbehaves: pull the logs before the window ages out, hand-pair turns, run joins on a production database mid-engagement. After this, a lane doing ordinary client work emits the answer as a by-product. The cost relief is the contingent tier above; <em>this</em> part is not contingent on anything.</div>
+      </div>
+      <div class="fan-row">
+        <div class="who">Ferni<span>via Delta Connect</span></div>
+        <div class="what">The long-thread cache decay that cost $49 in a single day was diagnosed once by hand and fixed once by inference. The same class of question keeps returning on threads that run for weeks. The turn clock also fixes the stall constant every channel gateway is currently guessing on its own.</div>
+      </div>
+      <div class="fan-row">
+        <div class="who">Quarry Brain<span>Meeting Processor</span></div>
+        <div class="what">Deliberately never a testbed, always a beneficiary of a fix proven elsewhere. Gets the compaction and window work having paid none of the discovery cost, which is the correct order for the agent doing the least interruptible work.</div>
+      </div>
+      <div class="fan-row">
+        <div class="who">Delta Bench<span>the replay rig, designed not built</span></div>
+        <div class="what">The unlock nobody asked for. A benchmark comparing two engine versions currently has no way to say <em>why</em> one arm was cheaper. Segment fingerprints give it a comparable, route-independent metric: arm B held its prefix stable where arm A did not. That is a claim you can put error bars on, and it turns the rig from a cost comparison into a diagnosis.</div>
+      </div>
+      <div class="fan-row">
+        <div class="who">Every consumer<span>including the ones we do not know about</span></div>
+        <div class="what">The engine is open source. Prefix instrumentation is exactly the kind of thing an operator cannot build themselves, cannot infer from outside, and needs on their very first expensive week. Shipping it as a default is a stronger argument for the harness than any feature on the roadmap.</div>
+      </div>
+    </div>
+  </figure>
+</section>
+
+<!-- =================== TECHNICAL =================== -->
+<section class="band tech" data-depth="2">
+  <div class="col-wide">
+    <div class="eyebrow">Technical layer</div>
+    <h2>The wire, the seams, and the falsifiable claim</h2>
+  </div>
+  <div class="col">
+    <p>Everything below is checkable against the repository at the cited lines. Nothing here relies on a consumer's account of their own logs.</p>
+
+    <h3 style="margin-top:1.8rem">Assembly order</h3>
+    <p>The final message list is built once per step and sent whole:</p>
+  </div>
+
+  <div class="col-wide">
+<pre><span class="c">// run.ts:922 - the order is the cache contract</span>
+messages = [ <b>system</b>, ...withImages<span class="c">/*history*/</span>, ...<b>ephemeral</b> ]
+chat({ messages, tools, cacheKey: session_id, <b>ephemeralCount</b> })
+
+<span class="c">// on the wire, cache matching runs strictly left to right:</span>
+<span class="c">//   [ spine ][ tool schemas ][ ......... history ......... ][ fresh ]</span>
+<span class="c">//     ^ any change here invalidates everything to its right</span>
+<span class="c">//                                                             ^ free to churn</span></pre>
+  </div>
+
+  <div class="col">
+    <p><code>ephemeralCount</code> is what 0.2.11 added so the rolling breakpoints skip the trailing derived blocks. That fix is why the fresh blocks are exonerated here rather than being suspect number one.</p>
+
+    <h3 style="margin-top:1.8rem">What the instrument emits</h3>
+    <p>Six fields on the existing <code>model.call</code> event. No new event, no new consent tier, no payload capture.</p>
+  </div>
+
+  <div class="col-wide">
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr><th>Field</th><th>Answers</th><th>Why both</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="m">spine_bytes<br>spine_hash</td><td>Did the identity block change, and by how much</td><td>Carries a live count of undiscovered tools and the agent-writable self-file. Both can mutate at constant length. <b>The standing suspect.</b></td></tr>
+          <tr><td class="m">tools_bytes<br>tools_hash</td><td>Did the callable surface change</td><td>Grows on activation, shrinks only via quarantine. Ruled out on current data, not ruled out in general.</td></tr>
+          <tr><td class="m">history_bytes</td><td>Did the transcript get rewritten</td><td>No hash needed: it is append-only unless compaction touches it, and compaction already emits its own event.</td></tr>
+          <tr><td class="m">ephemeral_bytes</td><td>How much is being re-read every turn regardless</td><td>Structurally cannot break the prefix. Tracked because it is uncached by construction and worth bounding.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="callout predict">
+      <div class="fig-title">The prediction, written before the data</div>
+      <p><b>On miss turns, <span class="m">spine_hash</span> moves.</b></p>
+      <p class="fine" style="margin-top:0.7rem">The spine is rebuilt every turn at <code>run.ts:762</code> and embeds <code>searchable: allowedMap.size − active.size</code>, a counter that decrements on every tool activation, alongside the self-file that the agent rewrites through <code>remember</code>. Both produce cache-fatal, byte-invisible changes to a block sitting at position zero.</p>
+      <p class="fine"><b>If it holds:</b> the fix is to move volatile counters out of the cached prefix. Small, obvious, and it should move the affected lanes into the band above.</p>
+      <p class="fine"><b>If it does not:</b> both prefix hashes stable across a miss means the shrink is inside history, which is append-only outside compaction, and compaction is already ruled out. That would be a defect not currently nameable from source, and knowing it with certainty is worth more than a third theory.</p>
+    </div>
+  </div>
+
+  <div class="col">
+    <h3 style="margin-top:1.8rem">The correctness fixes, with their seams</h3>
+  </div>
+
+  <div class="col-wide">
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr><th>Defect</th><th>Seam</th><th>Shape of the fix</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>Compaction re-fires every turn</b><br><span class="fine">the tail budget is derived from the ceiling that triggers it, so it lands at ~99% of budget</span></td>
+            <td class="m">run.ts:872</td>
+            <td>Compact to a low-water mark independent of the trigger. This is <code>spec-compaction-tail</code>'s 94-of-94 failures in one line.</td>
+          </tr>
+          <tr>
+            <td><b>Non-shrinking attempts are silent</b><br><span class="fine">the early return precedes the event emission, so the summary is paid for and never reported</span></td>
+            <td class="m">compaction.ts:538</td>
+            <td>Emit on both paths, as 0.2.12 already did for <code>demoted_only</code>.</td>
+          </tr>
+          <tr>
+            <td><b>Utility-tier calls are invisible</b><br><span class="fine">charged through addUsage, never emitted, so any compaction count is a floor on attempts</span></td>
+            <td class="m">run.ts:1044<br>vs :484 :876 :983</td>
+            <td>Emit <code>model.call</code> from the utility path too. The accounting is already correct; only the reporting is missing.</td>
+          </tr>
+          <tr>
+            <td><b>No model-to-window knowledge</b><br><span class="fine">one hand-set number, nothing reconciles it against the model in use, a wrong value is silent</span></td>
+            <td class="m">pricing.ts<br>config.ts:314</td>
+            <td>A <code>window</code> column on the table that already exists, with its exact/leaf/prefix resolver. Ceiling derived as <code>window − max_output − reserve</code>; the env knob demoted to an override and clamped with a warning above the known window. A column, not a catalogue.</td>
+          </tr>
+          <tr>
+            <td><b>Quarantine withdraws a schema</b><br><span class="fine">breaks the prefix to stop a dead tool looping the model</span></td>
+            <td class="m">run.ts:397</td>
+            <td>Keep it advertised, short-circuit the call to a synthetic refusal. Identical protection, one branch, prefix intact.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="col">
+    <h3 style="margin-top:1.8rem">Why identity has to be a hash and not a diff</h3>
+    <p>A diff would answer the question completely and cost far too much: it needs the previous request retained in memory or on disk, it moves model-visible and potentially personal text into telemetry, and it only works on a lane where someone has deliberately turned capture on before the interesting turn happens. A short hash of each segment is a handful of bytes, carries nothing readable, is safe to export without payload consent, and answers <em>which segment</em> with certainty. It cannot answer <em>which byte</em>, which is exactly the follow-up that a targeted capture on a known-guilty segment can then answer cheaply.</p>
+    <p>That two-stage shape is the general pattern worth taking away: <b>ship the cheap always-on signal that localises, keep the expensive one for confirming.</b> The mistake in this thread was having neither.</p>
+  </div>
+
+  <div class="col">
+    <h3 style="margin-top:1.8rem">Where the route matters</h3>
+    <p>The harness speaks three wire formats, and they do not share cache mechanics. Anthropic-native takes explicit breakpoints, so placement is a lever we control and 0.2.11's fix was aimed there. OpenAI-native matches the longest stable prefix automatically with no breakpoint control at all. OpenRouter inherits whatever the upstream provider does and reports the result in a usage chunk. The instrument is deliberately route-independent, because it measures our own assembled request rather than the provider's response, which means for the first time the same number is comparable across all three. That is also what makes it useful to the benchmark rig, where averaging a cache effect across routes would hide the very thing being measured.</p>
+  </div>
+</section>
+
+<section class="band" data-depth="2">
+  <div class="col-wide">
+    <div class="eyebrow">Honesty ledger</div>
+    <h2>What would make this wrong</h2>
+  </div>
+  <div class="col">
+    <ul>
+      <li><b>The spine is stable on miss turns.</b> The headline prediction fails and the leak is somewhere we cannot currently name from source. The instrument still pays for itself; the mechanism tier does not land in this release.</li>
+      <li><b>Misses turn out to be unavoidable.</b> If a large share of them are cold starts after suspend, or genuine first turns, the recoverable band shrinks toward the bottom of the 50-72% range or below it.</li>
+      <li><b>The window floor is wrong.</b> 249,127 accepted with zero overflow is a field observation, not a published number. Seeding the catalogue from it is deliberately conservative, and the clamp is there so a wrong entry degrades loudly instead of turning compaction into overflow.</li>
+      <li><b>The quarantine fix is not the fix.</b> Ships anyway because it is correct, labelled explicitly so nobody scores it against the bill. The data that motivated it also ruled it out.</li>
+      <li><b>Nothing here is built yet.</b> Scoped, committed to the repository, and gated behind cutting 0.2.12 first.</li>
+    </ul>
+  </div>
+</section>
+
+<footer class="band">
+  <div class="col-wide">
+    <p><b>Sources in the repository.</b> <span class="m">docs/shipping-list.md</span> carries the batch. <span class="m">docs/ask-context-ceiling-and-compaction.md</span> is the original request. <span class="m">docs/reply-aperture-context-ceiling{,-2,-3}.md</span> is the full three-round record of how each claim was killed, kept deliberately so the reasoning survives the conclusion.</p>
+    <p>Delta Harness - the lean, product-neutral operator harness. <span class="m">agent = engine + bundle + state.</span></p>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var marks = Array.prototype.slice.call(document.querySelectorAll('.rail-mark'));
+    var zones = Array.prototype.slice.call(document.querySelectorAll('[data-depth]'));
+    var ticking = false;
+    function update() {
+      ticking = false;
+      var probe = window.scrollY + window.innerHeight * 0.35;
+      var current = 0;
+      for (var i = 0; i < zones.length; i++) {
+        if (zones[i].offsetTop <= probe) current = Number(zones[i].getAttribute('data-depth'));
+      }
+      for (var j = 0; j < marks.length; j++) {
+        marks[j].classList.toggle('on', Number(marks[j].getAttribute('data-depth')) === current);
+      }
+    }
+    window.addEventListener('scroll', function () {
+      if (!ticking) { ticking = true; window.requestAnimationFrame(update); }
+    }, { passive: true });
+    window.addEventListener('resize', update);
+    update();
+  })();
+</script>

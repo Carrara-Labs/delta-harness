@@ -504,6 +504,13 @@ describe("migration — legacy scope rows rebuild into the orthogonal model", ()
       INSERT INTO memory (scope, scope_id, key, value, created_at, confidence, hash, source)
         VALUES ('user','u1','learning','alice likes ranges',1000,0.9,'ha','review'),
                ('agent','delta-1','pitfall','never git push the harness',1001,0.8,'hb','self');
+      -- A real database at this version has a messages table from migration 0; this fixture only
+      -- ever built the table under test, so a later migration touching any other table fails here
+      -- for a reason no real deployment can hit.
+      CREATE TABLE messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, session_id TEXT,
+        msg TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL
+      );
       PRAGMA user_version = 6;
     `);
     raw.close();
@@ -556,6 +563,13 @@ describe("migration — legacy scope rows rebuild into the orthogonal model", ()
         ('agent', NULL, 'learning', 'same lesson', 1000, 0.7, 'duphash', 'self'),
         ('agent', NULL, 'learning', 'same lesson', 1001, 0.8, 'duphash', 'imported'),
         ('agent', 'delta-1', 'learning', 'distinct one', 1002, 0.9, 'other', 'review');
+      -- A real database at this version has a messages table from migration 0; this fixture only
+      -- ever built the table under test, so a later migration touching any other table fails here
+      -- for a reason no real deployment can hit.
+      CREATE TABLE messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, session_id TEXT,
+        msg TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL
+      );
       PRAGMA user_version = 6;
     `);
     raw.close();

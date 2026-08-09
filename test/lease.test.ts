@@ -4,7 +4,7 @@ import { existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../src/config";
-import { openDb } from "../src/db";
+import { MIGRATIONS, openDb } from "../src/db";
 import { acquireLease, releaseLease, renewLease } from "../src/lease";
 
 type LeaseRow = {
@@ -191,8 +191,10 @@ describe("lease migration", () => {
       db.query("SELECT name FROM sqlite_master WHERE name = 'thread_state'").get(),
     ).toBeTruthy();
     expect(db.query("SELECT name FROM sqlite_master WHERE name = 'vault'").get()).toBeTruthy();
+    // Pinned to the migration COUNT, not a literal: this assertion is about "every migration
+    // replayed", and hard-coding the number makes every future migration look like a failure.
     expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(
-      14,
+      MIGRATIONS.length,
     );
     db.close();
   });
