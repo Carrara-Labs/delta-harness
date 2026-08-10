@@ -1,6 +1,16 @@
 # Spec: correlate a prefix change against the provider's own cache-read drop
 
-Status: **specified, not built**. Written 2026-08-10 from a three-way read of competitor source
+Status: **SUPERSEDED, not built. Kept as a record of how the release was mis-aimed.**
+
+> The mechanism this instrument was designed to hunt was found on 2026-08-10 by enumerating our own
+> breakpoint walker, and fixed. See [`results-breakpoint-spacing-live.md`](./results-breakpoint-spacing-live.md).
+> Two parts of this spec were killed in review before that: the emitted-byte `wire` hashing cannot
+> fire for the observed defect (both serializers are deterministic, and the OpenAI-compatible path
+> has no `body.system` at all), and the fire condition compared consecutive `cacheRead` values, which
+> would have missed the 466 and 4,993-token misses it was built for. **Do not implement Part 2 as
+> written.** What survives is the shortfall correction, already shipped.
+
+Original status: **specified, not built**. Written 2026-08-10 from a three-way read of competitor source
 (`docs/research/competitor-cache-instrumentation-2026-08-10.md`).
 
 ## The problem, stated honestly

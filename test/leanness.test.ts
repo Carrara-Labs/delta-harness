@@ -6,10 +6,12 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { BAKED_PRICES, resolvePrice } from "../src/pricing";
 import {
   acceptsPromptCacheKey,
+  CACHE_LOOKBACK_BLOCKS,
   type ChatMsg,
   type ChatRequest,
   chat,
   type ModelResult,
+  rollingMarks,
   rollingScanFrom,
   usesMaxCompletionTokens,
 } from "../src/provider";
@@ -92,11 +94,17 @@ describe("rolling cache breakpoint", () => {
     const part = (tail?.content as Array<{ text?: string; cache_control?: unknown }>)[0];
     expect(part?.text).toBe(untrustedToolResult("search results here"));
     expect(part?.cache_control).toEqual({ type: "ephemeral" });
-    // the user message is the SECOND rolling mark (last two user/tool marked — survives
-    // Anthropic's ~20-block cache lookback after a big parallel-tool turn; codex #7)
-    const mid = msgs.find((m) => m.role === "user");
-    const midPart = (mid?.content as Array<{ cache_control?: unknown }>)[0];
-    expect(midPart?.cache_control).toEqual({ type: "ephemeral" });
+    // Both rolling marks land here: the fixture is short enough that the whole transcript sits
+    // inside one lookback window, so the second mark is contiguous with the first rather than
+    // spaced away from it. What the spacing rule changes is where the second lands on a LONG
+    // transcript; that is pinned by the reachability tests below, not by a count.
+    const rollingMarked = msgs.filter(
+      (m) =>
+        m.role !== "system" &&
+        Array.isArray(m.content) &&
+        (m.content as Array<{ cache_control?: unknown }>).some((p) => p.cache_control),
+    );
+    expect(rollingMarked.length).toBe(2);
   });
 
   // Field bug, 2026-08-03: both rolling marks were landing on the TRAILING derived blocks the
@@ -161,7 +169,8 @@ describe("rolling cache breakpoint", () => {
     const block = tail?.content[tail.content.length - 1];
     expect(block?.type).toBe("tool_result"); // tool results are user-role blocks natively
     expect(block?.cache_control).toEqual({ type: "ephemeral" });
-    // exactly TWO rolling marks (the last two user-role messages) + the system block = 3 of 4
+    // Two rolling marks: this fixture fits inside a single lookback window, so the second is
+    // contiguous with the first. Where it lands on a LONG transcript is the reachability tests.
     const marked = msgs.flatMap((m) => m.content).filter((b) => b.cache_control);
     expect(marked.length).toBe(2);
   });
@@ -217,6 +226,168 @@ describe("rolling cache breakpoint", () => {
     const marked = msgs.flatMap((m) => m.content).filter((b) => b.cache_control);
     expect(marked.length).toBe(2);
     expect(marked.some((b) => b.type === "tool_result")).toBe(true);
+  });
+
+  // THE 2026-08-10 FIX. Anthropic's lookback is 20 BLOCKS per breakpoint, and it finds only
+  // entries earlier requests already WROTE: "if a growing conversation pushes your breakpoint 20
+  // or more blocks past the last write, the lookback window misses it. Add a second breakpoint
+  // closer to that position from the start so a write accumulates there before you need it."
+  // Two ADJACENT marks share one window instead of starting two, so a turn appending >=20 blocks
+  // outran BOTH and re-billed the whole prefix. Enumerating the old walker put the marks exactly
+  // ONE block apart on every parallel tool burst at any width — precisely the case the second
+  // mark was added for (codex #7). A width-N burst is ~2N blocks (N tool_use + N results), so
+  // ~10 parallel calls was enough. Assert the SPACING, because the count was never the bug.
+  // Anthropic's published number, hard-coded ON PURPOSE. Asserting against the imported
+  // CACHE_LOOKBACK_BLOCKS made these tests vacuous: setting the constant to 0 also set the
+  // threshold to 0, so `expect(gap 1).toBeGreaterThanOrEqual(0)` passed and the mutation check
+  // came back green on a broken build. A test of "do we agree with the vendor" must carry the
+  // vendor's value, not ours. `CACHE_LOOKBACK_BLOCKS === 20` is pinned separately below.
+  const DOCUMENTED_LOOKBACK = 20;
+
+  /** A long, cache-friendly transcript: 30 alternating one-block turns after the spine. */
+  const longBase = (): ChatMsg[] => {
+    const h: ChatMsg[] = [{ role: "system", content: "SPINE" }];
+    for (let i = 0; i < 30; i++)
+      h.push(i % 2 ? { role: "assistant", content: `a${i}` } : { role: "user", content: `u${i}` });
+    return h;
+  };
+  /** A parallel tool turn of the given width: ONE assistant message carrying N tool_use blocks,
+   *  then N tool results. That is ~2N blocks from one turn, which is what outruns a lookback
+   *  window and why block counting rather than message counting is the whole game here. */
+  const toolBurst = (width: number, tag: string): ChatMsg[] => [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: Array.from({ length: width }, (_, i) => ({
+        id: `${tag}${i}`,
+        type: "function" as const,
+        function: { name: "f", arguments: "{}" },
+      })),
+    },
+    ...Array.from({ length: width }, (_, i) => ({
+      role: "tool" as const,
+      tool_call_id: `${tag}${i}`,
+      content: `r${i}`,
+    })),
+  ];
+  /** The derived per-turn blocks the engine appends and the marks must skip. */
+  const EPHEMERAL: ChatMsg[] = [
+    { role: "user", content: "# Context" },
+    { role: "user", content: "[skills]" },
+  ];
+
+  /** Block indices carrying a breakpoint, counted in wire order the way the PROVIDER counts
+   *  blocks: an assistant turn with N tool_calls is N tool_use blocks (this is the compat wire,
+   *  where tool_calls ride a sibling field rather than the content array), a parts array is one
+   *  block per part, everything else is one. Counting messages instead of blocks here would let a
+   *  parallel tool burst read as ~1 block and quietly agree with a mis-measured fix. */
+  const markedBlockIndices = (
+    msgs: Array<{ content: unknown; tool_calls?: unknown[] }>,
+  ): number[] => {
+    const out: number[] = [];
+    let n = 0;
+    for (const m of msgs) {
+      // `content: null` with N tool_calls is N blocks, NOT N+1 — a null content array contributes
+      // nothing. Counting the null as a block made this helper disagree with the production
+      // counter by one per burst, which is the size of the error being hunted.
+      const parts = (
+        Array.isArray(m.content) ? m.content : m.content == null ? [] : [m.content]
+      ) as Array<{ cache_control?: unknown }>;
+      for (const b of parts) {
+        if (b?.cache_control) out.push(n);
+        n++;
+      }
+      n += m.tool_calls?.length ?? 0; // tool_use blocks carry no breakpoint, but they occupy space
+    }
+    return out;
+  };
+
+  // THE PROPERTY, not a proxy for it. The first cut of this asserted only that the two marks were
+  // >= 20 blocks apart, which a mark at B-21 satisfies — and B-21 leaves block B-20 covered by
+  // NEITHER window, so the fix "passed" while missing at burst width 9, a width the ADJACENT marks
+  // it replaced would have hit (codex). Spacing is a means; what matters is whether the next
+  // request's windows can still reach a position this request wrote.
+  //
+  // A breakpoint at block B covers B..B-19 (20 positions, breakpoint inclusive), so a write at W is
+  // reachable from breakpoint B when W <= B and B - W < 20.
+  const reachable = async (width: number, native: boolean): Promise<boolean> => {
+    const cfg = native
+      ? {
+          baseUrl: base,
+          apiKey: "t",
+          models: ["claude-sonnet-5"],
+          api: "anthropic" as const,
+          maxRetries: 0,
+        }
+      : { baseUrl: base, apiKey: "t", models: ["anthropic/claude-sonnet-5"], maxRetries: 0 };
+    const drop = (ms: Array<{ role: string; content: unknown }>) =>
+      native ? ms : ms.filter((m) => m.role !== "system"); // compat carries system inline
+    const persistedN = [...longBase(), ...toolBurst(width, "x")];
+    const persistedN1 = [
+      ...persistedN,
+      { role: "assistant" as const, content: "reply" },
+      { role: "user" as const, content: "next" },
+      ...toolBurst(width, "y"),
+    ];
+    await chat(cfg, { messages: [...persistedN, ...EPHEMERAL], ephemeralCount: EPHEMERAL.length });
+    const writes = markedBlockIndices(drop(captured.messages as never));
+    await chat(cfg, { messages: [...persistedN1, ...EPHEMERAL], ephemeralCount: EPHEMERAL.length });
+    const bps = markedBlockIndices(drop(captured.messages as never));
+    return bps.some((b) => writes.some((w) => w <= b && b - w < DOCUMENTED_LOOKBACK));
+  };
+
+  for (const native of [true, false]) {
+    const wire = native ? "anthropic-native" : "openai-wire";
+    test(`${wire}: turn N+1 can still reach a turn N cache write across burst widths`, async () => {
+      const missed: number[] = [];
+      for (let w = 1; w <= 16; w++) if (!(await reachable(w, native))) missed.push(w);
+      // Before the spacing fix this failed from width 9 up; before ANY fix, from width 9 up with
+      // adjacent marks it failed differently. Either way a miss here is money.
+      expect(missed).toEqual([]);
+    });
+  }
+
+  test("width 9 specifically: the boundary the first cut of the fix regressed", async () => {
+    // Pinned on its own because it is the exact case an off-by-one reintroduces, and a sweep that
+    // someone later trims to \"a few widths\" would quietly drop it.
+    expect(await reachable(9, true)).toBe(true);
+    expect(await reachable(9, false)).toBe(true);
+  });
+
+  // The contiguity arithmetic itself, pinned deterministically. The reachability sweep above
+  // proves the PROPERTY but cannot pin the exact boundary: with three chained marks a one-block
+  // hole only bites when a previous write lands exactly in it, so an off-by-one shifts WHICH
+  // widths hit rather than failing outright. Uniform one-block messages remove that luck.
+  //
+  // A breakpoint at block B covers B..B-19, so the next window starts at B-20 — marks exactly 20
+  // apart, not 21. Getting this wrong is invisible in a fixture and expensive in production.
+  test("rollingMarks spaces marks EXACTLY one window apart on uniform one-block messages", () => {
+    const marks = rollingMarks(
+      50,
+      () => true, // every position eligible
+      () => 1, // one block each
+    );
+    expect(marks).toEqual([50, 30, 10]);
+  });
+
+  test("rollingMarks returns fewer marks rather than crossing an over-large message", () => {
+    // A single message bigger than the whole window cannot be stepped over: a burst of 20+
+    // parallel tools is one assistant message of 20+ tool_use blocks. This is the hard limit the
+    // spacing fix does not remove, and it is asserted so it stays a known limit, not a surprise.
+    const marks = rollingMarks(
+      5,
+      () => true,
+      (i) => (i === 3 ? 99 : 1), // an impassable message at index 3
+    );
+    // Index 3 is still reachable (stepping 5 -> 4 -> 3 crosses only 2 blocks); its own 99 blocks
+    // are crossed on the step PAST it, which is where the walk stops. So two marks, not three:
+    // the chain ends at the wall rather than jumping it.
+    expect(marks).toEqual([5, 3]);
+  });
+
+  test("the lookback constant matches Anthropic's documented window", () => {
+    // Pinned separately from the spacing tests so the two cannot drift together.
+    expect(CACHE_LOOKBACK_BLOCKS).toBe(DOCUMENTED_LOOKBACK);
   });
 
   // codex P3: the documented clamping was asserted only through one finite value. Pin the

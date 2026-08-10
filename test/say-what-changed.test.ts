@@ -750,4 +750,53 @@ describe("S10 cache_shortfall_tokens", () => {
     expect(seen[1]?.cache_shortfall_tokens).toBe(45);
     expect(seen[1]?.cache_hit_pct).toBe(83); // the ratio, meanwhile, reads as a 17% "miss"
   });
+
+  // A request cannot re-read more than it CONTAINS. When this turn is smaller than the one before
+  // it — which is exactly what compaction produces — comparing against the previous input alone
+  // reports a huge shortfall for a turn that cached everything available to it. Bounding by
+  // min(prev, current) is the fix; Pi's harness derived the same form independently.
+  test("a turn that SHRANK (post-compaction) is not slandered by the previous turn's size", async () => {
+    let call = 0;
+    const deps = makeDeps(async () => {
+      call++;
+      if (call === 1)
+        return {
+          ok: true,
+          model: "m",
+          message: {
+            role: "assistant",
+            tool_calls: [
+              { id: "c1", type: "function", function: { name: "add", arguments: '{"a":1,"b":2}' } },
+            ],
+          },
+          finishReason: "tool_calls",
+          latencyMs: 1,
+          usage: { input: 5_000, output: 5, cacheRead: 0, cacheWrite: 0, total: 5_005, costUsd: 0 },
+        } as ModelResult;
+      return {
+        ok: true,
+        model: "m",
+        message: { role: "assistant", content: "done" },
+        finishReason: "stop",
+        latencyMs: 1,
+        // History collapsed to 2,000 tokens; 1,980 of them served from cache. 20 short, not 3,020.
+        usage: {
+          input: 2_000,
+          output: 5,
+          cacheRead: 1_980,
+          cacheWrite: 0,
+          total: 2_005,
+          costUsd: 0,
+        },
+      } as ModelResult;
+    }, new Map(testTools()));
+    const seen: Record<string, unknown>[] = [];
+    deps.events.on((e) => {
+      if (e.type === "model.call") seen.push(e.data as Record<string, unknown>);
+    });
+    const queue = new Queue(deps);
+    await queue.wait(queue.enqueue({ input: "add one and two" }).id);
+    // Unbounded, this reads 5,000 - 1,980 = 3,020 and every compaction looks like a cache disaster.
+    expect(seen[1]?.cache_shortfall_tokens).toBe(20);
+  });
 });

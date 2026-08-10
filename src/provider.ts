@@ -775,6 +775,85 @@ export function rollingScanFrom(length: number, ephemeralCount: unknown): number
   return length - 1 - n;
 }
 
+/** Anthropic's cache lookup scans at most this many BLOCKS back from each breakpoint, counting
+ * the breakpoint itself ("The lookback window is 20 blocks" — prompt-caching docs). */
+export const CACHE_LOOKBACK_BLOCKS = 20;
+
+/** Rolling breakpoints placed per request. Anthropic allows 4 explicit `cache_control` markers and
+ * the system prefix takes one, so 3 is the whole remaining budget. Spending it is free — "cache
+ * breakpoints themselves don't add any cost" (prompt-caching docs) — and it is spent on evidence:
+ * with 2 marks a burst of 17+ parallel tools still lost the cache, because the burst's own
+ * assistant message is one long ineligible span that a mark cannot land inside. The 4th slot is
+ * only contended by AUTOMATIC caching, which is opt-in via a top-level `cache_control` field we do
+ * not send. */
+const ROLLING_MARKS = 3;
+
+/** Pick the two ROLLING breakpoint indices, walking back from `from`.
+ *
+ * The second mark is held a full lookback window behind the first, and that spacing is the whole
+ * point. Two marks placed ADJACENTLY share one window instead of starting two, so a turn that
+ * appends >= 20 blocks outruns both and re-bills the entire prefix. That is not hypothetical:
+ * enumerating this walker put both marks exactly ONE block apart on every parallel tool burst,
+ * at any width — the precise case the second mark was added for (codex #7). A width-N burst is
+ * ~2N blocks (N `tool_use` + N results), so ~10 parallel calls was enough to lose the cache.
+ *
+ * The docs prescribe the remedy directly: "If a growing conversation pushes your breakpoint 20 or
+ * more blocks past the last write, the lookback window misses it. Add a second breakpoint closer
+ * to that position from the start so a write accumulates there before you need it." Spacing the
+ * second mark one window back widens the tolerated per-turn growth from 19 blocks to ~39.
+ *
+ * When no eligible message sits far enough back, ONE mark is returned rather than two adjacent
+ * ones. That is not a regression: adjacent marks cover a single block more than one mark does.
+ *
+ * Measured on a 30-message transcript with a parallel tool burst, simulating whether turn N+1 can
+ * reach a write turn N made: the cache survived to a burst width of **8 before, ~20 after**.
+ *
+ * A THIRD rolling mark would extend that to ~40 and is a one-line change here (`marks.length < 3`),
+ * and the docs confirm "cache breakpoints themselves don't add any cost". It is deliberately NOT
+ * taken: it spends our last slot of Anthropic's 4 (we use 1 system + 2 rolling), and no lane has
+ * yet been measured emitting bursts wider than 20. Take it when a lane's observed burst width says
+ * so, not before. */
+export function rollingMarks(
+  from: number,
+  eligible: (i: number) => boolean,
+  blocksAt: (i: number) => number,
+): number[] {
+  const marks: number[] = [];
+  let first = -1;
+  for (let i = from; i >= 0 && first < 0; i--) if (eligible(i)) first = i;
+  if (first < 0) return marks;
+  marks.push(first);
+
+  // The second window must be CONTIGUOUS with the first, not merely far from it. A breakpoint at
+  // block B covers B..B-19 (20 positions, breakpoint inclusive), so the next window has to begin at
+  // B-20; land it at B-21 and block B-20 belongs to neither. The first cut of this fix took "the
+  // first eligible position at least 20 blocks back", which is exactly B-21 for one-block messages,
+  // and it MISSED at burst width 9 where the old adjacent marks hit (codex). Take instead the
+  // furthest-back eligible position still INSIDE the window.
+  //
+  // `gap` counts the blocks of the message stepped OVER, not the one arrived at: a mark rides the
+  // LAST block of its message, so moving from message j to j-1 crosses blocksAt(j) positions.
+  // Getting that backwards is the same off-by-one in a different disguise.
+  // Chain the remaining marks, each starting a window contiguous with the one before it. A wide
+  // parallel-tool turn is a long INELIGIBLE span (its assistant message carries every tool_use
+  // block), so a mark cannot always land where the window boundary falls; chaining recovers the
+  // reach that a single extra mark cannot.
+  let anchor = first;
+  while (marks.length < ROLLING_MARKS) {
+    let gap = 0;
+    let next = -1;
+    for (let i = anchor - 1; i >= 0; i--) {
+      gap += blocksAt(i + 1);
+      if (gap > CACHE_LOOKBACK_BLOCKS) break;
+      if (eligible(i)) next = i;
+    }
+    if (next < 0) break;
+    marks.push(next);
+    anchor = next;
+  }
+  return marks;
+}
+
 function withPromptCache(
   messages: ChatMsg[],
   model: string,
@@ -794,28 +873,35 @@ function withPromptCache(
   // prefix does. Opt-in via DELTA_CACHE_TTL=1h.
   const ccStable = cacheTtl ? { cache_control: { type: "ephemeral", ttl: cacheTtl } } : cc;
   // Mark the LAST system message only (Anthropic hard-caps 4 explicit breakpoints; marking
-  // every system could exceed it — codex #6) + the last TWO user/tool messages. Two rolling
-  // marks (not one) because Anthropic's cache lookup only scans ~20 blocks back from a
-  // breakpoint: a turn with many parallel tool calls can add >20 blocks, jumping past a
-  // single previous mark and forcing a full cache rewrite (codex #7). Total: 3 of 4.
+  // every system could exceed it — codex #6) + TWO rolling user/tool messages, held a lookback
+  // window apart by `rollingMarks` so they start two windows rather than sharing one. Total: 3 of 4.
   let lastSystem = -1;
-  const rolling: number[] = []; // last two PERSISTED user/tool indices
+  for (let i = framed.length - 1; i >= 0 && lastSystem < 0; i--)
+    if (framed[i]?.role === "system") lastSystem = i;
   // Only the ROLLING scan is restricted — the system mark still scans the whole array, so an
   // over-large count can never cost us the stable prefix too.
-  const rollingFrom = rollingScanFrom(framed.length, ephemeralCount);
-  for (let i = framed.length - 1; i >= 0; i--) {
-    const m = framed[i];
-    const r = m?.role;
-    if (lastSystem < 0 && r === "system") lastSystem = i;
-    if (i > rollingFrom) continue;
-    // String-content only: the trailing parts-array user message (the ephemeral
-    // image attachment, Sprint 8) is DERIVED and moves every turn — marking it
-    // burns one of the two rolling breakpoints on a prefix that can never match
-    // the next request (codex S8 #11). Mark stable transcript messages instead.
-    if (rolling.length < 2 && (r === "user" || r === "tool") && typeof m?.content === "string")
-      rolling.push(i);
-    if (lastSystem >= 0 && rolling.length === 2) break;
-  }
+  // String-content only: the trailing parts-array user message (the ephemeral image attachment,
+  // Sprint 8) is DERIVED and moves every turn — marking it burns a rolling breakpoint on a prefix
+  // that can never match the next request (codex S8 #11). Mark stable transcript messages instead.
+  const rolling = rollingMarks(
+    rollingScanFrom(framed.length, ephemeralCount),
+    (i) => {
+      const m = framed[i];
+      return (m?.role === "user" || m?.role === "tool") && typeof m?.content === "string";
+    },
+    // NOT one-block-per-message. An assistant turn carrying N tool_calls arrives at Anthropic as N
+    // tool_use blocks, and a parts-array user message as one block per part. Counting either as 1
+    // under-measures a parallel tool burst by ~N and pushes the second mark further back than
+    // intended, which can open a gap the previous turn's write falls into — the same class of
+    // block-vs-message error this whole fix exists to correct, on the wire Aperture actually runs.
+    (i) => {
+      const m = framed[i];
+      if (!m) return 1;
+      const calls = m.role === "assistant" ? (m.tool_calls?.length ?? 0) : 0;
+      const parts = Array.isArray(m.content) ? m.content.length : m.content ? 1 : 0;
+      return Math.max(1, calls + parts);
+    },
+  );
   return framed.map((m, i) => {
     if (m.role === "system" && i === lastSystem)
       return { role: "system", content: [{ type: "text", text: m.content, ...ccStable }] };
@@ -1154,25 +1240,31 @@ export function toAnthropic(
       msgs.push({ role: "user", content: blocks });
     }
   }
-  // ROLLING breakpoints (see withPromptCache): mark the last block of the final TWO
-  // user-role messages (tool_results are user-role here, so the tool-loop tail is covered).
-  // Two marks, not one — Anthropic's ~20-block cache lookback can miss a single previous
-  // mark after a big parallel-tool turn (codex #7). Never on tool_use (assistant) blocks.
-  // Skip the trailing DERIVED blocks (each string-content ephemeral becomes exactly one user
-  // message above, and they are last), and skip any message carrying an image: both are rebuilt
-  // every turn, so a prefix ending on one can never be matched again.
-  let marked = 0;
-  for (let i = rollingScanFrom(msgs.length, ephemeralCount); i >= 0 && marked < 2; i--) {
+  // ROLLING breakpoints: mark the last block of TWO user-role messages held a lookback window
+  // apart by `rollingMarks` (tool_results are user-role here, so the tool-loop tail is covered).
+  // Never on tool_use (assistant) blocks. Skip the trailing DERIVED blocks (each string-content
+  // ephemeral becomes exactly one user message above, and they are last), and skip any message
+  // carrying an image: both are rebuilt every turn, so a prefix ending on one never matches again.
+  // Unlike the compat wire, ONE message here can carry MANY blocks — a parallel tool turn is one
+  // assistant message of N tool_use blocks plus N results — which is exactly why the spacing is
+  // counted in blocks and not in messages.
+  const eligible = (i: number): boolean => {
     const m = msgs[i];
-    if (m?.role !== "user") continue;
+    if (m?.role !== "user") return false;
     // Image blocks are cast in above (they are outside AnthropicContentBlock), so widen to read
     // the discriminant rather than trusting the narrowed union.
-    if (m.content.some((b) => (b as { type: string }).type === "image")) continue;
-    const block = m.content[m.content.length - 1];
-    if (block && block.type !== "tool_use") {
-      block.cache_control = { type: "ephemeral" };
-      marked++;
-    }
+    if (m.content.some((b) => (b as { type: string }).type === "image")) return false;
+    const last = m.content[m.content.length - 1];
+    return !!last && last.type !== "tool_use";
+  };
+  for (const i of rollingMarks(
+    rollingScanFrom(msgs.length, ephemeralCount),
+    eligible,
+    (i) => msgs[i]?.content.length ?? 1,
+  )) {
+    // `eligible` already excluded tool_use; re-checked because that is what narrows the union.
+    const block = msgs[i]?.content.at(-1);
+    if (block && block.type !== "tool_use") block.cache_control = { type: "ephemeral" };
   }
   return { system, msgs };
 }

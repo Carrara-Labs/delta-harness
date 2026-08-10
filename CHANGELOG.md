@@ -6,6 +6,52 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.14] - 2026-08-10
+
+The second breakpoint. A turn that calls many tools in parallel no longer loses the prompt cache,
+because our rolling cache breakpoints were landing one block apart and sharing a single lookback
+window instead of starting separate ones.
+
+Anthropic's cache lookback is 20 blocks per breakpoint and finds only positions earlier requests
+already wrote. A width-N parallel tool turn is roughly 2N blocks, so about **10 parallel tool calls**
+outran both marks and re-billed the entire prefix. Measured live, arms differing only in placement:
+at burst width 12 a turn's cache read went **2,523 to 10,207** and its cache write **8,745 to 1,061**,
+which is 4.8x cheaper on an affected turn.
+
+**If your agent calls fewer than 10 tools in parallel, this release changes nothing for you.**
+At widths 4 and 9 the two arms are identical to the token; the threshold is exactly 10, which is what
+the model predicts: a turn adds 2N+2 blocks and two adjacent marks cover at most 20. That is also
+why the defect appeared on a lane doing wide record fan-out and never on a chat-shaped one.
+
+### Upgrade
+0.2.14 adds no migration, so from 0.2.13 it is reversible. **From 0.2.11 or earlier it is not** — it
+carries the one-way schema step 0.2.13 introduced. Snapshot the whole `/data` volume, grep the
+archive for `DELTA.md`, then restore it and boot the old version against it before upgrading. A
+snapshot that exists is not a rollback path that works.
+
+### Fixed
+- **Rolling cache breakpoint windows are chained contiguously**, on both the native Anthropic and
+  OpenAI-compatible wires. A breakpoint covers 20 blocks including itself, so the next window begins
+  exactly 20 back; three marks now rather than two, since Anthropic allows four, the system prefix
+  takes one, and breakpoints cost nothing. Block counting is real: an assistant turn carrying N tool
+  calls is N blocks, not one. Beyond a burst of ~19 the cache is still lost and no placement fixes
+  it — that burst is a single message wider than the entire lookback window.
+- **`calls` is bounded** by age and a byte budget (`DELTA_RETENTION_MAX_CALL_BYTES`, default 32MB).
+  The debug-capture table had no bound at all; on one lane it reached 45% of the database from a flag
+  left on. Bytes rather than rows, because a captured call is ~95KB on one lane and ~700KB on another.
+  Byte-accurate: SQLite `LENGTH()` counts characters, which undercounted non-ASCII payloads by ~3x.
+- **`cache_shortfall_tokens` is bounded by the current turn's input too.** A turn that shrank, which
+  is what compaction produces, previously reported a large shortfall for a perfectly cached turn.
+- **`list_schedules` and `cancel_schedule` carry the control server's reason.** A bare `409` was read
+  by an agent as "my schedules are unreadable" when the server had said "no active agent turn".
+- **An empty provider error body carries its HTTP status**, and a 404 names the usual cause: a
+  `MODEL_BASE_URL` missing its `/v1` path.
+
+### Changed
+- **Sub-agent capability prose is locked to the enforced filter by test.** Children have been
+  read-only since 0.2.4 while five places said otherwise, including the child's own role prompt,
+  which instructed it to write files the engine refuses.
+
 ## [0.2.13] - 2026-08-09
 
 Say what changed. The engine now reports which part of the prompt moved between turns, so a cache

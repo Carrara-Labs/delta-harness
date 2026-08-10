@@ -1,6 +1,16 @@
-# Harness 0.2.14 — "name the miss"
+# Harness 0.2.14 — "the second breakpoint"
 
-Status: **specified, not built**. Written 2026-08-10.
+Status: **headline fix built and measured live; release not cut.** Written 2026-08-10.
+
+**The release changed shape twice in one day.** It was scoped as a diagnostic ("name the miss"),
+codex returned NO-GO on that instrument, and then the mechanism was found by enumerating our own
+breakpoint walker: the two rolling `cache_control` marks land one block apart on every parallel tool
+burst, sharing a single 20-block lookback window instead of starting two, so ~10 parallel tool calls
+re-bills the whole prefix. Measured live at 4.8x cheaper on an affected turn, byte-identical below
+the threshold. Evidence: [`results-breakpoint-spacing-live.md`](./results-breakpoint-spacing-live.md).
+
+So 0.2.14 leads with a **fix**, not an instrument, and the diagnostic work shrinks to a supporting
+role. That is a materially easier case for a consumer being asked to spend an expensive upgrade.
 
 Specs: [`spec-cache-break-correlator.md`](./spec-cache-break-correlator.md) ·
 [`spec-capability-prose-lock.md`](./spec-capability-prose-lock.md).
@@ -68,16 +78,18 @@ in full at the end of this document; the table below is the corrected scope.
 
 | # | item | why it is in this release |
 | --- | --- | --- |
-| 1 | **cache-miss attribution**, re-aimed (see the correlator spec) | their defect, measured 27/27 on their lane, unnamed for three releases |
+| 1 | **contiguous rolling breakpoint windows** — the mechanism behind the 1-in-25 miss, found and measured | their defect, 27/27 on their lane, unexplained for three releases. **This is the headline** |
 | 2 | **`calls` bounded by age and bytes** (`DELTA_RETENTION_MAX_CALL_BYTES`, 32MB) | at ~700KB/call a 200-turn engagement is ~120MB against 1GB volumes shared with the WAL |
-| 3 | **effort inheritance for children, explicit and defaulting to today's behaviour** | promised for 0.2.13 on 246 production runs; deferring it again spends their upgrade for them |
-| 4 | **opt-in MCP inheritance for children** (`DELTA_SUBAGENT_INHERIT_MCP`, default off) | the absence made their agent write "Sub-agents have NO aperture tools" into its own state |
-| 5 | `min()` guard, 1024-token floor, and reset rules on `cache_shortfall_tokens` | sharpens the metric they will be scoring on |
-| 6 | generated child-role capability clause (the narrow half of the prose lock) | stops the class of defect that made their sub-agent docs wrong for ten releases |
-| 7 | schedule read paths carry the control server's reason | an agent filed a blocker on a bare `409` |
-| 8 | empty provider error bodies carry their status; a 404 names the missing `/v1` | cost an hour locally, and no competitor has this |
+| 3 | `min(prev, current)` bound on `cache_shortfall_tokens` | a turn that shrank reported a large false shortfall, and compaction is what makes turns shrink |
+| 4 | child capability prose locked to the enforced filter by test | stops the class of defect that made their sub-agent docs wrong for ten releases |
+| 5 | schedule read paths carry the control server's reason | an agent filed a blocker on a bare `409` |
+| 6 | empty provider error bodies carry their status; a 404 names the missing `/v1` | cost an hour locally, and no competitor has this |
 
-Items 2, 7 and 8 are **already on `main`**, built and tested, unreleased.
+Items 2, 5 and 6 are **already on `main`**, built and tested, unreleased.
+
+**The cache-miss correlator is NOT in this release.** It was the headline of the first draft; codex
+showed its fire condition would have missed the very events it was built for, and then the mechanism
+was found without it. `cache_shortfall_tokens` stays as the field signal, corrected.
 
 **Cut from the draft after review:**
 
@@ -99,12 +111,12 @@ Items 2, 7 and 8 are **already on `main`**, built and tested, unreleased.
 
 | item | why not now |
 | --- | --- |
-| **the mechanism fix** | four proposed mechanisms are dead, one of them a written prediction that measurement falsified. This release instruments; it does not guess a fifth time |
+| ~~**the mechanism fix**~~ | **FOUND AND SHIPPED.** The fifth candidate was not a guess: it was the shipping-list item "Anthropic's block-count cache lookback", described correctly since 0.2.11 and never tested as the suspect. Confirmed by the vendor's own docs and measured live |
 | **TTL-gated two-stage prune** (OpenClaw's) | a complete validated design worth porting, but it interacts with compaction and they shipped two double-compaction bugs at exactly that seam. Its own release |
 | **persist and reuse the spine bytes** (Hermes') | structurally makes the miss impossible rather than observable, which is better, but it is a rebuild of how the spine reaches the wire |
 | **heartbeat just under the cache TTL** | a real cost lever, but it belongs to Connect and the lane config, not the engine, and Aperture's burst shape benefits least |
 | **request capture below the serializer** | gated on the correlator returning `none` at a meaningful rate. Building it now would be the fourth instrument bought on analogy rather than evidence |
-| ~~**effort inheritance**, ~~**opt-in MCP mount**~~ | **MOVED IN.** Both were explicitly promised for 0.2.13 on 246 production runs. Deferring them a second time while Aperture spends its single upgrade contradicts the constraint this plan is built on. The cost and security objections are answered by making both explicit and default-off, not by deferring: an explicit child-effort setting defaulting to current behaviour, and `DELTA_SUBAGENT_INHERIT_MCP` off by default with the act-as warning kept and a test that no MCP config crosses without opt-in |
+| **effort inheritance**, **opt-in MCP mount** | **DEFERRED to 0.2.15, and this reverses the earlier call.** They were moved in when 0.2.14 was a diagnostic that needed justifying. It is now a measured fix for the exact defect the waiting consumer escalated, which justifies the trip by itself. Each independently changes cost/latency or act-as authority and needs its own brief. Codex agreed on the second pass |
 
 ## Semantics that break dashboards
 
