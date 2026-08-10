@@ -25,13 +25,14 @@ N tool-result messages. So roughly **10 parallel tool calls** was enough to outr
 
 ## The fix
 
-`rollingMarks` (`provider.ts`) holds the second mark a full lookback window behind the first,
-counted in **blocks** rather than messages, because one native message can carry many blocks. Shared
-by both serializers: a previous breakpoint fix shipped to the compat wire only and left native, the
-wire the affected agent runs, reproducing the bug in full (codex P1).
+`rollingMarks` (`provider.ts`) **chains** the marks: each starts a lookback window contiguous with
+the one before it, landing on the furthest-back eligible position still inside that window. Counted
+in **blocks** rather than messages, because one native message can carry many. Shared by both
+serializers, because a previous breakpoint fix shipped to the compat wire only and left native — the
+wire the affected agent runs — reproducing the bug in full (codex P1).
 
-When no eligible message sits far enough back, one mark is returned rather than two adjacent ones.
-That is not a regression: adjacent marks cover a single block more than a lone mark does.
+Three marks, not two. See the corrected section at the end for why, and for the off-by-one that the
+first cut of this fix shipped with.
 
 ## Live measurement
 
@@ -71,15 +72,6 @@ Priced at Anthropic's rates (writes 1.25x base, reads 0.1x), effective input cos
 **Byte-identical.** The fix is a no-op below the threshold. That is what separates a mechanism from
 a general improvement, and it was predicted before the run.
 
-### Simulated width sweep
-
-Modelling the documented rule (can turn N+1's breakpoints reach a position turn N wrote?):
-
-| | cache survives to burst width |
-| --- | --- |
-| old | **8** |
-| new | **~20** |
-
 ## Why nobody could explain the lane distribution
 
 Aperture fans out over records and measured the defect **27/27** on affected turns. Ferni calls one
@@ -90,16 +82,9 @@ distribution we observed and could not account for through four dead mechanisms.
 
 ## Name the consumer who sees nothing
 
-**Any lane whose turns call fewer than ~8 tools in parallel sees no change at all**, in cost,
-latency, or behaviour. The width-4 control above is that consumer, measured rather than asserted.
-
-## What is deliberately not done
-
-A **third** rolling mark would extend survival to a burst width of ~40 and is a one-line change
-(`marks.length < 3`); the docs confirm "cache breakpoints themselves don't add any cost". It is not
-taken here because it spends the last of Anthropic's 4 slots (we use 1 system + 2 rolling) and **no
-lane has yet been measured emitting bursts wider than 20**. Take it when an observed burst width says
-so, not before.
+**Any lane whose turns call fewer than 10 tools in parallel sees no change at all**, in cost,
+latency, or behaviour. Measured, not estimated: at width 4 and at width 9 the two arms are identical
+to the token. The threshold is exactly 10.
 
 ## Honesty ledger
 
@@ -109,6 +94,8 @@ so, not before.
   the absolute numbers do not transfer; the mechanism and the threshold do.
 - The simulated sweep models Anthropic's documented rule, not their implementation. The live
   measurement is the evidence; the sweep only says where to look.
+- Beyond a burst of ~19 the cache is still lost, and no placement fixes it: a burst of 20+ parallel
+  tools is one assistant message of 20+ `tool_use` blocks, wider than the whole lookback window.
 - Verified on a real agent for REGRESSION only (see below). Ferni's turns are too narrow to
   exercise the fix, so no live agent has yet demonstrated the benefit. Aperture is the lane that
   can, and has not run it.

@@ -81,8 +81,6 @@ in full at the end of this document; the table below is the corrected scope.
 | 0 | **the breakpoint-spacing fix** — the mechanism behind the 1-in-25 miss, found and measured | their defect, 27/27 on their lane, unexplained for three releases. **This is the headline** |
 | 1 | cache-miss attribution, re-aimed and now supporting rather than leading | confirms the fix in the field and catches whatever is left |
 | 2 | **`calls` bounded by age and bytes** (`DELTA_RETENTION_MAX_CALL_BYTES`, 32MB) | at ~700KB/call a 200-turn engagement is ~120MB against 1GB volumes shared with the WAL |
-| 3 | **effort inheritance for children, explicit and defaulting to today's behaviour** | promised for 0.2.13 on 246 production runs; deferring it again spends their upgrade for them |
-| 4 | **opt-in MCP inheritance for children** (`DELTA_SUBAGENT_INHERIT_MCP`, default off) | the absence made their agent write "Sub-agents have NO aperture tools" into its own state |
 | 5 | `min()` guard, 1024-token floor, and reset rules on `cache_shortfall_tokens` | sharpens the metric they will be scoring on |
 | 6 | generated child-role capability clause (the narrow half of the prose lock) | stops the class of defect that made their sub-agent docs wrong for ten releases |
 | 7 | schedule read paths carry the control server's reason | an agent filed a blocker on a bare `409` |
@@ -110,12 +108,12 @@ Items 2, 7 and 8 are **already on `main`**, built and tested, unreleased.
 
 | item | why not now |
 | --- | --- |
-| **the mechanism fix** | four proposed mechanisms are dead, one of them a written prediction that measurement falsified. This release instruments; it does not guess a fifth time |
+| ~~**the mechanism fix**~~ | **FOUND AND SHIPPED.** The fifth candidate was not a guess: it was the shipping-list item "Anthropic's block-count cache lookback", described correctly since 0.2.11 and never tested as the suspect. Confirmed by the vendor's own docs and measured live |
 | **TTL-gated two-stage prune** (OpenClaw's) | a complete validated design worth porting, but it interacts with compaction and they shipped two double-compaction bugs at exactly that seam. Its own release |
 | **persist and reuse the spine bytes** (Hermes') | structurally makes the miss impossible rather than observable, which is better, but it is a rebuild of how the spine reaches the wire |
 | **heartbeat just under the cache TTL** | a real cost lever, but it belongs to Connect and the lane config, not the engine, and Aperture's burst shape benefits least |
 | **request capture below the serializer** | gated on the correlator returning `none` at a meaningful rate. Building it now would be the fourth instrument bought on analogy rather than evidence |
-| ~~**effort inheritance**, ~~**opt-in MCP mount**~~ | **MOVED IN.** Both were explicitly promised for 0.2.13 on 246 production runs. Deferring them a second time while Aperture spends its single upgrade contradicts the constraint this plan is built on. The cost and security objections are answered by making both explicit and default-off, not by deferring: an explicit child-effort setting defaulting to current behaviour, and `DELTA_SUBAGENT_INHERIT_MCP` off by default with the act-as warning kept and a test that no MCP config crosses without opt-in |
+| **effort inheritance**, **opt-in MCP mount** | **DEFERRED to 0.2.15, and this reverses the earlier call.** They were moved in when 0.2.14 was a diagnostic that needed justifying. It is now a measured fix for the exact defect the waiting consumer escalated, which justifies the trip by itself. Each independently changes cost/latency or act-as authority and needs its own brief. Codex agreed on the second pass |
 
 ## Semantics that break dashboards
 
