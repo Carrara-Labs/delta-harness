@@ -96,11 +96,51 @@ const kindLabel: Record<Kind, string> = {
 // exactly. Update this alongside the root CHANGELOG.md when a release ships.
 const releases: Release[] = [
   {
+    version: "0.2.13",
+    date: "August 9, 2026",
+    iso: "2026-08-09",
+    tagline: "Say what changed.",
+    latest: true,
+    note: "The engine now reports which part of the prompt moved between turns, so a cache miss names its own cause. Compaction gets under its own ceiling reliably, and the arguments the model itself writes are bounded for the first time. This release also carries the work prepared as 0.2.12, which was never published, so upgrading from 0.2.11 is a single step rather than two. That step is one-way: two migrations, and a lane rolled back to 0.2.11 afterwards will not boot. Snapshot the workspace before upgrading, and verify the archive actually contains DELTA.md, because the self-file lives in the workspace rather than the database and the workspace path is not the same on every deployment.",
+    groups: [
+      {
+        kind: "added",
+        items: [
+          "**Prefix identity on `model.call`.** `spine_hash` and `tools_hash`, salted per daemon process, alongside `spine_bytes`, `tools_bytes`, `tools_n`, `self_bytes`, `history_bytes` and `ephemeral_bytes`. A miss with a moved hash names the segment that changed; a miss with both stable proves the prefix was intact. The salt is per process, so compare bytes across a restart and hashes only within one.",
+          "**`cache_shortfall_tokens`**, the previous request's gross input minus this call's cache reads. Prefer it to `cache_hit_pct`, which is a ratio whose denominator grows as history is appended and so moves even when caching is perfect. Measured in production across eleven turns: the ratio spanned 59% to 97% while the shortfall held flat and the prefix never moved. The shortfall's floor equals `ephemeral_bytes` and is structural.",
+          "**A context ceiling derived from the model.** `pricing.ts` gains an optional `window`; `DELTA_COMPACT_AT_TOKENS` becomes an override, clamped with a boot warning when it exceeds what the smallest model in the cascade supports. An unknown model keeps the 120,000 default.",
+          "**`tool.breaker`** when a failing tool is quarantined, with the schema bytes withdrawn.",
+          "**`last_event_ms_ago` on `/v1/busy`** while a run is in flight: how long the daemon has been silent, which is the signal a stall detector needs. Daemon-wide, so use `/v1/tasks/:id/events` for a per-run decision.",
+          "**`capture_enabled` on `/v1/dev/runs/:id/calls`**, plus an explanation when the result is empty. Request capture requires `DELTA_CAPTURE_CALLS`, which is dev-only and distinct from `DELTA_CAPTURE_PAYLOADS`.",
+          "`self: {bytes, cap}` on `/v1/status`, and the canonical profile name.",
+          "`recall` with an empty query lists the thread's spilled and evicted artifacts.",
+        ],
+      },
+      {
+        kind: "changed",
+        items: [
+          "**Compaction targets a flat budget instead of one derived from its own trigger.** A high ceiling used to produce a retained tail nearly as large as the ceiling, so compaction landed just under budget and re-fired next turn. It now compacts to a fixed target, fires less often, and reliably gets under the limit. A lane measured at a 60,000-token ceiling went from eight compactions, five context-irreducible errors and an 18% ceiling overrun to four compactions, no errors and a peak under the ceiling. **No effect on lanes with a ceiling below roughly 33,000 tokens**, where the previous calculation was already the smaller of the two.",
+          "**`compaction` events count attempts, not rewrites.** An attempt that ran the summarizer and produced nothing usable was billed and reported nothing. It now emits with `shrank: false` and a reason. **Filter `shrank = true` to reproduce previous counts.**",
+          "**`model.call` covers the utility model.** Compaction summaries, research fan-out, reflection and `eval_n` judging previously charged the run without emitting anything. **Filter `tier = 'main'` anywhere you count turns.**",
+        ],
+      },
+      {
+        kind: "fixed",
+        items: [
+          "**A compaction interrupted by a crash no longer resumes with a stale context estimate.** The provider-anchored estimate is reset inside the same transaction that rewrites history, on both the proactive and overflow-recovery paths.",
+          "**A succeeded call's arguments are bounded.** Tool results were capped on arrival and demoted at compaction; the arguments the model wrote were bounded by neither. They are now elided to a pointer once the call has succeeded, at a seam where a resume no longer needs them, so it costs no prefix-cache churn.",
+          "**A crash mid-batch no longer strands uncommitted parallel tool calls.**",
+          "**Concurrent `spawn_subagent` cannot overspend the run budget.** Each child read the full remaining budget at spawn, before any sibling had charged a token. Replaced with a live reservation reconciled on exit.",
+          "**The self-write breaker no longer quarantines an agent that is converging.** An attempt closing a material share of the remaining gap resets the streak, bounded by a hard attempt ceiling.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.2.11",
     date: "August 3, 2026",
     iso: "2026-08-03",
     tagline: "Context economics.",
-    latest: true,
     note: "Prompt caching and compaction were each defeating themselves. Both are fixed, and the pair compounds, because a prompt that stays small needs compacting far less often. No configuration change is required and nothing is opt-in. One caveat: Anthropic's cache lookup scans a bounded number of blocks back from each breakpoint, and demotion reduces the size of a tool result but not the number of blocks, so a turn with many parallel tool calls can still miss the previous cached tail.",
     groups: [
       {

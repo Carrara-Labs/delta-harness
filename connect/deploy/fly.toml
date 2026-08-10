@@ -49,21 +49,34 @@ primary_region = "iad"
   # not export prompts or tool payloads. The exporter fails open and is never on a turn's path.
   TELEMETRY_URL = "https://delta-control-plane.fly.dev/api/telemetry/ingest"
   DELTA_CAPTURE_PAYLOADS = "1"
-  # --- cache investigation, 2026-08-03 (TEMPORARY, remove both when it concludes) ---
-  # Round 1 showed cache reads pinned at exactly 6,507 tokens (the system prefix) while input
-  # grew to 60k within a single run, on calls 9s apart. So the rolling transcript breakpoints
-  # are never read back, and TTL cannot explain the within-run case.
-  # 1h retention tests the SEPARATE, smaller effect: the spine cache dying across human gaps.
+  # Kept from the 2026-08-03 cache investigation, now on a permanent rationale rather than as a
+  # probe: Ferni is human-paced, so consecutive messages are routinely hours apart and the default
+  # 5-minute cache would be cold on nearly every first turn. 1h costs a write premium on turn 1 and
+  # pays it back on every turn after; the within-run case it was originally testing turned out to be
+  # a measurement artefact, not a TTL effect (0.2.13).
   DELTA_CACHE_TTL = "1h"
-  # NOT the same flag as DELTA_CAPTURE_PAYLOADS: this one persists the true per-call request and
-  # response into the `calls` table, which is the only way to see where the breakpoints land.
-  DELTA_CAPTURE_CALLS = "1"
+  # DELTA_CAPTURE_CALLS is deliberately OFF. It persisted the full request + response per call into
+  # the `calls` table at ~95 KB a call, that table has no retention sweep (only session delete
+  # clears it), and it had reached 16.5 MB of a 1 GB volume. 0.2.13's segmented prefix hashes now
+  # localise a cache miss from telemetry alone, so the doctrine is: the cheap always-on signal says
+  # WHICH segment moved, and capture gets switched on for one session only to find WHICH BYTE.
+  # Turn it back on for a targeted confirmation, then off again.
   # generous budgets for real work
   DELTA_MAX_COST_USD = "15"
   DELTA_MAX_TOKENS = "3000000"
   DELTA_STEP_MAX_TOKENS = "16384"
+  # Explicit rather than inherited (0.2.13). Unset sends no effort at all, so the lane silently took
+  # the provider default and every arm in telemetry was unlabelled. `medium` is the fleet standard
+  # set at the 0.2.6 rollout; the effort lab's own recommendation for chat-shaped work is `low`
+  # (-56% p50, half cost, blind quality inside margin), which is the next thing worth testing here
+  # now that gen_ai.request.effort ships on model.call and makes the arm self-labelling.
+  DELTA_REASONING_EFFORT = "medium"
   # compact well below where Opus per-step latency + re-billed context get painful. 160k never fired
   # (heavy turns topped ~155k and re-sent it every step); 130k makes compaction actually kick in.
+  # NOTE (0.2.13/S5): the retained tail is no longer derived from this number. It used to be
+  # `ceiling - fixed - reserve` (~110k here), so a compaction landed just under the trigger and the
+  # next turn pushed it straight back over. It is now a flat 24k low-water mark, so raising this
+  # knob changes WHEN compaction fires, never how much it reclaims.
   DELTA_COMPACT_AT_TOKENS = "130000"
   # only Nic may talk to the bot (also gates the operator /restart /safemode /revert commands),
   # and intake REFUSES to start unless this is non-empty

@@ -27,6 +27,11 @@ const srv = Bun.serve({
         { status: 201 },
       );
     }
+    // The real control server 409s when it cannot resolve the origin (Connect control.ts: "no
+    // active agent turn"), which is what a run driven straight at the daemon seam looks like. Keyed
+    // on an owner no other test uses so the happy paths are untouched.
+    if (req.headers.get("x-delta-user") === "tg:409" && req.method !== "POST")
+      return Response.json({ error: "no active agent turn" }, { status: 409 });
     if (req.method === "GET" && url.pathname === "/api/agents/self/schedules") {
       return Response.json({
         schedules: [
@@ -120,6 +125,21 @@ describe("self-scheduling builtins", () => {
     );
     expect(await tools.get("cancel_schedule")?.execute({ id: "gone" }, ctx)).toBe(
       "[tool error] no such schedule gone",
+    );
+  });
+
+  // Ferni, 2026-08-10: a bare "[tool error] list_schedules 409" was read by the agent as "my
+  // schedules are unreadable" and filed as a blocker, when the control server had actually said
+  // "no active agent turn". schedule_self already carried its reason; the two read paths dropped
+  // it. The status is not the diagnosis, so assert on the REASON reaching the agent.
+  test("a 409 on the read paths carries the control server's reason, not just the status", async () => {
+    const tools = builtinTools(cfg);
+    const orphan = { ...ctx, owner: "tg:409" } as ToolCtx;
+    expect(await tools.get("list_schedules")?.execute({}, orphan)).toBe(
+      "[tool error] list_schedules 409: no active agent turn",
+    );
+    expect(await tools.get("cancel_schedule")?.execute({ id: "sch_1" }, orphan)).toBe(
+      "[tool error] cancel_schedule 409: no active agent turn",
     );
   });
 });

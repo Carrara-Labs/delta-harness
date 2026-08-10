@@ -525,8 +525,14 @@ function classifyTimeout(
 
 /** Bound any provider error body into a readable one-liner (a minimized error normalizer).
  * Keeps error.type/code alongside the message — Anthropic carries `request_too_large` in
- * error.type (413), not the message, and OVERFLOW matching needs to see it (codex #9). */
-function normalizeError(body: string): string {
+ * error.type (413), not the message, and OVERFLOW matching needs to see it (codex #9).
+ *
+ * `status` is used ONLY for the empty-body fallback. A bare "(empty error body)" is the least
+ * useful string the engine can emit: it names neither the failure nor a next step, and it cost a
+ * live debugging detour when a misconfigured base URL 404'd with no body. The status is already on
+ * the result object, but the error string travels alone into logs, run rows and agent-visible text,
+ * so it has to carry its own diagnosis. */
+function normalizeError(body: string, status?: number): string {
   try {
     const parsed = JSON.parse(body) as {
       error?: { message?: string; type?: string; code?: string | number } | string;
@@ -542,7 +548,13 @@ function normalizeError(body: string): string {
     }
     if (code) return String(code).slice(0, 2000);
   } catch {}
-  return body.slice(0, 2000) || "(empty error body)";
+  if (body) return body.slice(0, 2000);
+  // Empty body. Say the status, and for a 404 say the one thing it almost always means: the
+  // endpoint isn't there. MODEL_BASE_URL must include the API version path (the wire appends
+  // `/messages` or `/chat/completions` to it), and a wrong host answers a POST with a bare 404.
+  if (status === 404)
+    return "HTTP 404 with an empty body. The endpoint does not exist: check that MODEL_BASE_URL includes the API version path (e.g. https://api.anthropic.com/v1).";
+  return status ? `HTTP ${status} with an empty error body` : "(empty error body)";
 }
 
 /** One cascade transition after a failed model attempt (see ChatRequest.onRetry). */
@@ -918,7 +930,7 @@ async function streamOnce(
       ok: false,
       model,
       status: res.status,
-      error: normalizeError(text),
+      error: normalizeError(text, res.status),
       ...(retryAfter ? { retryAfter } : {}),
     };
   }
@@ -1283,7 +1295,7 @@ async function streamAnthropic(
       ok: false,
       model,
       status: res.status,
-      error: normalizeError(text),
+      error: normalizeError(text, res.status),
       ...(retryAfter ? { retryAfter } : {}),
     };
   }
@@ -1553,7 +1565,7 @@ async function streamResponses(
       ok: false,
       model,
       status: res.status,
-      error: normalizeError(text),
+      error: normalizeError(text, res.status),
       ...(retryAfter ? { retryAfter } : {}),
     };
   }

@@ -883,7 +883,7 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
     add({
       name: "research",
       description:
-        "Run 1–3 tasks as parallel sub-agents, each with the SAME tools you have (read, write, search, code, data tools). Each works in its own fresh context, writes full findings to a file, and returns a short summary + that path — offload exploration or work without bloating this run, and finish faster. Give each a self-contained task; results come back distilled.",
+        "Run 1–3 tasks as parallel sub-agents, each in a fresh context with your READ-ONLY tools. A child cannot write files, remember, or run code, so give it questions rather than changes. Full findings are saved to a file; you get back a short summary plus that path. Offload exploration without bloating this run.",
       parameters: {
         type: "object",
         properties: {
@@ -1072,10 +1072,17 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
       idempotent: true,
       execute: async (_args, ctx) => {
         const res = await cp("/api/agents/self/schedules", { method: "GET" }, ctx.owner);
-        if (!res.ok) return `[tool error] list_schedules ${res.status}`;
         const j = (await res.json().catch(() => ({}))) as {
           schedules?: Array<Record<string, unknown>>;
+          error?: unknown;
         };
+        // Carry the control server's reason, exactly as schedule_self already does. A bare status
+        // is not a diagnosis: a 409 here is "no active agent turn" (the origin is ambiguous, e.g.
+        // the run came in on the daemon seam rather than a chat), and an agent told only "409" on a
+        // READ reasonably concludes its schedules are unreadable and files a blocker. Observed on
+        // Ferni, 2026-08-10.
+        if (!res.ok)
+          return `[tool error] list_schedules ${res.status}: ${clip(String(j.error ?? ""), 300)}`;
         const rows = j.schedules ?? [];
         if (rows.length === 0) return "(no schedules)";
         return rows
@@ -1103,7 +1110,11 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
           ctx.owner,
         );
         if (res.status === 404) return `[tool error] no such schedule ${args.id}`;
-        if (!res.ok) return `[tool error] cancel_schedule ${res.status}`;
+        if (!res.ok) {
+          // Same reason as list_schedules: the status alone is not actionable to the agent.
+          const j = (await res.json().catch(() => ({}))) as { error?: unknown };
+          return `[tool error] cancel_schedule ${res.status}: ${clip(String(j.error ?? ""), 300)}`;
+        }
         return `cancelled ${args.id}`;
       },
     });

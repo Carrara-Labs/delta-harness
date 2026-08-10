@@ -229,6 +229,34 @@ export function sweepTrash(workspace: string, ttlMs = 7 * 24 * 3_600_000): void 
   }
 }
 
+/** Boot sweep for `.delta/spill`, the other unbounded workspace directory. `capAndSpill` writes a
+ *  file per oversized tool result and nothing ever removed one, so a long-lived agent accumulates
+ *  them forever alongside the trash it does sweep.
+ *
+ *  Two deliberate differences from `sweepTrash`. It keys on **mtime**, because a spill file is
+ *  named `<runId>.<callId>.txt` and carries no timestamp. And the TTL is the reason this is a boot
+ *  sweep rather than a periodic one: a spill path stays referenced from tool-result history and is
+ *  deliberately preserved through compaction (`compaction.ts`), so removing a file the agent can
+ *  still be pointed at costs it a re-read. At 7 days that history is already past the `journal`
+ *  and `events` horizons, and the failure is graceful — `read_file` reports the file is gone. */
+export function sweepSpill(workspace: string, ttlMs = 7 * 24 * 3_600_000): void {
+  try {
+    const dir = resolve(workspace, ".delta/spill");
+    if (!existsSync(dir)) return;
+    const cutoff = Date.now() - ttlMs;
+    for (const name of readdirSync(dir)) {
+      const abs = resolve(dir, name);
+      try {
+        if (statSync(abs).mtimeMs < cutoff) rmSync(abs, { recursive: true, force: true });
+      } catch {
+        // one unreadable entry must not abandon the rest of the sweep
+      }
+    }
+  } catch {
+    // sweep is hygiene, never fatal
+  }
+}
+
 // ── document text extraction (zip+xml extraction is enough) ───────────
 
 const stripXml = (xml: string) =>

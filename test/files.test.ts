@@ -5,11 +5,26 @@
 // /v1/files endpoint over real multipart HTTP.
 
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { builtinTools } from "../src/builtins";
-import { expandImageMarkers, registerImage, saveInbox, sniffMime, sweepTrash } from "../src/files";
+import {
+  expandImageMarkers,
+  registerImage,
+  saveInbox,
+  sniffMime,
+  sweepSpill,
+  sweepTrash,
+} from "../src/files";
 import type { ChatMsg } from "../src/provider";
 import type { ToolCtx } from "../src/tools";
 
@@ -165,6 +180,30 @@ describe("move / delete / grep", () => {
     renameSyncSafe(old, aged);
     sweepTrash(ws);
     expect(readdirSync(join(ws, ".delta/trash")).length).toBe(0);
+  });
+
+  // `.delta/spill` is where capAndSpill parks oversized tool results, and nothing ever removed one:
+  // the sibling directory of the one we do sweep, unbounded for a long-lived agent. Keys on mtime
+  // because a spill file is named <runId>.<callId>.txt and carries no timestamp.
+  test("sweepSpill drops spill files past the TTL and keeps fresh ones", () => {
+    const ws = workspace();
+    const dir = join(ws, ".delta/spill");
+    mkdirSync(dir, { recursive: true });
+    const stale = join(dir, "run_old.call_1.txt");
+    const fresh = join(dir, "run_new.call_1.txt");
+    writeFileSync(stale, "a big old tool result");
+    writeFileSync(fresh, "a big fresh tool result");
+    const old = new Date(Date.now() - 8 * 24 * 3_600_000);
+    utimesSync(stale, old, old);
+
+    sweepSpill(ws);
+
+    expect(readdirSync(dir)).toEqual(["run_new.call_1.txt"]);
+  });
+
+  test("sweepSpill is hygiene: a missing directory is not an error", () => {
+    const ws = workspace();
+    expect(() => sweepSpill(ws)).not.toThrow();
   });
 
   test("grep is the workspace index — path:line hits, binary and .delta skipped", async () => {

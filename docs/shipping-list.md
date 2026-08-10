@@ -224,6 +224,10 @@ Specs: `spec-cache-breakpoints.md`, `spec-compaction-tail.md`.
   1GB on nine of ten lanes and shared with the SQLite WAL. Anyone running `DELTA_CAPTURE_CALLS=1` on
   a real workload must pull and disable promptly. Sibling of the open spill-retention item and it
   should be fixed with it.
+  **Measured on Ferni, 2026-08-10, and it had already happened to us:** 174 rows holding 16.5MB at
+  ~95KB a call, 45% of a 36MB database on a 1GB volume, from a flag staged as TEMPORARY a week
+  earlier and never pulled. Pruned by hand and the flag turned off. A diagnostic that has to be
+  remembered will not be. Raises this from a backlog line to a fix: bound `calls` in the sweep.
 - **`DELTA_CAPTURE_PAYLOADS` vs `DELTA_CAPTURE_CALLS` has now cost two engineers a day each** - once
   on our side, once on Aperture's, in the same week, in opposite directions. Partly mitigated in
   0.2.13: `/v1/dev/runs/:id/calls` now returns `capture_enabled` and, when empty, says *why* rather

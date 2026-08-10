@@ -55,9 +55,18 @@ wire     = [ spine ][ tool schemas ][ ......... history ......... ][ fresh ]
              ^ a change here invalidates everything to its right      ^ free to churn
 ```
 
+> **Correction, 2026-08-10, from the first production reading (`results-0.2.13-live.md`).** Half of
+> the sentence above is wrong. `buildSpine` is inside the turn loop, but `self` is read **once per
+> run**, before it, so a mid-run `remember` cannot change the prompt of the run it happens in.
+> Measured on Ferni: a self-write on turn 10 left turn 11's `spine_hash` untouched, and the next run
+> moved it by exactly the self-file delta (+659 bytes, `tools_hash` unchanged). The `searchable`
+> counter *is* recomputed every turn and survives as the suspect. The net effect is to **narrow**
+> the hypothesis onto tool activation, which fits Aperture's large-MCP-surface shape more tightly
+> than the two-cause version did.
+
 | part | rebuilt per turn | can change | can shrink | verdict |
 |---|---|---|---|---|
-| spine | yes | yes, at constant length | yes | **standing suspect** |
+| spine | yes | yes, at constant length | yes | **standing suspect**, narrowed 2026-08-10 to the `searchable` counter alone; the self-file is fixed for the run |
 | tool schemas | yes | grows on activation, shrinks only via breaker | breaker only | ruled out on current data, not in general |
 | history | no (read from disk) | compaction only | compaction only | compaction ruled out |
 | ephemeral | yes | constantly, by design | yes | exonerated: sits last, and 0.2.11's `ephemeralCount` keeps breakpoints off it |
