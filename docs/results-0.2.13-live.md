@@ -330,3 +330,22 @@ Worth recording because it is the dogfood loop paying for itself:
 - Its tool count is **18 of 19**, not 17 of 18: `list_secrets` arrived with the 0.2.10 vault. Only
   `code` is still absent, correctly, because no `codex` CLI exists on that machine.
 - Nothing sweeps `.delta/spill/` either, which it raised unprompted after hearing about `calls`.
+
+## What got fixed the same day (on `main`, unreleased)
+
+Every one of these came from running the agent and reading what came back, not from reading source.
+
+| problem | fix |
+|---|---|
+| `calls` bounded by nothing | `pruneLocalState` bounds it by age plus a **byte** budget (`DELTA_RETENTION_MAX_CALL_BYTES`, 32MB). Bytes not rows, because a captured call is ~95KB on one lane and ~700KB on another. The newest call is always kept even when it alone exceeds the budget, so the bound can never discard the turn being debugged. |
+| `.delta/spill` bounded by nothing | `sweepSpill`, mirroring `sweepTrash`: boot-only, 7-day TTL, keyed on mtime because a spill file carries no timestamp in its name. |
+| `list_schedules` / `cancel_schedule` swallowed the reason | both now carry the control server's message, as `schedule_self` always did. |
+| Sub-agents documented as read-write in **three** places | the tool description, the `research.ts` header and `guide.md` all promised children could write, remember and run code. They have been read-only since 0.2.4. The child's own role prompt told it to write, too. All four corrected. |
+| `(empty error body)` | an empty body now carries its status, and a 404 names the usual cause. Verified against the live misconfiguration, not a mock. |
+| The site two releases behind | 0.2.13 added to `changelog.tsx`, `latest` flipped, deployed and verified. |
+| `guide.md` drift | the `/healthz` example was **nine** releases stale at 0.2.4, `list_secrets` was missing from the capability table, and the telemetry section still sold `cache_hit_pct` as the cache signal this release retired. |
+
+The site fix matters more than it looks. Ferni's own documented version-recheck procedure named
+deltaharness.dev/changelog as the cheapest source of truth, so following its method faithfully would
+have had it report 0.2.11 as current. **A stale doc does not just fail a human reader, it corrupts
+the procedure of an agent that trusts it.**

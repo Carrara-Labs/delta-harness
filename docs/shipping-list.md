@@ -93,10 +93,11 @@ collapse to a two-column join); correctness (high - S5/S3/S6); mechanism (**cont
   self-correcting, but the retries are a real cost. One hypothesis is already dead: keeping a preview
   of the original inside the marker made it *worse* (20 to 26 refusals, 163k to 202k tokens) because
   it gave the model a more convincing thing to imitate.
-- **Spill retention.** `sweepTrash` only touches `.delta/trash`, so `.delta/spill` has never been
-  pruned, on lanes where nine of ten volumes are 1GB shared with the SQLite WAL. Deliberately NOT in
-  0.2.12: pruning a file an already-written stub still points at turns a bounded promise into a lie,
-  and getting that right needs the reference-lifecycle design codex showed is not trivial.
+- ~~**Spill retention.**~~ **DONE, unreleased (on `main`, 2026-08-10).** `sweepSpill` mirrors
+  `sweepTrash`: boot-only, 7-day TTL, keyed on mtime because a spill file carries no timestamp in
+  its name. The reference-lifecycle objection was resolved by the TTL rather than by design: at 7
+  days the referencing history is already past the `journal` and `events` horizons, and the failure
+  is graceful, since `read_file` reports the file is gone.
 - **Effort inheritance** (their #2). One line of code, not a one-line decision: every existing child
   runs at model default today, so inheriting silently raises cost and latency for every consumer on
   upgrade. Belongs in a brief, not a patch note.
@@ -227,7 +228,11 @@ Specs: `spec-cache-breakpoints.md`, `spec-compaction-tail.md`.
   **Measured on Ferni, 2026-08-10, and it had already happened to us:** 174 rows holding 16.5MB at
   ~95KB a call, 45% of a 36MB database on a 1GB volume, from a flag staged as TEMPORARY a week
   earlier and never pulled. Pruned by hand and the flag turned off. A diagnostic that has to be
-  remembered will not be. Raises this from a backlog line to a fix: bound `calls` in the sweep.
+  remembered will not be. **FIXED, unreleased (on `main`, 2026-08-10):** `pruneLocalState` bounds
+  `calls` by age plus a BYTE budget (`DELTA_RETENTION_MAX_CALL_BYTES`, 32MB), not a row count,
+  because a captured call is ~95KB on one lane and ~700KB on another. The newest call is always
+  kept even when it alone exceeds the budget, so the bound can never discard the turn being
+  debugged; overshoot is one call.
 - **`DELTA_CAPTURE_PAYLOADS` vs `DELTA_CAPTURE_CALLS` has now cost two engineers a day each** - once
   on our side, once on Aperture's, in the same week, in opposite directions. Partly mitigated in
   0.2.13: `/v1/dev/runs/:id/calls` now returns `capture_enabled` and, when empty, says *why* rather
