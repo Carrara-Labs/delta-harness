@@ -106,3 +106,30 @@ so, not before.
   measurement is the evidence; the sweep only says where to look.
 - Not yet verified on a real agent under real traffic. That is the Ferni deploy, and Ferni's own
   turns are too narrow to exercise the fix, so it tests for regression rather than for benefit.
+
+## Verified on a real agent (Ferni, 2026-08-10)
+
+Deployed `--from-source` per the release gate, confirmed by finding `CACHE_LOOKBACK_BLOCKS` in the
+running image at `/app/src/provider.ts` (the version string still reads 0.2.13, so it proves nothing
+on a pre-release build). No schema migration on this branch, so the deploy is reversible by
+redeploying without the flag.
+
+One real turn through the daemon seam, 8.8s, correct answer:
+
+| field | value |
+| --- | --- |
+| `cache_shortfall_tokens` | **241** (the structural ephemeral floor) |
+| `spine_hash` / `tools_hash` | stationary across both main calls |
+| `tools_n` | 18 |
+| `gen_ai.request.effort` | `medium` (the config fix from earlier the same day is live) |
+| `cache_hit_pct` | **58** |
+
+That last row is worth keeping. A 58% "hit rate" alongside a 241-token shortfall is an essentially
+perfect cache, and it is exactly why 0.2.13 retired the ratio.
+
+**This confirms no regression; it does not confirm the benefit.** Ferni calls one or two tools at a
+time, so it sits below the threshold by construction and the fix is a no-op there. The benefit is
+the live width-12 measurement above, and the lane that will feel it is Aperture.
+
+A caveat found while probing: the task status is `done`, not `completed`. A poller written against
+`completed` reports a timeout on a run that finished in nine seconds.
