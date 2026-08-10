@@ -123,6 +123,63 @@ collapse to a two-column join); correctness (high - S5/S3/S6); mechanism (**cont
   entry that can never be read back. Codex checked and it is NOT the one-liner the plan claimed: the
   serializers add breakpoints automatically, so it needs its own cache patch.
 
+## P1 - opened by the 0.2.14 work (2026-08-10)
+
+### The prompt-cache question is still open, and now reproducible
+
+0.2.14 fixed a real breakpoint-placement defect that **no current lane triggers** (it needs 10+
+parallel tool calls; both Aperture agents batch 2-3 by design, Ferni 1-2). The defect that was
+actually escalated is untouched.
+
+A production Ferni session produced three shortfalls of **2,664 / 9,986 / 2,264** tokens on turns
+issuing **0-2** tool calls, with `spine_hash`, `tools_hash` and `ephemeral_bytes` constant across all
+eight calls. Stationary prefix, narrow burst, real miss. Same signature Aperture measured 27/27.
+
+**This is the thing to instrument next**, and unlike when the correlator was first specced, it is
+reproducible on a lane we own. Design notes:
+- Do NOT rebuild `spec-cache-break-correlator.md` as written. Its `wire` hashing cannot fire
+  (deterministic serializers) and its fire condition would have missed 466 and 4,993-token events.
+- Anthropic ships a **cache diagnostics beta** (`cache-diagnosis-2026-04-07`) returning
+  `system_changed` / `tools_changed` / `messages_changed` against a previous response id, hashes
+  only, ZDR-eligible. **Claude API only**, so it covers Aperture's `quick-search` lane and Ferni,
+  but not the OpenRouter `intake-call` lane. Try it before building anything.
+- Export a bounded `tool_calls_n` scalar so burst width can be joined to the next turn's shortfall
+  without exporting tool names (codex).
+
+### Cache warmth: two levers, opposite workload shapes, different packages
+
+Settled 2026-08-10. **A heartbeat must never live in the engine.** `CLAUDE.md` already states the
+rule as "budgets, not timers", and a timer would mean the daemon can never suspend, which deletes
+the pausable-and-cheap property that defines a Delta agent.
+
+| lane shape | example | lever | home |
+| --- | --- | --- | --- |
+| always-on, human returns unpredictably | Ferni on Telegram | heartbeat just under the TTL | **Connect**, opt-in per chat |
+| bursty task runs, long gaps between | Aperture rooms | restructure when the cache is already cold | **engine** |
+| scheduled batch, gaps by design | Quarry Brain | neither; the gap is the point | - |
+
+- **Heartbeat (Connect).** Measured need: a 10-minute gap cost **5.4x** on Ferni (`in=40,751
+  cached=6,602 $0.2319` against `in=41,265 cached=40,510 $0.0427` twenty seconds later). Caveat the
+  vendor docs gloss: at the 5-minute default you need ~12 beats an hour and each reads the full
+  prefix, which is near break-even. It only clearly wins **paired with a 1h TTL on the rolling tail**,
+  one beat replacing one full re-cache.
+- **TTL-gated restructure (engine).** OpenClaw's `pruneExpiredCacheTtlToolResults`: gate on the TTL
+  having lapsed, then two pressure thresholds, soft trim then hard clear, as a non-destructive
+  projection, resetting the clock only when it actually changed something. It fires **on a turn,
+  never on a timer**, so it is suspend-safe by construction and fits the harness philosophy. This is
+  the lever that serves Aperture and Quarry. They shipped two double-compaction bugs at exactly the
+  compaction/marker seam, so budget for that.
+
+### Before Aperture crosses the one-way step
+
+**A restore-and-boot drill.** The backup procedure has never been restored and booted. "A snapshot
+exists" and "the rollback path works" are different claims, and 0.2.11 to 0.2.14 has no reverse.
+
+### Spill lifetime, still unsolved
+
+See the entry above: a TTL is the wrong shape and was reverted before release. Needs spill owned by
+the session row, or reference counting.
+
 ## P2 - open, unchanged
 
 - **Connect: stream the reply text itself.** 0.5.0 ships rich rendering and a live progress line but

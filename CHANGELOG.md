@@ -8,20 +8,27 @@ All notable changes to this project are documented here. The format is based on
 
 ## [0.2.14] - 2026-08-10
 
-The second breakpoint. A turn that calls many tools in parallel no longer loses the prompt cache,
-because our rolling cache breakpoints were landing one block apart and sharing a single lookback
-window instead of starting separate ones.
+Bounds and correctness. The debug capture table can no longer fill a volume, a shrinking turn no
+longer reads as a cache disaster, and sub-agent capabilities are locked to what the engine actually
+enforces. Plus one real prompt-cache fix that **no current lane triggers** — read the next paragraph
+before hoping it is yours.
 
-Anthropic's cache lookback is 20 blocks per breakpoint and finds only positions earlier requests
-already wrote. A width-N parallel tool turn is roughly 2N blocks, so about **10 parallel tool calls**
-outran both marks and re-billed the entire prefix. Measured live, arms differing only in placement:
-at burst width 12 a turn's cache read went **2,523 to 10,207** and its cache write **8,745 to 1,061**,
-which is 4.8x cheaper on an affected turn.
+**The cache fix, scoped honestly.** Anthropic's cache lookback is 20 blocks per breakpoint and finds
+only positions earlier requests already wrote. Our rolling breakpoints were landing one block apart,
+sharing a single window instead of starting separate ones, so a turn issuing **10 or more parallel
+tool calls** outran all of them and re-billed the whole prefix. Measured live on both wires, at burst
+width 12: cache read `2,523 → 10,207`, roughly 4.8x cheaper on an affected turn.
 
-**If your agent calls fewer than 10 tools in parallel, this release changes nothing for you.**
-At widths 4 and 9 the two arms are identical to the token; the threshold is exactly 10, which is what
-the model predicts: a turn adds 2N+2 blocks and two adjacent marks cover at most 20. That is also
-why the defect appeared on a lane doing wide record fan-out and never on a chat-shaped one.
+**Below 10 parallel calls per turn this release changes nothing about your cost.** At widths 4 and 9
+the before/after arms are identical to the token. Agents that batch 2-3 calls a turn, which is what
+ours do today, will see no difference. This was found by enumerating our own serializer, not by
+observing a lane in trouble, and it is shipped because it is a real defect rather than because
+anyone is currently hitting it.
+
+**It does not close the open prompt-cache question.** Production turns still show cache shortfalls of
+2,000-10,000 tokens at burst widths of 0-2, with a byte-identical prefix and a constant ephemeral
+tail. That signature is unexplained and predates this release. Better telemetry for it is the next
+piece of work.
 
 ### Upgrade
 0.2.14 adds no migration, so from 0.2.13 it is reversible. **From 0.2.11 or earlier it is not** — it
@@ -35,13 +42,14 @@ snapshot that exists is not a rollback path that works.
   exactly 20 back; three marks now rather than two, since Anthropic allows four, the system prefix
   takes one, and breakpoints cost nothing. Block counting is real: an assistant turn carrying N tool
   calls is N blocks, not one. Beyond a burst of ~19 the cache is still lost and no placement fixes
-  it — that burst is a single message wider than the entire lookback window.
+  it, because that burst is a single message wider than the entire lookback window.
 - **`calls` is bounded** by age and a byte budget (`DELTA_RETENTION_MAX_CALL_BYTES`, default 32MB).
   The debug-capture table had no bound at all; on one lane it reached 45% of the database from a flag
   left on. Bytes rather than rows, because a captured call is ~95KB on one lane and ~700KB on another.
   Byte-accurate: SQLite `LENGTH()` counts characters, which undercounted non-ASCII payloads by ~3x.
-- **`cache_shortfall_tokens` is bounded by the current turn's input too.** A turn that shrank, which
-  is what compaction produces, previously reported a large shortfall for a perfectly cached turn.
+- **`cache_shortfall_tokens` is bounded by the current turn's input too.** A request cannot re-read
+  more than it contains, so a turn that shrank, which is what compaction produces, previously
+  reported a large shortfall for a turn that had cached everything available to it.
 - **`list_schedules` and `cancel_schedule` carry the control server's reason.** A bare `409` was read
   by an agent as "my schedules are unreadable" when the server had said "no active agent turn".
 - **An empty provider error body carries its HTTP status**, and a 404 names the usual cause: a

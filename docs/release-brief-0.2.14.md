@@ -4,37 +4,43 @@ Status: **drafted, release not cut.** 2026-08-10.
 
 ## What it is
 
-**We found the 1-in-25 prompt-cache miss, and it was our own breakpoint placement.**
+**Bounds and correctness, plus one prompt-cache fix that no current lane triggers.**
 
-Anthropic's cache lookback is 20 blocks per breakpoint, and it finds only positions earlier requests
-already wrote. We place two rolling `cache_control` marks precisely to survive a wide parallel-tool
-turn. They landed **one block apart on every tool burst**, so they shared a single lookback window
-instead of starting two. A width-N burst is ~2N blocks, so roughly **10 parallel tool calls** outran
-both marks and re-billed the whole prefix.
+The cache fix is real. Anthropic's lookback is 20 blocks per breakpoint and finds only positions
+earlier requests already wrote; our rolling breakpoints landed one block apart, sharing a single
+window instead of starting separate ones. A turn issuing **10 or more parallel tool calls** outran
+all of them and re-billed the whole prefix. Fixed by chaining contiguous windows.
 
-The fix holds the second mark a full window behind the first, counted in blocks.
+## What it is worth, and to whom
 
-## What it is worth
-
-Measured live against `api.anthropic.com`, two turns, arms differing only in mark placement, with
+Measured live on **both wires** (native Anthropic and OpenRouter), arms differing only in placement,
 distinct prefixes so neither arm could read the other's cache:
 
-| burst width 12 | turn 2 `cacheRead` | turn 2 `cacheWrite` |
+| burst width | old `cacheRead` | new `cacheRead` |
 | --- | --- | --- |
-| before | 2,522 | 8,745 |
-| after | **10,206** | **1,061** |
+| 4 | 9,510 | 9,510 |
+| 9 | 9,946 | 9,946 |
+| **10** | **2,523** | **10,033** |
+| 12 | 2,523 | 10,207 |
 
-Priced at Anthropic's rates (writes 1.25x, reads 0.1x), that is **4.8x cheaper on an affected turn**.
-Aperture measured their affected turns at 5.7x a cached turn, on a much larger prefix.
+Roughly **4.8x cheaper on an affected turn**. The threshold is exactly 10, which is what the model
+predicts: a turn adds 2N+2 blocks and adjacent marks cover at most 20.
 
-## Who sees nothing
+**Nobody in our fleet triggers it today.** Both Aperture agents batch 2-3 paid calls per turn by
+their own design; Ferni calls one or two. This was found by enumerating our own serializer, not by
+observing a lane in trouble, and it ships because it is a real defect rather than because anyone is
+currently paying for it. If a lane ever raises its batch width, it is already fixed.
 
-**Any lane whose turns call fewer than ~8 tools in parallel.** Not an estimate: at burst width 4 the
-two arms are byte-identical, 9,510 read and 365 written on both. If your agent calls one or two tools
-at a time, this release changes nothing about your cost, latency, or behaviour.
+## What it does NOT fix, and this matters most
 
-That is also why Ferni could never reproduce the defect while Aperture hit it 27/27. A bug gated on
-parallel-tool width appears on exactly one of those two lanes.
+**The open prompt-cache question is still open.** A production session on 2026-08-10 produced three
+shortfalls of 2,664 / 9,986 / 2,264 tokens on turns issuing **0-2** tool calls, with `spine_hash`,
+`tools_hash` and `ephemeral_bytes` all constant across the run. Stationary prefix, real miss, narrow
+burst. That is the original unexplained signature and this release does not touch it.
+
+It is now reproducible on a lane we own, which is the thing that was missing when the diagnostic for
+it was first designed. That is the next piece of work, and it is why this release is deliberately not
+sold as the answer.
 
 ## Also in the release
 
