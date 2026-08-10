@@ -212,4 +212,121 @@ The floor tracks `ephemeral_bytes` (751 bytes) as predicted, and a `tier: utilit
 
 **One observation from the agent worth following up:** Ferni reported `list_schedules` returning a
 409 on first call, and that its own `skills/delta-self-check/facts.md` is pinned four releases stale
-at 0.2.9. Neither is caused by this release; both are filed.
+at 0.2.9. Neither is caused by this release; both are filed. Both are answered below.
+
+---
+
+# Ferni config pass + an 11-turn reading (2026-08-10)
+
+Ferni was already on 0.2.13; nothing to upgrade. What it needed was to be configured *for* the
+version, and to be given enough real work to say something.
+
+## Three config changes
+
+| knob | was | now | why |
+|---|---|---|---|
+| `DELTA_REASONING_EFFORT` | **unset** | `medium` | unset sends no effort at all, so the lane silently took the provider default and no telemetry row could say which effort served a turn. `medium` is the fleet standard from the 0.2.6 rollout. |
+| `DELTA_CAPTURE_CALLS` | `1` | **off** | it was staged as TEMPORARY for the 2026-08-03 cache investigation, which 0.2.13 concluded. |
+| `DELTA_CACHE_TTL` | `1h` (probe) | `1h` (permanent) | re-justified rather than removed: Ferni is human-paced, so consecutive messages are routinely hours apart and the 5-minute default would be cold on nearly every first turn. |
+
+**The capture flag had a cost nobody had looked at.** 174 rows holding **16.5 MB** of full
+request + response, at ~95 KB a call, on a **1 GB** volume. `retention.ts` sweeps `journal` and
+`events`; **`calls` is swept by nothing** and is only cleared when a session is deleted. Pruned to
+the newest 20 rows (16.5 MB to 2.46 MB), keeping the post-upgrade turns as byte-level reference.
+
+Scaled to Aperture's shape, 2,629 model calls at that rate is roughly **250 MB on a 1 GB volume**
+from a diagnostic flag. Engine-side retention for `calls` moves from a backlog line to a real one.
+
+## The 11-turn reading, at `medium`, all tools already active
+
+| turn | in | cacheRead | `cache_hit_pct` | `cache_shortfall_tokens` | `spine_hash` | `history_bytes` |
+|---:|---:|---:|---:|---:|---|---:|
+| 1 | 7,338 | 0 | 0% | (first call) | ef4197c9eb0f | 2,015 |
+| 2 | 11,961 | 7,081 | 59% | 257 | ef4197c9eb0f | 13,648 |
+| 3 | 14,405 | 11,703 | **81%** | 258 | ef4197c9eb0f | 18,570 |
+| 4 | 21,779 | 14,147 | **65%** | 258 | ef4197c9eb0f | 39,186 |
+| 5 | 29,628 | 21,521 | 73% | 258 | ef4197c9eb0f | 60,129 |
+| 6 | 30,565 | 29,370 | 96% | 258 | ef4197c9eb0f | 61,954 |
+| 7 | 35,629 | 30,307 | 85% | 258 | ef4197c9eb0f | 74,776 |
+| 8 | 40,554 | 35,371 | 87% | 258 | ef4197c9eb0f | 87,799 |
+| 9 | 46,773 | 40,296 | 86% | 258 | ef4197c9eb0f | 104,303 |
+| 10 | 49,055 | 46,515 | 95% | 258 | ef4197c9eb0f | 110,535 |
+| 11 | 50,051 | 48,797 | 97% | 258 | ef4197c9eb0f | 113,433 |
+
+`cache_hit_pct` spans **59 to 97** while `cache_shortfall_tokens` never leaves 257-258 and the
+prefix never moves. Turn 4 is the sharpest illustration: the ratio *falls* 16 points from turn 3 on
+a flawlessly cached turn, purely because history grew underneath the denominator. Eleven turns, one
+lane, no reproduction run needed.
+
+`gen_ai.request.effort = medium` now appears on every row, so an effort arm is self-labelling for
+the first time on this lane.
+
+## S1 localised a real prefix change to the byte
+
+`remember` fired on turn 10. Turn 11's spine did not move. A second run in the **same daemon
+process** (so the per-process salt is constant and the digests are comparable):
+
+| | run 1 | run 2 | |
+|---|---|---|---|
+| `spine_hash` | ef4197c9eb0f | **eaf72c2e2648** | moved |
+| `spine_bytes` | 9,146 | **9,805** | +659 |
+| `self_bytes` | 1,866 | **2,525** | +659 |
+| `tools_hash` | b050dcb096a8 | b050dcb096a8 | unchanged |
+
+The whole spine delta is the self-file delta, to the byte, and the tools digest correctly stayed
+put. **This is the first production evidence that the instrument does what it was built for:** it
+named the segment, quantified it, and exonerated the other one.
+
+## A claim in the plan is falsified, and the suspect narrows rather than dies
+
+The plan lists the spine as the standing suspect on two grounds: the `searchable` counter, and the
+agent-writable self-file. The second does not survive.
+
+`buildSpine` is called inside the turn loop (`run.ts:797`), but `self` is read **once per run**,
+before it. So a mid-run `remember` cannot change the system prompt of the run it happens in. The
+measurement says so (turn 10 wrote, turn 11 did not move) and the agent said so independently,
+quoting its own tool description: *"Takes effect on your NEXT run."*
+
+**What that leaves.** `searchable: allowedMap.size - active.size` *is* recomputed every turn, so
+tool activation remains a live, near-zero-byte, cache-fatal spine mutation. Ferni cannot test it:
+all 18 of its tools are pinned, so `searchable` is 0 and never changes. The remaining hypothesis
+now fits Aperture's shape more tightly than before, not less: long runs, a large MCP surface, and
+tools activating as the work proceeds.
+
+**Correction to `reply-aperture-context-ceiling-3.md`, which told them the self-file was one of two
+reasons the spine was suspect.** Within a run it is not. Send it.
+
+## Operational caveat the consumer docs must carry
+
+The digest salt is per **process**. Ferni's spine was byte-identical yesterday and today
+(`spine_bytes` 9,146 both) and hashed to two different values, because the machine restarted in
+between. **A hash comparison spanning a daemon restart is a false positive.** Compare `*_bytes`
+across restarts and `*_hash` only within one process lifetime.
+
+## The `list_schedules` 409, explained and fixed
+
+Reproduced verbatim, `duration_ms: 10`, so it never left the machine. It is
+`connect/src/control.ts:154`: the control server 409s `"no active agent turn"` when it cannot
+resolve which conversation a schedule belongs to. Both of these runs were POSTed straight at the
+daemon seam rather than arriving as Telegram messages, so there was no origin to resolve. **The
+guard is correct** and a Telegram-originated call should not hit it.
+
+The defect is what the agent was told. `builtins.ts` carried the control server's reason on
+`schedule_self` and **dropped it on both read paths**, so the agent saw a bare `409`, concluded its
+schedules were unauditable, and filed a blocker. Fixed: `list_schedules` and `cancel_schedule` now
+carry the reason, with a mutation-verified test.
+
+## What the agent found that we had not asked about
+
+Worth recording because it is the dogfood loop paying for itself:
+
+- **deltaharness.dev/changelog is two releases behind npm**, still heading at v0.2.11, while the
+  page claims it "tracks the source CHANGELOG.md exactly". Ferni's own procedure named that page as
+  the cheapest version recheck, so following its documented method would have had it report 0.2.11
+  as current. It rewrote its ladder to read raw `CHANGELOG.md` first.
+- **`research`'s tool description is still wrong**, four releases after 0.2.4 made children
+  read-only: it promises children "the SAME tools you have (read, write...)" and that each writes
+  full findings to a file.
+- Its tool count is **18 of 19**, not 17 of 18: `list_secrets` arrived with the 0.2.10 vault. Only
+  `code` is still absent, correctly, because no `codex` CLI exists on that machine.
+- Nothing sweeps `.delta/spill/` either, which it raised unprompted after hearing about `calls`.

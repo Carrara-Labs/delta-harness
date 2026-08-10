@@ -35,6 +35,13 @@ activation. Going from 138 to 139 is a cache-fatal change and a zero-byte change
 (`DELTA.md`) sits in the same spine and is agent-writable through `remember`, which fired on your
 lane, and a consolidating edit can land at the same size it started.
 
+> **Correction owed to Aperture, 2026-08-10.** The last sentence is wrong and needs sending. `self`
+> is read once per run, before the turn loop, so a mid-run `remember` cannot move the spine of the
+> run it fires in; it lands on the next one. Measured on Ferni, and the agent quoted its own tool
+> description back at us: "Takes effect on your NEXT run." The `searchable` counter is unaffected
+> and is now the sole within-run spine mutation, which points the prediction *harder* at their lane
+> rather than away from it. Detail in `results-0.2.13-live.md`.
+
 So the segments ship with a short hash per segment alongside the bytes:
 
 ```
