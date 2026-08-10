@@ -849,14 +849,24 @@ function withPromptCache(
   // String-content only: the trailing parts-array user message (the ephemeral image attachment,
   // Sprint 8) is DERIVED and moves every turn — marking it burns a rolling breakpoint on a prefix
   // that can never match the next request (codex S8 #11). Mark stable transcript messages instead.
-  // Every message on this wire serializes to exactly one content block, so blocks == messages.
   const rolling = rollingMarks(
     rollingScanFrom(framed.length, ephemeralCount),
     (i) => {
       const m = framed[i];
       return (m?.role === "user" || m?.role === "tool") && typeof m?.content === "string";
     },
-    () => 1,
+    // NOT one-block-per-message. An assistant turn carrying N tool_calls arrives at Anthropic as N
+    // tool_use blocks, and a parts-array user message as one block per part. Counting either as 1
+    // under-measures a parallel tool burst by ~N and pushes the second mark further back than
+    // intended, which can open a gap the previous turn's write falls into — the same class of
+    // block-vs-message error this whole fix exists to correct, on the wire Aperture actually runs.
+    (i) => {
+      const m = framed[i];
+      if (!m) return 1;
+      const calls = m.role === "assistant" ? (m.tool_calls?.length ?? 0) : 0;
+      const parts = Array.isArray(m.content) ? m.content.length : m.content ? 1 : 0;
+      return Math.max(1, calls + parts);
+    },
   );
   return framed.map((m, i) => {
     if (m.role === "system" && i === lastSystem)

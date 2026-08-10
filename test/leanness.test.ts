@@ -260,17 +260,26 @@ describe("rolling cache breakpoint", () => {
     for (let i = 0; i < 6; i++) h.push({ role: "tool", tool_call_id: `t${i}`, content: `r${i}` });
     return h;
   };
-  /** Block indices carrying a breakpoint, counted in wire order across all messages. */
-  const markedBlockIndices = (msgs: Array<{ content: unknown }>): number[] => {
+  /** Block indices carrying a breakpoint, counted in wire order the way the PROVIDER counts
+   *  blocks: an assistant turn with N tool_calls is N tool_use blocks (this is the compat wire,
+   *  where tool_calls ride a sibling field rather than the content array), a parts array is one
+   *  block per part, everything else is one. Counting messages instead of blocks here would let a
+   *  parallel tool burst read as ~1 block and quietly agree with a mis-measured fix. */
+  const markedBlockIndices = (
+    msgs: Array<{ content: unknown; tool_calls?: unknown[] }>,
+  ): number[] => {
     const out: number[] = [];
     let n = 0;
-    for (const m of msgs)
-      for (const b of (Array.isArray(m.content) ? m.content : [m.content]) as Array<{
+    for (const m of msgs) {
+      const parts = (Array.isArray(m.content) ? m.content : [m.content]) as Array<{
         cache_control?: unknown;
-      }>) {
+      }>;
+      for (const b of parts) {
         if (b?.cache_control) out.push(n);
         n++;
       }
+      n += m.tool_calls?.length ?? 0; // tool_use blocks carry no breakpoint, but they occupy space
+    }
     return out;
   };
 

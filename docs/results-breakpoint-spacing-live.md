@@ -104,8 +104,9 @@ so, not before.
   the absolute numbers do not transfer; the mechanism and the threshold do.
 - The simulated sweep models Anthropic's documented rule, not their implementation. The live
   measurement is the evidence; the sweep only says where to look.
-- Not yet verified on a real agent under real traffic. That is the Ferni deploy, and Ferni's own
-  turns are too narrow to exercise the fix, so it tests for regression rather than for benefit.
+- Verified on a real agent for REGRESSION only (see below). Ferni's turns are too narrow to
+  exercise the fix, so no live agent has yet demonstrated the benefit. Aperture is the lane that
+  can, and has not run it.
 
 ## Verified on a real agent (Ferni, 2026-08-10)
 
