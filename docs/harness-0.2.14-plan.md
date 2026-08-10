@@ -78,15 +78,18 @@ in full at the end of this document; the table below is the corrected scope.
 
 | # | item | why it is in this release |
 | --- | --- | --- |
-| 0 | **the breakpoint-spacing fix** — the mechanism behind the 1-in-25 miss, found and measured | their defect, 27/27 on their lane, unexplained for three releases. **This is the headline** |
-| 1 | cache-miss attribution, re-aimed and now supporting rather than leading | confirms the fix in the field and catches whatever is left |
+| 1 | **contiguous rolling breakpoint windows** — the mechanism behind the 1-in-25 miss, found and measured | their defect, 27/27 on their lane, unexplained for three releases. **This is the headline** |
 | 2 | **`calls` bounded by age and bytes** (`DELTA_RETENTION_MAX_CALL_BYTES`, 32MB) | at ~700KB/call a 200-turn engagement is ~120MB against 1GB volumes shared with the WAL |
-| 5 | `min()` guard, 1024-token floor, and reset rules on `cache_shortfall_tokens` | sharpens the metric they will be scoring on |
-| 6 | generated child-role capability clause (the narrow half of the prose lock) | stops the class of defect that made their sub-agent docs wrong for ten releases |
-| 7 | schedule read paths carry the control server's reason | an agent filed a blocker on a bare `409` |
-| 8 | empty provider error bodies carry their status; a 404 names the missing `/v1` | cost an hour locally, and no competitor has this |
+| 3 | `min(prev, current)` bound on `cache_shortfall_tokens` | a turn that shrank reported a large false shortfall, and compaction is what makes turns shrink |
+| 4 | child capability prose locked to the enforced filter by test | stops the class of defect that made their sub-agent docs wrong for ten releases |
+| 5 | schedule read paths carry the control server's reason | an agent filed a blocker on a bare `409` |
+| 6 | empty provider error bodies carry their status; a 404 names the missing `/v1` | cost an hour locally, and no competitor has this |
 
-Items 2, 7 and 8 are **already on `main`**, built and tested, unreleased.
+Items 2, 5 and 6 are **already on `main`**, built and tested, unreleased.
+
+**The cache-miss correlator is NOT in this release.** It was the headline of the first draft; codex
+showed its fire condition would have missed the very events it was built for, and then the mechanism
+was found without it. `cache_shortfall_tokens` stays as the field signal, corrected.
 
 **Cut from the draft after review:**
 
