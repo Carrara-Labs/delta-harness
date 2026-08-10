@@ -520,7 +520,7 @@ MODEL_API_KEY=your-anthropic-key
 DELTA_MODEL_PRIMARY=claude-sonnet-5
 ```
 
-Delta sends native Messages requests and uses Anthropic prompt-cache breakpoints on the system prefix and recent user or tool blocks.
+Delta sends native Messages requests and uses Anthropic prompt-cache breakpoints on the system prefix and recent user or tool blocks. Since 0.2.14 the rolling breakpoints are **chained into contiguous 20-block lookback windows** rather than clustered at the tail, so a turn issuing many parallel tool calls can still reach the previous turn's cache write. A turn of N parallel calls is roughly 2N blocks; below about 10 calls a turn the placement makes no difference, and beyond about 19 the cache is lost regardless, because that burst is one message wider than the whole lookback window.
 
 ### OpenAI directly
 
@@ -1695,7 +1695,7 @@ curl -sS http://127.0.0.1:8080/healthz
 ```
 
 ```json
-{"ok":true,"version":"0.2.13","build":"optional-commit"}
+{"ok":true,"version":"0.2.14","build":"optional-commit"}
 ```
 
 `build` appears only when `DELTA_BUILD` is set. This endpoint does not test the model, MCP servers, telemetry, or other dependencies. It is liveness and version metadata, not readiness.
@@ -2168,6 +2168,7 @@ The values below are the current public operating surface. Unless noted otherwis
 | `DELTA_RETENTION_MS` | 7 days | Event and tool-journal age limit. With telemetry active, the ordinary event sweep is skipped. |
 | `DELTA_RETENTION_MAX_EVENTS` | `50000` | Event row cap when the local sweep owns events. |
 | `DELTA_RETENTION_MAX_JOURNAL` | `50000` | Tool-journal row cap. |
+| `DELTA_RETENTION_MAX_CALL_BYTES` | `33554432` (32MB) | Byte budget for the `DELTA_CAPTURE_CALLS` table. Bytes rather than rows because a captured call ranges from ~95KB to ~700KB depending on the lane. The newest call is always kept even when it alone exceeds the budget, so the bound can never discard the turn being debugged; the retained set can therefore exceed the budget by at most one call. |
 | `DELTA_RETENTION_SWEEP_MS` | `3600000` | Periodic sweep interval. `0` disables periodic, not boot, sweep. |
 
 ### API, Cockpit, scheduling, and telemetry
