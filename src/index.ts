@@ -14,7 +14,7 @@ import { type Config, devConfigView, loadConfig } from "./config";
 import { openDb } from "./db";
 import { Events } from "./events";
 import { Exporter } from "./exporter";
-import { sweepSpill, sweepTrash } from "./files";
+import { sweepTrash } from "./files";
 import { acquireLease, releaseLease, renewLease } from "./lease";
 import { LocalSkillsAdapter } from "./local-skills";
 import { McpRegistry } from "./mcp";
@@ -421,7 +421,7 @@ if (cfg.telemetryUrl) {
   }).start();
 }
 sweepTrash(cfg.workspace); // Sprint 8: trashed files past 7 days are gone for good
-sweepSpill(cfg.workspace); // 0.2.14: the sibling directory nothing ever swept
+// NOTE: `.delta/spill` is deliberately NOT swept here — see the note in `files.ts`.
 // Local diagnostic-state retention (events + journal + calls): runs regardless of telemetry —
 // the Exporter only bounds `events` when telemetry is wired, and nothing bounded `journal` or
 // the `calls` capture, so a telemetry-less daemon would otherwise grow them without limit. Sweep,

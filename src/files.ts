@@ -229,33 +229,19 @@ export function sweepTrash(workspace: string, ttlMs = 7 * 24 * 3_600_000): void 
   }
 }
 
-/** Boot sweep for `.delta/spill`, the other unbounded workspace directory. `capAndSpill` writes a
- *  file per oversized tool result and nothing ever removed one, so a long-lived agent accumulates
- *  them forever alongside the trash it does sweep.
- *
- *  Two deliberate differences from `sweepTrash`. It keys on **mtime**, because a spill file is
- *  named `<runId>.<callId>.txt` and carries no timestamp. And the TTL is the reason this is a boot
- *  sweep rather than a periodic one: a spill path stays referenced from tool-result history and is
- *  deliberately preserved through compaction (`compaction.ts`), so removing a file the agent can
- *  still be pointed at costs it a re-read. At 7 days that history is already past the `journal`
- *  and `events` horizons, and the failure is graceful — `read_file` reports the file is gone. */
-export function sweepSpill(workspace: string, ttlMs = 7 * 24 * 3_600_000): void {
-  try {
-    const dir = resolve(workspace, ".delta/spill");
-    if (!existsSync(dir)) return;
-    const cutoff = Date.now() - ttlMs;
-    for (const name of readdirSync(dir)) {
-      const abs = resolve(dir, name);
-      try {
-        if (statSync(abs).mtimeMs < cutoff) rmSync(abs, { recursive: true, force: true });
-      } catch {
-        // one unreadable entry must not abandon the rest of the sweep
-      }
-    }
-  } catch {
-    // sweep is hygiene, never fatal
-  }
-}
+// `.delta/spill` deliberately has NO time-based sweep, and this note exists so the next person to
+// notice it is unbounded does not add one. A 7-day mtime sweep WAS written and reverted before
+// release (2026-08-10, codex): a spill path's reference set is not the file's age, it is every
+// message row that mentions it. `recall` reconstructs spill paths from the transcript and surfaces
+// COMPACTED rows as well as live ones (`builtins.ts`), and compaction deliberately accumulates the
+// pointers so they outlive the tool message it deactivates (`compaction.ts:collectArtifacts`). So
+// the referencing set is "anything ever mentioned in this thread", which no TTL approximates and
+// which a reference-aware sweep would find almost entirely undeletable anyway.
+//
+// The correct policy already exists one layer up: `queue.ts` wipes run spill ONLY for ephemeral
+// (`store: false`) turns, which have no durable transcript by construction, and its comment spells
+// out why durable spill must survive across runs. Bounding this directory needs a real lifecycle
+// (reference counting, or spill owned by the session row and dropped with it), not a timer.
 
 // ── document text extraction (zip+xml extraction is enough) ───────────
 

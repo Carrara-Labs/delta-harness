@@ -71,11 +71,19 @@ export function pruneLocalState(db: Database, opts: RetentionOpts): number {
       // Consequence, and it is the right trade: the retained set can exceed the budget by at most
       // ONE call, because a row is judged on what sits newer than it rather than on the total
       // including itself. Bounded overshoot beats a bound that discards the turn being debugged.
+      //
+      // CAST(... AS BLOB) is load-bearing: SQLite's LENGTH() on TEXT counts CHARACTERS, so the
+      // plain form made a knob named `..._MAX_CALL_BYTES` enforce a character budget and undercount
+      // a non-ASCII payload by up to ~3x (codex, 2026-08-10). Captured requests carry arbitrary
+      // model input, so this is the normal case on a non-English lane, not an edge case. Both
+      // columns are NOT NULL (see `db.ts`), so no COALESCE is needed and none is implied.
       `DELETE FROM calls WHERE id IN (
          SELECT id FROM (
            SELECT id,
-                  SUM(LENGTH(request) + LENGTH(response)) OVER (ORDER BY id DESC)
-                    - (LENGTH(request) + LENGTH(response)) AS newer_bytes
+                  SUM(LENGTH(CAST(request AS BLOB)) + LENGTH(CAST(response AS BLOB)))
+                    OVER (ORDER BY id DESC)
+                    - (LENGTH(CAST(request AS BLOB)) + LENGTH(CAST(response AS BLOB)))
+                      AS newer_bytes
              FROM calls
          ) WHERE newer_bytes >= ?
        )`,

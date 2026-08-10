@@ -1081,7 +1081,10 @@ type AnthropicContentBlock =
       cache_control?: { type: "ephemeral" };
     };
 
-function toAnthropic(
+/** Exported for the breakpoint enumeration (0.2.14): where the rolling marks land is
+ * cache-determining and turn-varying, so it must be testable against the REAL serializer
+ * rather than a copy of this loop — the same reason `rollingScanFrom` is exported. */
+export function toAnthropic(
   messages: ChatMsg[],
   cacheTtl?: "1h",
   ephemeralCount = 0,

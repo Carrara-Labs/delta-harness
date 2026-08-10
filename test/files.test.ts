@@ -17,14 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { builtinTools } from "../src/builtins";
-import {
-  expandImageMarkers,
-  registerImage,
-  saveInbox,
-  sniffMime,
-  sweepSpill,
-  sweepTrash,
-} from "../src/files";
+import { expandImageMarkers, registerImage, saveInbox, sniffMime, sweepTrash } from "../src/files";
 import type { ChatMsg } from "../src/provider";
 import type { ToolCtx } from "../src/tools";
 
@@ -182,28 +175,24 @@ describe("move / delete / grep", () => {
     expect(readdirSync(join(ws, ".delta/trash")).length).toBe(0);
   });
 
-  // `.delta/spill` is where capAndSpill parks oversized tool results, and nothing ever removed one:
-  // the sibling directory of the one we do sweep, unbounded for a long-lived agent. Keys on mtime
-  // because a spill file is named <runId>.<callId>.txt and carries no timestamp.
-  test("sweepSpill drops spill files past the TTL and keeps fresh ones", () => {
+  // A 7-day mtime sweep of `.delta/spill` was written and REVERTED before release (2026-08-10,
+  // codex): a spill path's reference set is every message row that mentions it, not the file's age.
+  // `recall` reconstructs spill paths from the transcript and surfaces COMPACTED rows too, and
+  // compaction accumulates the pointers precisely so they outlive the message it deactivates. On a
+  // long-lived lane that sweep silently destroys recoverable output. The boot sweep must leave the
+  // directory alone; only `queue.ts` may wipe spill, and only for ephemeral (store:false) runs.
+  test("the boot trash sweep does NOT touch .delta/spill, however old the file is", () => {
     const ws = workspace();
     const dir = join(ws, ".delta/spill");
     mkdirSync(dir, { recursive: true });
-    const stale = join(dir, "run_old.call_1.txt");
-    const fresh = join(dir, "run_new.call_1.txt");
-    writeFileSync(stale, "a big old tool result");
-    writeFileSync(fresh, "a big fresh tool result");
-    const old = new Date(Date.now() - 8 * 24 * 3_600_000);
-    utimesSync(stale, old, old);
+    const ancient = join(dir, "run_old.call_1.txt");
+    writeFileSync(ancient, "a tool result the transcript can still point at");
+    const old = new Date(Date.now() - 400 * 24 * 3_600_000);
+    utimesSync(ancient, old, old);
 
-    sweepSpill(ws);
+    sweepTrash(ws);
 
-    expect(readdirSync(dir)).toEqual(["run_new.call_1.txt"]);
-  });
-
-  test("sweepSpill is hygiene: a missing directory is not an error", () => {
-    const ws = workspace();
-    expect(() => sweepSpill(ws)).not.toThrow();
+    expect(readdirSync(dir)).toEqual(["run_old.call_1.txt"]);
   });
 
   test("grep is the workspace index — path:line hits, binary and .delta skipped", async () => {

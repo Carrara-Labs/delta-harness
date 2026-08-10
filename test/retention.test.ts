@@ -37,12 +37,27 @@ function addCall(db: Database, run: string, turn: number, bytes: number, created
 }
 const count = (db: Database, t: string): number =>
   (db.query(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n;
+/** Byte-accurate on purpose: SQLite LENGTH() on TEXT counts CHARACTERS, so the plain form
+ *  silently measured the wrong unit here as well as in the pruner it is checking. */
 const callBytes = (db: Database): number =>
   (
-    db.query("SELECT COALESCE(SUM(LENGTH(request)+LENGTH(response)),0) AS b FROM calls").get() as {
+    db
+      .query(
+        "SELECT COALESCE(SUM(LENGTH(CAST(request AS BLOB))+LENGTH(CAST(response AS BLOB))),0) AS b FROM calls",
+      )
+      .get() as {
       b: number;
     }
   ).b;
+
+/** A call whose payload is multi-byte: `→` is 1 character and 3 bytes, so a character-counting
+ *  budget sees a third of the real size. */
+function addUtf8Call(db: Database, run: string, turn: number, chars: number, createdAt: number) {
+  const half = "→".repeat(Math.max(1, Math.floor(chars / 2)));
+  db.query(
+    "INSERT INTO calls (run_id, turn, request, response, created_at) VALUES (?,?,?,?,?)",
+  ).run(run, turn, half, half, createdAt);
+}
 
 describe("pruneLocalState", () => {
   test("drops events + journal older than the age cutoff (telemetry off)", () => {
@@ -220,6 +235,31 @@ describe("pruneLocalState", () => {
 
     expect(deleted).toBe(1);
     expect(count(db, "calls")).toBe(1);
+    db.close();
+  });
+
+  // The knob is named MAX_CALL_BYTES and SQLite LENGTH() on TEXT counts CHARACTERS, so the first
+  // version of this bound enforced a character budget and let a non-ASCII lane hold ~3x the
+  // configured size (codex, 2026-08-10). Captured requests carry arbitrary model input, so this is
+  // the normal case on a non-English lane. Three 600-byte calls against a 1000-BYTE budget must
+  // leave two; counting characters sees 200 each, never reaches the budget, and keeps all three.
+  test("calls: the budget is BYTES, not characters (a multi-byte payload is not undercounted)", () => {
+    const db = openDb(":memory:");
+    const run = seedRun(db);
+    for (const turn of [1, 2, 3]) addUtf8Call(db, run, turn, 200, NOW - 1 * DAY); // 200 chars = 600 bytes
+
+    pruneLocalState(db, {
+      now: NOW,
+      retentionMs: 7 * DAY,
+      maxEvents: 1000,
+      maxJournal: 1000,
+      maxCallBytes: 1000,
+      telemetryActive: false,
+    });
+
+    const turns = db.query("SELECT turn FROM calls ORDER BY turn").all() as { turn: number }[];
+    expect(turns.map((r) => r.turn)).toEqual([2, 3]); // newest two, one call of bounded overshoot
+    expect(callBytes(db)).toBe(1200); // and it is measured in real bytes, not 400 characters
     db.close();
   });
 });
