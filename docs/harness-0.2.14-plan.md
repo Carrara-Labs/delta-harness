@@ -1,6 +1,16 @@
-# Harness 0.2.14 — "name the miss"
+# Harness 0.2.14 — "the second breakpoint"
 
-Status: **specified, not built**. Written 2026-08-10.
+Status: **headline fix built and measured live; release not cut.** Written 2026-08-10.
+
+**The release changed shape twice in one day.** It was scoped as a diagnostic ("name the miss"),
+codex returned NO-GO on that instrument, and then the mechanism was found by enumerating our own
+breakpoint walker: the two rolling `cache_control` marks land one block apart on every parallel tool
+burst, sharing a single 20-block lookback window instead of starting two, so ~10 parallel tool calls
+re-bills the whole prefix. Measured live at 4.8x cheaper on an affected turn, byte-identical below
+the threshold. Evidence: [`results-breakpoint-spacing-live.md`](./results-breakpoint-spacing-live.md).
+
+So 0.2.14 leads with a **fix**, not an instrument, and the diagnostic work shrinks to a supporting
+role. That is a materially easier case for a consumer being asked to spend an expensive upgrade.
 
 Specs: [`spec-cache-break-correlator.md`](./spec-cache-break-correlator.md) ·
 [`spec-capability-prose-lock.md`](./spec-capability-prose-lock.md).
@@ -68,7 +78,8 @@ in full at the end of this document; the table below is the corrected scope.
 
 | # | item | why it is in this release |
 | --- | --- | --- |
-| 1 | **cache-miss attribution**, re-aimed (see the correlator spec) | their defect, measured 27/27 on their lane, unnamed for three releases |
+| 0 | **the breakpoint-spacing fix** — the mechanism behind the 1-in-25 miss, found and measured | their defect, 27/27 on their lane, unexplained for three releases. **This is the headline** |
+| 1 | cache-miss attribution, re-aimed and now supporting rather than leading | confirms the fix in the field and catches whatever is left |
 | 2 | **`calls` bounded by age and bytes** (`DELTA_RETENTION_MAX_CALL_BYTES`, 32MB) | at ~700KB/call a 200-turn engagement is ~120MB against 1GB volumes shared with the WAL |
 | 3 | **effort inheritance for children, explicit and defaulting to today's behaviour** | promised for 0.2.13 on 246 production runs; deferring it again spends their upgrade for them |
 | 4 | **opt-in MCP inheritance for children** (`DELTA_SUBAGENT_INHERIT_MCP`, default off) | the absence made their agent write "Sub-agents have NO aperture tools" into its own state |

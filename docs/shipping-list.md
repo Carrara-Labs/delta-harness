@@ -157,8 +157,17 @@ Specs: `spec-cache-breakpoints.md`, `spec-compaction-tail.md`.
 1. **Aperture QS lab lane to 0.2.11**, then the rest of QS, then Intake. Beneficiary and volume rig
    in one.
 2. **Meeting Processor last**, as a beneficiary of a proven fix, never as a testbed.
-3. **Anthropic's block-count cache lookback.** Demotion shrinks a tool result's size, not its block
-   count, so a turn with many parallel tool calls can still miss the previous cached tail.
+3. ~~**Anthropic's block-count cache lookback.**~~ **THIS WAS THE 1-IN-25 CACHE MISS.** Filed here
+   as an optimisation since 0.2.11, carried through three releases, and never once tested as the
+   suspect while four other mechanisms were proposed and killed. It was written down correctly the
+   whole time: *"a turn with many parallel tool calls can still miss the previous cached tail."*
+   **Fixed 2026-08-10** (`rollingMarks`): our two rolling breakpoints landed ONE block apart on
+   every tool burst, sharing a single 20-block lookback window instead of starting two, so ~10
+   parallel calls outran both. Live: turn-2 `cacheRead` 2,522 → 10,206 at width 12, byte-identical
+   at width 4. See `results-breakpoint-spacing-live.md`.
+   **The lesson is about the backlog, not the cache:** a mechanism sitting in a to-do list is not
+   being considered. When a defect resists explanation, re-read the list for something already
+   described that nobody has ruled out.
 4. **Budget pre-flight headroom.** A `$10` cap produced `$12.02`.
 5. **Idle compaction** (Hermes' `_should_idle_compact`) - compact while idle rather than only under
    pressure. Needs a scheduler hook and has its own failure modes.
