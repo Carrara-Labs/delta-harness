@@ -158,11 +158,12 @@ fly machine start <machine-id> -a <app>
 #    anywhere (Ferni uses /data/bundle). Taking the volume also catches notes/, vocab.json and
 #    PROMPT_CONTEXT.md, and cannot silently miss a file someone renamed.
 fly ssh console -a <app> -C "printenv DELTA_WORKSPACE"     # know what you are protecting
-fly ssh console -a <app> -C "tar cf - -C /data ." > <app>-data-$(date +%Y%m%d).tar
+fly ssh console -a <app> -C "tar cf - -C /data --exclude=lost+found ." \
+  > <app>-data-$(date +%Y%m%d).tar
 
-# 3. VERIFY BEFORE UPGRADING. Not optional.
-tar tf <app>-data-*.tar | head
-tar tf <app>-data-*.tar | grep DELTA.md    # the self-file must actually be in there
+# 3. VERIFY BEFORE UPGRADING. Not optional. BOTH lines, or it is not a rollback.
+tar tf <app>-data-*.tar | grep DELTA.md      # the self-file
+tar tf <app>-data-*.tar | grep delta.db      # the database the migration rewrites
 ```
 
 **Step 3 matters as much as step 2.** Every failure mode here - a sleeping machine, a workspace
@@ -171,9 +172,29 @@ until after the volume is gone, and by then the agent's learned state is unrecov
 one backup where being wrong cannot be undone, and it runs in the ninety seconds before an
 irreversible action.
 
+**Grep for `delta.db` as well as `DELTA.md`.** A workspace-only archive is a self-file backup, not a
+rollback. `/data/delta.db` is what the migration rewrites, so restoring a workspace onto a migrated
+volume leaves the new schema in place and the older binary still refuses to boot. Both greps have to
+return a line. (Aperture, 2026-08-10: their fleet doc had been carrying a workspace-only command.)
+
 **Roll forward, not back.** If an upgrade misbehaves, the recovery is a newer image or a restored
 snapshot, never an older image against the same volume. If you are already stuck: copy the workspace
 off the volume *before* recreating it. The boot error names what is salvageable.
+
+#### Two things the restore drill teaches that the snapshot does not
+
+Aperture ran the full loop on 2026-08-10 - restore v14, boot 0.2.11, migrate to 0.2.14, roll back,
+watch it refuse, restore again - on a throwaway app against a real archive. It passes. Two findings
+worth having before you need them:
+
+- **`DELTA.md` survives even the crash loop.** Bundle apply runs *before* the database is opened, so
+  an agent that is failing to boot on a schema refusal has still written its self-file to disk. The
+  learned state is recoverable from a crash-looping machine; you have more time than the restart
+  cap suggests.
+- **Recovery needs an init override.** You cannot `fly ssh` into a machine whose daemon exits on
+  boot, which is exactly the machine you need a shell on. Restart it with an override such as
+  `sleep infinity` as the entrypoint first, then restore. Plan this before the rollback, not during
+  it.
 
 Schema changes are called out per release in the CHANGELOG. If a release notes a migration, treat
 the upgrade as one-way for every lane it touches.

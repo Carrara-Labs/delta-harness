@@ -141,6 +141,62 @@ A production Ferni session produced three shortfalls of **2,664 / 9,986 / 2,264*
 issuing **0-2** tool calls, with `spine_hash`, `tools_hash` and `ephemeral_bytes` constant across all
 eight calls. Stationary prefix, narrow burst, real miss. Same signature Aperture measured 27/27.
 
+**The Aperture fleet dataset (2026-08-10, 129 turns / 7 runs, both builds) sharpens this and
+falsifies the phrase everyone has been using, including us.**
+
+**"Prefix intact" is not established by any measurement we currently take.** `spine_hash` and
+`tools_hash` cover the spine and the tool specs. The history segment - the only segment that changes
+every turn, and the one every one of these misses points at - is exported as `history_bytes` and
+nothing else. A same-size mutation anywhere in history is invisible to this telemetry, which is
+precisely the failure mode [[feedback_cache_keys_on_identity]] was written about. Every "stationary
+prefix, real miss" claim in this dataset, ours included, is really "spine and tools stationary; the
+history segment unmeasured".
+
+**Add `history_hash` before building anything else.** It is one line next to `spine_hash`, it uses
+the same salted `prefixDigest`, and it splits the open defect cleanly in two:
+- history moved → we are mutating the prefix. A serialization bug we own, fixable by us.
+- history stationary → we are placing breakpoints badly. An engine bug in `rollingMarks` placement.
+
+Nothing currently distinguishes these, and they need opposite fixes. A rolling per-message digest is
+better still (it names *where* the divergence starts), but the single segment digest is the cheap
+first cut.
+
+**What the dataset shows once compaction turns are separated out.** Compare each miss against
+`prevInput - prevCached`, the region the previous turn actually paid for, and the misses split into
+two families with nothing in between:
+
+| family | signature | reading |
+| --- | --- | --- |
+| post-compaction (shape 2) | history delta strongly negative, shortfall far exceeds the new region | the 0.2.13-and-earlier collapse; `cached` froze at exactly 18,399 for the rest of the run |
+| stationary-prefix (shape 1) | history delta positive, shortfall is a *fraction* of the new region | the open defect |
+
+In shape 1 the useful number is not the shortfall, it is **how far into the previous turn's new
+region the next turn's cache read reached before stopping**. It lands on two discrete values, never
+in between:
+
+- **~679 tokens in**, then stop. Four independent runs, same turn index, shortfall **exactly 7,172
+  tokens** in all four, with `self_bytes` of 4,321 / 4,321 / 5,042 / 6,251. Identical to the token
+  across a 45% spread in self-file size, which rules out spine drift as the cause.
+- **~188 tokens short of the end**, having reached 8,700-9,900 tokens of new material fine.
+
+A read that stops at a discrete offset rather than a random one is a read ending at the last
+*written* breakpoint. That is placement, not TTL (gaps were 8-37s), not spine, not tools.
+
+The first candidate was `rollingScanFrom`, which starts the newest mark's scan at
+`length - 1 - ephemeralCount` and so assumes the ephemerals occupy the final slots of the array.
+**Checked and falsified**: `run.ts:969` assembles `[system, ...withImages, ...ephemeral]` and passes
+`ephemeral.length`, so the assumption holds exactly. Recorded because the next person will have the
+same idea.
+
+What survives in that class is **mark ineligibility at the tail**. Both wires refuse to mark a
+message that ends in a `tool_use` block or carries an image, on the reasoning that those are rebuilt
+every turn. When the tail is ineligible the newest mark falls back to an earlier message, and
+everything after it goes unwritten - which is exactly a read that stops at a discrete offset short
+of the end. Aperture's `quick-search` attaches image markers, so it is a lane where this can fire.
+This is a hypothesis with a mechanism, not a conclusion. It is cheap to settle offline: `toAnthropic`
+is exported and mark positions are deterministic, so replaying a captured request pair
+(`DELTA_CAPTURE_CALLS=1`) and printing where the marks land answers it without a single API call.
+
 **This is the thing to instrument next**, and unlike when the correlator was first specced, it is
 reproducible on a lane we own. Design notes:
 - Do NOT rebuild `spec-cache-break-correlator.md` as written. Its `wire` hashing cannot fire
