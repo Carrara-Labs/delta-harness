@@ -883,7 +883,7 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
     add({
       name: "research",
       description:
-        "Run 1–3 tasks as parallel sub-agents, each with the SAME tools you have (read, write, search, code, data tools). Each works in its own fresh context, writes full findings to a file, and returns a short summary + that path — offload exploration or work without bloating this run, and finish faster. Give each a self-contained task; results come back distilled.",
+        "Run 1–3 tasks as parallel sub-agents, each in a fresh context with your READ-ONLY tools. A child cannot write files, remember, or run code, so give it questions rather than changes. Full findings are saved to a file; you get back a short summary plus that path. Offload exploration without bloating this run.",
       parameters: {
         type: "object",
         properties: {

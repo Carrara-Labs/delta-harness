@@ -14,7 +14,7 @@ import { type Config, devConfigView, loadConfig } from "./config";
 import { openDb } from "./db";
 import { Events } from "./events";
 import { Exporter } from "./exporter";
-import { sweepTrash } from "./files";
+import { sweepSpill, sweepTrash } from "./files";
 import { acquireLease, releaseLease, renewLease } from "./lease";
 import { LocalSkillsAdapter } from "./local-skills";
 import { McpRegistry } from "./mcp";
@@ -421,9 +421,10 @@ if (cfg.telemetryUrl) {
   }).start();
 }
 sweepTrash(cfg.workspace); // Sprint 8: trashed files past 7 days are gone for good
-// Local diagnostic-state retention (events + journal): runs regardless of telemetry —
-// the Exporter only bounds `events` when telemetry is wired, and nothing bounds `journal`,
-// so a telemetry-less daemon would otherwise grow both without limit. Sweep once at boot,
+sweepSpill(cfg.workspace); // 0.2.14: the sibling directory nothing ever swept
+// Local diagnostic-state retention (events + journal + calls): runs regardless of telemetry —
+// the Exporter only bounds `events` when telemetry is wired, and nothing bounded `journal` or
+// the `calls` capture, so a telemetry-less daemon would otherwise grow them without limit. Sweep,
 // then on an interval. When telemetry IS on, the sweep leaves `events` to the Exporter.
 const telemetryActive = Boolean(cfg.telemetryUrl);
 const runRetentionSweep = () =>
@@ -432,6 +433,7 @@ const runRetentionSweep = () =>
     retentionMs: cfg.retentionMs,
     maxEvents: cfg.retentionMaxEvents,
     maxJournal: cfg.retentionMaxJournal,
+    maxCallBytes: cfg.retentionMaxCallBytes,
     telemetryActive,
   });
 runRetentionSweep();

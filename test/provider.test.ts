@@ -659,3 +659,32 @@ describe("prompt-cache retention (DELTA_CACHE_TTL)", () => {
     expect((seen.system as Block[])[0]?.cache_control).toEqual({ type: "ephemeral" });
   });
 });
+
+// An empty error body used to normalize to the literal string "(empty error body)", which names
+// neither the failure nor a next step. It cost a live debugging detour when MODEL_BASE_URL was
+// missing its version path and the host answered the POST with a bare 404. The status is on the
+// result object, but the error STRING travels alone into logs, run rows and agent-visible text.
+describe("empty provider error bodies diagnose themselves", () => {
+  test("a bare 404 names the likely cause (base URL missing its version path)", async () => {
+    reset(() => new Response("", { status: 404 }));
+    const r = await chat(cfg({ maxRetries: 0 }), { messages: [{ role: "user", content: "hi" }] });
+    expect(r.ok).toBe(false);
+    expect(r.status).toBe(404);
+    expect(r.error).toContain("MODEL_BASE_URL");
+    expect(r.error).not.toBe("(empty error body)");
+  });
+
+  test("any other empty body still carries its status", async () => {
+    reset(() => new Response("", { status: 502 }));
+    const r = await chat(cfg({ maxRetries: 0 }), { messages: [{ role: "user", content: "hi" }] });
+    expect(r.error).toBe("HTTP 502 with an empty error body");
+  });
+
+  test("a NON-empty body is untouched by the status argument", async () => {
+    reset(
+      () => new Response(JSON.stringify({ error: { message: "over quota" } }), { status: 429 }),
+    );
+    const r = await chat(cfg({ maxRetries: 0 }), { messages: [{ role: "user", content: "hi" }] });
+    expect(r.error).toBe("over quota");
+  });
+});

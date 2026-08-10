@@ -738,7 +738,7 @@ Task status has five values:
 
 `GET /v1/tasks/:id` includes `result` only for `done`, `failed`, or `cancelled`. Handled outcomes store a complete Responses-compatible object with `status`, `output_text`, `output`, model, previous response ID, and usage. Failed and cancelled output begins with a Delta status marker rather than pretending to be a successful answer. An unexpected exception outside Delta's handled run path can currently mark a task `failed` with an empty `{}` result and no normal `run.finished` event. A task or response SSE client waiting for that event can continue receiving heartbeats, so clients need their own terminal-status polling and timeout. Operators must alert on structured errors and malformed terminal results.
 
-**Progress events.** `GET /v1/tasks/:id/events` follows the live run as Server-Sent Events; add `?coarse=1` to drop the per-token `output_text.delta` / `reasoning.delta` frames and keep only the structural heartbeat (run/turn/tool lifecycle, `model.call`, `checkpoint`, `error`). For a host that can't hold an SSE connection, `GET /v1/tasks/:id/events?since=<id>` returns a bounded JSON page `{ "events": [...], "cursor": N, "done": bool }` — pass the returned `cursor` as the next `since` and stop when `done` is true (`limit` defaults to 200, max 500). `model.call` events carry `cache_hit_pct`, the share of that turn's input served from the prompt cache, so a host can watch cache warmth live. A `model.retry` event fires on every retry, re-auth, model switch, or provider failover, so a retrying or stalled provider is visible instead of silent dead air, and `model.call` also carries `wall_ms` and `retries` next to `latency_ms` so the pre-call gap (`wall_ms` minus `latency_ms`) is queryable. Both surfaces require the run's owner (see identity, below).
+**Progress events.** `GET /v1/tasks/:id/events` follows the live run as Server-Sent Events; add `?coarse=1` to drop the per-token `output_text.delta` / `reasoning.delta` frames and keep only the structural heartbeat (run/turn/tool lifecycle, `model.call`, `checkpoint`, `error`). For a host that can't hold an SSE connection, `GET /v1/tasks/:id/events?since=<id>` returns a bounded JSON page `{ "events": [...], "cursor": N, "done": bool }` — pass the returned `cursor` as the next `since` and stop when `done` is true (`limit` defaults to 200, max 500). `model.call` events carry `cache_shortfall_tokens`, the previous request's gross input minus this call's cache reads, so a host can watch cache health live. Prefer it to `cache_hit_pct`, which is also present but is a ratio whose denominator grows as history is appended, so it moves even when caching is perfect and a healthy turn can read anywhere from 59% to 100%. A `model.retry` event fires on every retry, re-auth, model switch, or provider failover, so a retrying or stalled provider is visible instead of silent dead air, and `model.call` also carries `wall_ms` and `retries` next to `latency_ms` so the pre-call gap (`wall_ms` minus `latency_ms`) is queryable. Both surfaces require the run's owner (see identity, below).
 
 Handled non-streaming API errors use this shape:
 
@@ -838,7 +838,8 @@ The `trusted` tier exposes the built-in tools below. Tool failures are returned 
 | `todo` | Read or replace the run's working plan. | Re-injected every turn and survives compaction; bounded, so offload large notes to a workspace file. Send the full item list to write; omit to read. |
 | `search_tools` | Find and activate non-resident allowed tools for the current run. | Activates up to five name or description matches per call; lexical matching only. |
 | `code` | Delegate a task to a configured coding CLI. | No harness timeout or Delta filesystem sandbox. The child has every path and capability available to the daemon's OS user, subject to any sandbox implemented by the selected CLI. |
-| `research` | Run 1 to 3 parallel in-process sub-agents that each explore in their own bounded context and return a short summary plus a findings-file path. | One nesting level; each child holds the parent's tools minus the delegation and scheduling tools; children share the workspace. |
+| `list_secrets` | List the names and purposes of the credentials in the vault. | Read-only by design: there is no tool that returns a value. Registered only when a vault key is configured. |
+| `research` | Run 1 to 3 parallel in-process sub-agents that each explore in their own bounded context and return a short summary plus a findings-file path. | One nesting level; each child gets the parent's **read-only** tools and nothing else, so it cannot write files, `remember`, or run code; the parent writes the findings file. |
 | `spawn_subagent` | Run one isolated side task through `delta run`. | One nesting level; fresh in-memory conversation and narrow environment. |
 | `eval_n` | Run 2 to 5 independent variants and judge the best. | Best for reasoning or drafting that does not mutate shared files. |
 | `schedule_self` | Ask a control plane to wake the agent later. | Registered only when control-plane URL and token are configured. |
@@ -1342,6 +1343,35 @@ The context window is one dial:
 DELTA_COMPACT_AT_TOKENS=120000
 ```
 
+### Bounding what the model writes (0.2.12, opt-in)
+
+Tool *results* have always been capped on arrival and capped again at compaction. A tool call's
+**arguments** never were: they live on the assistant message and are replayed on every later turn,
+so an agent that files large results page by page pays, forever, to re-read text it already banked.
+
+`DELTA_TOOL_ARG_MAX_BYTES` bounds them. It applies as both the per-value threshold and the total
+ceiling, so the invariant is simply "a stored tool call's arguments never exceed N bytes".
+
+```dotenv
+# 0 (the default) disables it entirely — this is also the rollback lever.
+# 4096 is the recommended value if you enable it.
+DELTA_TOOL_ARG_MAX_BYTES=4096
+```
+
+Only a call that **succeeded** is touched, and only its largest values, largest first, until the
+object fits. The keys and every small field survive, so `send_email` keeps `to` and `subject` and
+loses only `body` — the model can still see *what* it did, which is what stops duplicate side
+effects. The full arguments stay in the execution journal under that table's existing retention, and
+`recall` can list them, search inside them, and read one back.
+
+**It ships opt-in for its first cycle.** The rail is measured and sound, but the guard that stops a
+model copying the placeholder back into a later call was written in response to a live data-loss bug
+and cannot be proven complete against arbitrary MCP argument schemas. Turn it on deliberately, on
+one lane, and watch compaction count and post-compaction input rather than steady-state cache hit.
+
+`recall` gains two modes alongside its keyword search: calling it with no arguments lists what has
+been dropped, and passing `artifact: {run_seq, call_id, field}` reads one back a page at a time.
+
 Tight (60,000–90,000) is cheaper and lower latency and compacts more often. The default 120,000 is safe on any model with a 200,000-token window. Large (160,000+) keeps more continuity and performance and is safe to run because compaction is restorable — raise it only up to the model's real window minus output headroom.
 
 ### The summary preserves facts across many generations
@@ -1359,7 +1389,7 @@ An agent can also keep its own working plan with the `todo` tool. The plan is re
 
 ### Delegating heavy exploration
 
-For work that would bloat the primary window, the `research` tool runs one to three sub-agents in parallel, in-process. Each explores in its own bounded context, writes its full findings to a file the parent owns, and returns only a short summary plus that path — so the primary conversation absorbs the signal, not the exploration. A research child holds the parent's exact rights: its callable tools are the parent's full registry minus a small withheld set (the delegation tools `research`, `spawn_subagent`, and `eval_n`, plus the run-scheduling tools), so nesting stays exactly one level deep. A child can read, write, run code, `remember`, and call MCP reads and writes — whatever the parent can. It is forged from the same system spine as the parent, so it inherits the same norms and policy along with those rights, and it starts on the parent's pinned tool set with `search_tools` for the rest.
+For work that would bloat the primary window, the `research` tool runs one to three sub-agents in parallel, in-process. Each explores in its own bounded context and returns only a short summary plus the path to a findings file the parent writes, so the primary conversation absorbs the signal, not the exploration. A research child's callable tools are the parent's **read-only** tools and nothing else: admission is positive and fail-closed on a tool's own read-only flag, so a builtin, MCP, or future tool that is not explicitly marked read-only never reaches a child. A child therefore cannot `write_file`, `remember`, move or delete, run `code`, or delegate further, which is also what keeps nesting exactly one level deep. Give a child a question to answer rather than a change to make. It is forged from the same system spine as the parent, so it inherits the same norms and policy, and it starts on the parent's pinned tool set with `search_tools` for the rest.
 
 ### Boundaries
 
@@ -1563,7 +1593,7 @@ The stream carries run lifecycle, turn boundaries, model and tool calls, context
 | Event | Key attributes | Notes |
 | --- | --- | --- |
 | `run.finished` | `status`; `gen_ai.usage.{input,output,cached,total}_tokens`; `gen_ai.usage.cost_usd` | Aggregate per run. Always present. No model id here. |
-| `model.call` | `gen_ai.request.model`, `gen_ai.provider`, `gen_ai.response.finish_reasons`, per-call usage + `gen_ai.usage.cost_usd`, `latency_ms`, `wall_ms`, `cache_hit_pct`, `gen_ai.request.effort`, `speed`, `fallback` | One per turn. The listed attributes are in the default safe subset. `tool_calls` (names requested) is capture-gated. |
+| `model.call` | `gen_ai.request.model`, `gen_ai.provider`, `gen_ai.response.finish_reasons`, per-call usage + `gen_ai.usage.cost_usd`, `latency_ms`, `wall_ms`, `cache_hit_pct`, `cache_shortfall_tokens`, `spine_bytes`, `spine_hash`, `tools_bytes`, `tools_hash`, `tools_n`, `self_bytes`, `history_bytes`, `ephemeral_bytes`, `tier`, `purpose`, `gen_ai.request.effort`, `speed`, `fallback` | One per **model call**, not per turn: since 0.2.13 it also covers the utility model, so filter `tier = 'main'` wherever you count turns. The listed attributes are in the default safe subset. `tool_calls` (names requested) is capture-gated. The `*_hash` digests are salted per daemon process, so they are comparable within one process lifetime and not across a restart; compare `*_bytes` across restarts. |
 | `model.fallback` | `gen_ai.request.model` (configured primary), `gen_ai.response.model` (served), `gen_ai.provider`, `retries` | Fires only when a call is served by a model other than the configured primary — the failover cascade won. Also sets `fallback: true` on that `model.call` and prints a `FALLBACK` stderr marker. |
 | `tool.call` / `tool.result` | `gen_ai.tool.name`, call id, `is_error`, `error.class`, interrupted state | `error.class` is a low-cardinality class (`self_cap`, `self_conflict`, `self_spine_echo`, `self_empty`, `self_unavailable`, `self_protected`, `timeout`, `transient`, `categorical`; absent when nothing fits). The 200-char `error.message` snippet rides only with capture on. |
 | `self.pressure` | `bytes`, `cap`, `elided` | Fires once per run when `DELTA.md` no longer fits its budget — elided in the prompt (over cap, identity partly dropped) or over 90% of the cap (every `remember` is about to bounce). Pairs with a loud stderr line. |
@@ -1665,7 +1695,7 @@ curl -sS http://127.0.0.1:8080/healthz
 ```
 
 ```json
-{"ok":true,"version":"0.2.4","build":"optional-commit"}
+{"ok":true,"version":"0.2.13","build":"optional-commit"}
 ```
 
 `build` appears only when `DELTA_BUILD` is set. This endpoint does not test the model, MCP servers, telemetry, or other dependencies. It is liveness and version metadata, not readiness.
@@ -1976,11 +2006,55 @@ The built-in file tools are workspace-confined, and model-directed `code` and su
 
 - `read_file` can read workspace files, including a workspace `delta.env`
 - the delegated coding CLI has every filesystem and process capability available to the daemon's OS user; only the CLI's own sandbox can narrow it
-- stdio MCP servers are trusted local child processes and inherit the daemon environment plus their explicit `env` object
+- stdio MCP servers are trusted local child processes; since 0.2.10 they receive only process plumbing (`PATH`, `HOME`, `SHELL`, `TMPDIR`, `LANG`, `LC_*`, `TERM`) plus their own explicit `env` object, not the daemon's whole environment
 - HTTP MCP tools can perform whatever side effects their servers authorize
 - subagents share the workspace
 
 Run one agent under a dedicated OS identity or isolated VM. Keep provider, control, telemetry, and MCP credentials in the process environment or secret manager, not workspace files. Add a purpose-built sandbox if arbitrary generated code must be treated as hostile.
+
+### The secret vault
+
+Third-party credentials an agent needs at runtime (a search key, a client API key, an MCP backend bearer) can live in an encrypted vault instead of the deployment environment. One rule governs it: **a secret value never enters model-readable state.**
+
+Enable it with a key. Prefer the file form on a real deployment, because an environment variable is copied into the process environment block that any same-UID process can read:
+
+```dotenv
+DELTA_VAULT_KEY_FILE=/run/secrets/vault.key
+# or, for local development:
+DELTA_VAULT_KEY=<at least 16 characters>
+```
+
+Generate a key with `openssl rand -base64 32`. With neither set there is no vault at all: the routes answer `503`, the `list_secrets` tool is not registered, and a `{{vault:NAME}}` reference fails closed. There is deliberately no plaintext fallback, and safe mode never carries a vault.
+
+Provide a secret over the seam. Names match `^[A-Z][A-Z0-9_]{0,63}$`, values are capped at 4 KB:
+
+```bash
+curl -X PUT "$BASE/v1/secrets/EXA_API_KEY" \
+  -H "authorization: Bearer $DELTA_CONTROL_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"value":"<the credential>","purpose":"web search"}'
+```
+
+`PUT` is **create-only** and answers `409` if the name exists, so a compromised or prompt-injected gateway flow cannot silently swap an established credential. Rotation and deletion are operator acts on the inspect-gated surface (`POST` / `DELETE /v1/dev/secrets/:name`), which also requires `DELTA_INSPECT_WRITE=1`.
+
+`GET /v1/secrets` returns names, purposes, and timestamps. **There is no route that returns a value** — not even to the authenticated gateway. A lost secret is re-provided, never recovered.
+
+Reference a secret anywhere in your MCP configuration with `{{vault:NAME}}`:
+
+```dotenv
+DELTA_MCP_SERVERS='[{"name":"kb","transport":"http","url":"https://kb.example.com/mcp",
+  "headers":{"authorization":"Bearer {{vault:KB_TOKEN}}"}}]'
+```
+
+The reference is resolved in engine code at the moment of egress — per call for HTTP headers, at spawn for a stdio server's `env` — so the configuration itself only ever holds the name. Because resolution happens at call time, a credential provided mid-conversation takes effect immediately; a backend that could not connect at boot for want of its credential is reconnected automatically when that credential arrives. The built-in `web_search` behaves the same way: with no `EXA_API_KEY` in the environment it falls back to the vault, so handing an agent a search key lights the tool up without a redeploy.
+
+The model's entire view of the vault is one read-only tool, `list_secrets`, which returns names and purposes. There is deliberately no tool that returns a value; such a tool would turn every other tool into an exfiltration path. When a task needs a credential the agent does not have, it should ask its human for it by name.
+
+As defense in depth, a value is registered for exact-value redaction the moment it is resolved for egress, in its raw, percent-encoded, and JSON-escaped forms. Any later reflection of it — an MCP backend echoing its own authorization header inside an error body, for instance — is replaced with `[vault:NAME]` before it reaches the model, the transcript, a spill file, a research artifact, or telemetry.
+
+`GET /v1/status` reports `vault.enabled`, a live `vault.count`, and `vault.declared`: the names your configuration actually wires a destination for. An edge that offers a secret-entry interface should validate a request against `declared`, so an injected agent cannot invent a credential name and talk a human into providing it.
+
+Known limits, stated plainly. The ciphertext lives in the daemon database, outside the model-writable workspace, so the confined file tools cannot reach it; but the delegated `code` tool runs arbitrary code as the daemon's OS user by design, and on Linux a same-UID process can read another's environment. The vault raises the cost of extraction from `cat` to an active attack on process state, and it keeps values out of transcripts, logs, and configuration — it does not replace the VM as the execution boundary. A secret injected into a configured MCP server goes wherever that server's operator-set URL points; operator configuration is trusted input and is never model-writable.
 
 ### Protect stored state
 
@@ -2032,6 +2106,7 @@ The values below are the current public operating surface. Unless noted otherwis
 | `DELTA_STREAM_IDLE_MS` | `60000` | Abort a model stream after this long without a network chunk. `0` disables. |
 | `DELTA_FIRST_BYTE_MS` | `30000` | Deadline for connect + first response header on a model call - the phase a dead socket after a VM resume otherwise hangs in. `0` disables. |
 | `DELTA_CACHE_TTL` | unset | `1h` keeps the stable prefix (system spine + tools) in the Anthropic prompt cache for an hour instead of five minutes. Faster, cheaper turn 1 for an agent serving several runs an hour; 1h cache writes bill double, so it stays opt-in. |
+| `DELTA_PROMPT_CACHE_KEY` | auto | `1` forces the OpenAI `prompt_cache_key` routing field on the OpenAI-compatible wire, `0` suppresses it. Unset auto-detects from the host: it is sent to OpenRouter and OpenAI, and withheld from everything else, because an unknown top-level field is a legitimate `400` on a strict endpoint. Set `1` only for a proxy you have verified accepts it. |
 | `DELTA_SPEED` | unset | `fast` requests Anthropic fast mode (research preview) on the native wire, for Opus 5 / Opus 4.8 only — the request carries `speed: "fast"` and its beta header, and the server-reported served speed lands on `model.call` telemetry. Byte-identical to unset when off; any other model runs standard. **2× token pricing** — set a matching `DELTA_MODEL_PRICES` before enabling, or cost and the `maxCostUsd` budget guard undercount by half. |
 | `DELTA_VISION` | auto | `1` forces vision support; `0` disables it. |
 | `DELTA_VISION_MODELS` | built-in regex | Custom regular expression for automatic vision detection. |
@@ -2103,6 +2178,8 @@ The values below are the current public operating surface. Unless noted otherwis
 | `DELTA_CONTROL_URL` | unset | External control-plane base URL; enables scheduling tools with the token. |
 | `DELTA_INSPECT_TOKEN` | unset | Separate bearer for `/v1/dev/*`; otherwise loopback-only. |
 | `DELTA_INSPECT_WRITE` | off | `1` enables Cockpit edits and self-file revert. `delta dev` enables it. |
+| `DELTA_VAULT_KEY_FILE` | unset | Path to the secret-vault master key. Preferred over the inline form: it keeps the key out of the process environment block. |
+| `DELTA_VAULT_KEY` | unset | Secret-vault master key, inline (at least 16 characters). Either form enables the vault; neither means no vault at all. |
 | `DELTA_INSPECT` | on | `off` removes `/dev` and every `/v1/dev/*` route. |
 | `DELTA_CAPTURE_CALLS` | off | `1` stores normalized successful main-loop model request and response captures. `delta dev` enables it. |
 | `TELEMETRY_URL` | unset | NDJSON collector URL. |

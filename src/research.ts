@@ -1,14 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
-// W4: in-process, parallel sub-agents with the SAME rights as the parent. A child runs a BOUNDED
-// agent loop in memory — never a subprocess, never a DB row — reusing the parent's provider, tool
-// registry, and act-as token. It gets the parent's full tool set MINUS the delegation trio
-// (research/spawn_subagent/eval_n) so nesting stays exactly ONE level deep — the load-bearing
-// invariant: an in-process child that could re-spawn would fork-bomb the shared budget. Everything
-// else the parent can do — read, write, code, knowledge-base reads AND writes, remember — a child can do,
-// gated by the parent's OWN per-tool guards (guardWrite reserved files, MCP act-as token, etc.), not
-// a research-specific facade. Its transcript stays inside this function; the parent only ever absorbs
-// a distilled summary + an artifact path the PARENT writes. Ephemeral by design: nothing to resume,
-// no reflection, no session.
+// W4: in-process, parallel sub-agents. A child runs a BOUNDED agent loop in memory — never a
+// subprocess, never a DB row — reusing the parent's provider, tool registry, and act-as token.
+//
+// A child gets the parent's READ-ONLY tools and nothing else (`childTools` below: fail-closed on
+// `def.readonly === true`). That subsumes the old nesting blocklist, since research/spawn_subagent/
+// eval_n are not read-only either, so nesting still stays exactly ONE level deep — the load-bearing
+// invariant, because an in-process child that could re-spawn would fork-bomb the shared budget.
+//
+// This header used to claim children had the SAME rights as the parent, including write, code and
+// remember. That stopped being true in 0.2.4 and the sentence survived four releases here and in
+// the tool description, which is how an agent ends up planning around a write it cannot perform.
+//
+// Its transcript stays inside this function; the parent only ever absorbs a distilled summary + an
+// artifact path the PARENT writes. Ephemeral by design: nothing to resume, no reflection, no
+// session.
 //
 // Context management mirrors the parent: a child starts from the parent's pinned resident set and can
 // `search_tools` to activate anything else in its universe — so a 90-tool registry never blows the
@@ -24,7 +29,7 @@ import { elide, type ToolCtx, type ToolDef, type Tools, toolSpecs } from "./tool
 // per-turn instructions do (the engine identity + safety norms + self + policy come from the shared
 // spine, so a child inherits the parent's operating rules, not just a claim of them — codex).
 const RESEARCH_ROLE =
-  "You are a sub-agent working one task in isolation for the agent that spawned you. Use whatever of your tools the task needs. You run CONCURRENTLY with sibling sub-agents in the SAME workspace: prefer reads, and if you must write, use a unique path so you don't clobber a sibling. Be thorough, then finish with a tight, outcome-first answer: a one-paragraph SUMMARY, then detailed FINDINGS (facts, numbers, sources, file paths). Your full answer is saved to a file but only the SUMMARY returns to your parent — put the signal in the summary.\n\nYour task:";
+  "You are a sub-agent working one task in isolation for the agent that spawned you. Your tools are READ-ONLY by design, so answer the question rather than making the change — report what should be done and let your parent do it. Use whatever of your tools the task needs. Be thorough, then finish with a tight, outcome-first answer: a one-paragraph SUMMARY, then detailed FINDINGS (facts, numbers, sources, file paths). Your full answer is saved to a file for you but only the SUMMARY returns to your parent — put the signal in the summary.\n\nYour task:";
 
 /** A child's callable universe + its resident set + the parent's spine layers (self / rendered policy
  * / boot-stable context). Passing the spine layers means a child is built from the SAME buildSpine as

@@ -140,12 +140,16 @@ export type Config = {
    * design. The file form keeps the key out of that block entirely. Neither form defends
    * against a full host compromise; the VM stays the boundary. */
   vaultKey?: string;
-  /** Local diagnostic-state retention (events + journal). The Exporter bounds `events` only
-   * when telemetry is wired, and nothing bounds `journal` — so a telemetry-less daemon would
-   * grow both without limit. A periodic sweep caps them by age AND row-count. See retention.ts. */
+  /** Local diagnostic-state retention (events + journal + calls). The Exporter bounds `events`
+   * only when telemetry is wired, and nothing bounded `journal` or `calls` — so a telemetry-less
+   * daemon would grow all three without limit. A periodic sweep caps them by age AND size. See
+   * retention.ts. */
   retentionMs: number;
   retentionMaxEvents: number;
   retentionMaxJournal: number;
+  /** Byte budget for the `calls` capture table (DELTA_CAPTURE_CALLS). Bytes rather than rows
+   * because captured-call size varies ~7x across lanes. */
+  retentionMaxCallBytes: number;
   /** Sweep interval; 0 disables the periodic sweep (a one-shot still runs at boot). */
   retentionSweepMs: number;
 };
@@ -397,6 +401,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     retentionMs: positiveInt(env.DELTA_RETENTION_MS, 7 * 24 * 3_600_000),
     retentionMaxEvents: positiveInt(env.DELTA_RETENTION_MAX_EVENTS, 50_000),
     retentionMaxJournal: positiveInt(env.DELTA_RETENTION_MAX_JOURNAL, 50_000),
+    // `calls` is bounded by bytes, not rows: a captured call is ~95KB on a small lane and ~700KB
+    // on a large-context one, so one row count cannot serve both. 32MB is ~340 calls of the former
+    // and ~45 of the latter, either of which is far more than a debugging session reads, and it is
+    // 3% of the 1GB volume these agents run on.
+    retentionMaxCallBytes: positiveInt(env.DELTA_RETENTION_MAX_CALL_BYTES, 32 * 1024 * 1024),
     // 0 disables the periodic sweep (a boot sweep still runs); NaN/Infinity/blank → default,
     // so a malformed value never reaches setInterval as a busy-loop or an invalid delay.
     retentionSweepMs: nonNegativeMs(env.DELTA_RETENTION_SWEEP_MS, 3_600_000),
