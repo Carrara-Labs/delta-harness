@@ -96,11 +96,36 @@ const kindLabel: Record<Kind, string> = {
 // exactly. Update this alongside the root CHANGELOG.md when a release ships.
 const releases: Release[] = [
   {
+    version: "0.2.14",
+    date: "August 10, 2026",
+    iso: "2026-08-10",
+    tagline: "The second breakpoint.",
+    latest: true,
+    note: "A turn that calls many tools in parallel no longer loses the prompt cache. Anthropic's cache lookback is twenty blocks per breakpoint and finds only positions earlier requests already wrote; we place two rolling breakpoints precisely to survive a wide tool turn, and they were landing one block apart, sharing a single window instead of starting two. A turn calling about ten tools in parallel outran both and re-billed the entire prefix. Measured live, with the two arms differing only in placement: at a burst of twelve, a turn's cache read went from 2,522 to 10,206 tokens and its cache write from 8,745 to 1,061, which is 4.8x cheaper on an affected turn. If your agent calls fewer than about eight tools at once, this changes nothing for you: at a burst of four the two arms are byte-identical. 0.2.14 adds no migration, so from 0.2.13 it is reversible; from 0.2.11 it is not, because it carries the one-way step 0.2.13 introduced.",
+    groups: [
+      {
+        kind: "fixed",
+        items: [
+          "**Rolling cache breakpoints are spaced a full twenty-block lookback window apart**, on both the native Anthropic and OpenAI-compatible wires. The spacing is counted in blocks rather than messages, because one message is not one block: an assistant turn carrying N tool calls arrives as N blocks, which is exactly what made a parallel tool burst outrun the marks.",
+          "**The debug capture table is bounded.** `calls` grew without limit; on one lane it reached 45% of the database from a flag left on after an investigation. Now bounded by age and by a byte budget (`DELTA_RETENTION_MAX_CALL_BYTES`, default 32MB), in bytes rather than rows because a captured call is ~95KB on one lane and ~700KB on another. The newest call is always kept, so the bound can never discard the turn being debugged.",
+          "**`cache_shortfall_tokens` is bounded by the current turn's input as well as the previous turn's.** A request cannot re-read more than it contains, so a turn that shrank — which is what compaction produces — previously reported a large shortfall for a turn that had cached everything available to it.",
+          "**`list_schedules` and `cancel_schedule` carry the control server's reason.** A bare `409` was read by an agent as \"my schedules are unreadable\" and filed as a blocker, when the server had actually said \"no active agent turn\".",
+          "**An empty provider error body carries its HTTP status**, and a 404 with no body names the usual cause: a `MODEL_BASE_URL` missing its `/v1` path segment.",
+        ],
+      },
+      {
+        kind: "changed",
+        items: [
+          "**Sub-agent capability prose is locked to the enforced filter by test.** Research children have been read-only since 0.2.4 while five places went on describing them as having the parent's full rights, including the child's own role prompt, which instructed it to write files the engine refuses. A wrong tool description costs a plan; a wrong role prompt makes a running agent attempt something that always fails.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.2.13",
     date: "August 9, 2026",
     iso: "2026-08-09",
     tagline: "Say what changed.",
-    latest: true,
     note: "The engine now reports which part of the prompt moved between turns, so a cache miss names its own cause. Compaction gets under its own ceiling reliably, and the arguments the model itself writes are bounded for the first time. This release also carries the work prepared as 0.2.12, which was never published, so upgrading from 0.2.11 is a single step rather than two. That step is one-way: two migrations, and a lane rolled back to 0.2.11 afterwards will not boot. Snapshot the workspace before upgrading, and verify the archive actually contains DELTA.md, because the self-file lives in the workspace rather than the database and the workspace path is not the same on every deployment.",
     groups: [
       {

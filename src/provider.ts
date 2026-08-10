@@ -779,6 +779,15 @@ export function rollingScanFrom(length: number, ephemeralCount: unknown): number
  * the breakpoint itself ("The lookback window is 20 blocks" — prompt-caching docs). */
 export const CACHE_LOOKBACK_BLOCKS = 20;
 
+/** Rolling breakpoints placed per request. Anthropic allows 4 explicit `cache_control` markers and
+ * the system prefix takes one, so 3 is the whole remaining budget. Spending it is free — "cache
+ * breakpoints themselves don't add any cost" (prompt-caching docs) — and it is spent on evidence:
+ * with 2 marks a burst of 17+ parallel tools still lost the cache, because the burst's own
+ * assistant message is one long ineligible span that a mark cannot land inside. The 4th slot is
+ * only contended by AUTOMATIC caching, which is opt-in via a top-level `cache_control` field we do
+ * not send. */
+const ROLLING_MARKS = 3;
+
 /** Pick the two ROLLING breakpoint indices, walking back from `from`.
  *
  * The second mark is held a full lookback window behind the first, and that spacing is the whole
@@ -810,12 +819,37 @@ export function rollingMarks(
   blocksAt: (i: number) => number,
 ): number[] {
   const marks: number[] = [];
-  let since = 0; // blocks walked back since the last mark
-  for (let i = from; i >= 0 && marks.length < 2; i--) {
-    if (eligible(i) && (marks.length === 0 || since >= CACHE_LOOKBACK_BLOCKS)) {
-      marks.push(i);
-      since = 0;
-    } else since += blocksAt(i);
+  let first = -1;
+  for (let i = from; i >= 0 && first < 0; i--) if (eligible(i)) first = i;
+  if (first < 0) return marks;
+  marks.push(first);
+
+  // The second window must be CONTIGUOUS with the first, not merely far from it. A breakpoint at
+  // block B covers B..B-19 (20 positions, breakpoint inclusive), so the next window has to begin at
+  // B-20; land it at B-21 and block B-20 belongs to neither. The first cut of this fix took "the
+  // first eligible position at least 20 blocks back", which is exactly B-21 for one-block messages,
+  // and it MISSED at burst width 9 where the old adjacent marks hit (codex). Take instead the
+  // furthest-back eligible position still INSIDE the window.
+  //
+  // `gap` counts the blocks of the message stepped OVER, not the one arrived at: a mark rides the
+  // LAST block of its message, so moving from message j to j-1 crosses blocksAt(j) positions.
+  // Getting that backwards is the same off-by-one in a different disguise.
+  // Chain the remaining marks, each starting a window contiguous with the one before it. A wide
+  // parallel-tool turn is a long INELIGIBLE span (its assistant message carries every tool_use
+  // block), so a mark cannot always land where the window boundary falls; chaining recovers the
+  // reach that a single extra mark cannot.
+  let anchor = first;
+  while (marks.length < ROLLING_MARKS) {
+    let gap = 0;
+    let next = -1;
+    for (let i = anchor - 1; i >= 0; i--) {
+      gap += blocksAt(i + 1);
+      if (gap > CACHE_LOOKBACK_BLOCKS) break;
+      if (eligible(i)) next = i;
+    }
+    if (next < 0) break;
+    marks.push(next);
+    anchor = next;
   }
   return marks;
 }
