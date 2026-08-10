@@ -185,3 +185,35 @@ The proxy test is gone. In its place:
   (`[50, 30, 10]`), because with three chained marks a one-block hole only bites when a write lands
   exactly in it — so an off-by-one shifts *which* widths fail rather than failing outright, and the
   sweep alone cannot catch it. Both off-by-one variants fail this test.
+
+## Both wires, and which lane actually runs which
+
+Codex flagged that the measurement ran native Anthropic while the beneficiary was believed to be
+OpenRouter-primary. Resolved by reading the manifests rather than trusting either the docs or memory,
+and **Aperture runs both, on different lanes**:
+
+| lane | wire |
+| --- | --- |
+| `quick-search` | native Anthropic (`api.anthropic.com/v1`, `claude-opus-5`), OpenRouter as fallback |
+| `intake-call` | OpenRouter (`openrouter.ai/api/v1`, `anthropic/claude-sonnet-5`) |
+
+Their own canary report says *"this lane runs openrouter-primary"*, so the wire where the defect was
+measured 27/27 is the compat one — the same path where this fix originally had the block accounting
+wrong (`() => 1`, counting an assistant turn with N tool calls as one block).
+
+Ferni, for the record, is **native Anthropic** (`MODEL_API=anthropic`, `claude-opus-5`, OpenRouter
+failover), not the Codex/OpenAI subscription. Its telemetry agrees.
+
+### Live on the OpenRouter wire, burst width 12
+
+| arm | turn 2 `cacheRead` |
+| --- | --- |
+| old (adjacent marks) | **2,522** |
+| new (chained windows) | **10,200** |
+
+Same magnitude as native, on the route the defect was observed on. OpenRouter does not report cache
+*write* tokens, so that column is 0 on both arms and cannot be compared; `cacheRead` is reported and
+is the decisive number.
+
+**Both wires are now measured.** The remaining untested claim is not the wire but the scale: these
+fixtures are ~10k tokens against Aperture's 115k-160k.
