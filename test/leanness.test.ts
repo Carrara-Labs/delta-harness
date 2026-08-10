@@ -6,6 +6,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { BAKED_PRICES, resolvePrice } from "../src/pricing";
 import {
   acceptsPromptCacheKey,
+  CACHE_LOOKBACK_BLOCKS,
   type ChatMsg,
   type ChatRequest,
   chat,
@@ -92,11 +93,18 @@ describe("rolling cache breakpoint", () => {
     const part = (tail?.content as Array<{ text?: string; cache_control?: unknown }>)[0];
     expect(part?.text).toBe(untrustedToolResult("search results here"));
     expect(part?.cache_control).toEqual({ type: "ephemeral" });
-    // the user message is the SECOND rolling mark (last two user/tool marked — survives
-    // Anthropic's ~20-block cache lookback after a big parallel-tool turn; codex #7)
-    const mid = msgs.find((m) => m.role === "user");
-    const midPart = (mid?.content as Array<{ cache_control?: unknown }>)[0];
-    expect(midPart?.cache_control).toEqual({ type: "ephemeral" });
+    // ONE rolling mark here, not two: the second is held a full 20-block lookback window behind
+    // the first (see `rollingMarks`), and this 4-message fixture has nowhere to put it. Two
+    // ADJACENT marks — which is what this asserted before 2026-08-10 — cover a single block more
+    // than one mark does while providing none of the second window they were added for. The
+    // spacing itself is pinned by "the two rolling marks are a full lookback apart" below.
+    const rollingMarked = msgs.filter(
+      (m) =>
+        m.role !== "system" &&
+        Array.isArray(m.content) &&
+        (m.content as Array<{ cache_control?: unknown }>).some((p) => p.cache_control),
+    );
+    expect(rollingMarked.length).toBe(1);
   });
 
   // Field bug, 2026-08-03: both rolling marks were landing on the TRAILING derived blocks the
@@ -120,9 +128,8 @@ describe("rolling cache breakpoint", () => {
     // the two derived blocks stay plain strings — never marked
     expect(marked(msgs[msgs.length - 1])).toBe(false);
     expect(marked(msgs[msgs.length - 2])).toBe(false);
-    // and the marks moved onto the real transcript: the tool result and the user turn
+    // and the mark moved onto the real transcript: the tool result
     expect(marked(msgs.find((m) => m.role === "tool"))).toBe(true);
-    expect(marked(msgs.find((m) => m.role === "user"))).toBe(true);
     // the stable prefix is still marked regardless
     expect(marked(msgs.find((m) => m.role === "system"))).toBe(true);
   });
@@ -161,9 +168,11 @@ describe("rolling cache breakpoint", () => {
     const block = tail?.content[tail.content.length - 1];
     expect(block?.type).toBe("tool_result"); // tool results are user-role blocks natively
     expect(block?.cache_control).toEqual({ type: "ephemeral" });
-    // exactly TWO rolling marks (the last two user-role messages) + the system block = 3 of 4
+    // One rolling mark + the system block. The second rolling mark needs a full 20-block lookback
+    // window of clearance behind the first and this fixture is 4 messages long; see the spacing
+    // test below for the case that matters.
     const marked = msgs.flatMap((m) => m.content).filter((b) => b.cache_control);
-    expect(marked.length).toBe(2);
+    expect(marked.length).toBe(1);
   });
 
   // codex P1 on the first cut of this fix: it threaded the exclusion into the OpenAI-compatible
@@ -187,9 +196,9 @@ describe("rolling cache breakpoint", () => {
     // the two derived blocks are the last two messages and must be untouched
     expect(isMarked(msgs[msgs.length - 1])).toBe(false);
     expect(isMarked(msgs[msgs.length - 2])).toBe(false);
-    // the marks moved back onto the persisted transcript
+    // the mark moved back onto the persisted transcript
     const marked = msgs.flatMap((m) => m.content).filter((b) => b.cache_control);
-    expect(marked.length).toBe(2);
+    expect(marked.length).toBe(1);
     expect(marked.some((b) => b.type === "tool_result")).toBe(true);
   });
 
@@ -215,8 +224,85 @@ describe("rolling cache breakpoint", () => {
     // codex P3: proving the image is unmarked is not enough — a regression that aborted the
     // rolling scan entirely would also pass. Assert the coverage SURVIVED and moved back.
     const marked = msgs.flatMap((m) => m.content).filter((b) => b.cache_control);
-    expect(marked.length).toBe(2);
+    expect(marked.length).toBe(1);
     expect(marked.some((b) => b.type === "tool_result")).toBe(true);
+  });
+
+  // THE 2026-08-10 FIX. Anthropic's lookback is 20 BLOCKS per breakpoint, and it finds only
+  // entries earlier requests already WROTE: "if a growing conversation pushes your breakpoint 20
+  // or more blocks past the last write, the lookback window misses it. Add a second breakpoint
+  // closer to that position from the start so a write accumulates there before you need it."
+  // Two ADJACENT marks share one window instead of starting two, so a turn appending >=20 blocks
+  // outran BOTH and re-billed the whole prefix. Enumerating the old walker put the marks exactly
+  // ONE block apart on every parallel tool burst at any width — precisely the case the second
+  // mark was added for (codex #7). A width-N burst is ~2N blocks (N tool_use + N results), so
+  // ~10 parallel calls was enough. Assert the SPACING, because the count was never the bug.
+  // Anthropic's published number, hard-coded ON PURPOSE. Asserting against the imported
+  // CACHE_LOOKBACK_BLOCKS made these tests vacuous: setting the constant to 0 also set the
+  // threshold to 0, so `expect(gap 1).toBeGreaterThanOrEqual(0)` passed and the mutation check
+  // came back green on a broken build. A test of "do we agree with the vendor" must carry the
+  // vendor's value, not ours. `CACHE_LOOKBACK_BLOCKS === 20` is pinned separately below.
+  const DOCUMENTED_LOOKBACK = 20;
+
+  const burstHistory = (): ChatMsg[] => {
+    const h: ChatMsg[] = [{ role: "system", content: "SPINE" }];
+    for (let i = 0; i < 30; i++)
+      h.push(i % 2 ? { role: "assistant", content: `a${i}` } : { role: "user", content: `u${i}` });
+    h.push({
+      role: "assistant",
+      content: null,
+      tool_calls: Array.from({ length: 6 }, (_, i) => ({
+        id: `t${i}`,
+        type: "function" as const,
+        function: { name: "f", arguments: "{}" },
+      })),
+    });
+    for (let i = 0; i < 6; i++) h.push({ role: "tool", tool_call_id: `t${i}`, content: `r${i}` });
+    return h;
+  };
+  /** Block indices carrying a breakpoint, counted in wire order across all messages. */
+  const markedBlockIndices = (msgs: Array<{ content: unknown }>): number[] => {
+    const out: number[] = [];
+    let n = 0;
+    for (const m of msgs)
+      for (const b of (Array.isArray(m.content) ? m.content : [m.content]) as Array<{
+        cache_control?: unknown;
+      }>) {
+        if (b?.cache_control) out.push(n);
+        n++;
+      }
+    return out;
+  };
+
+  test("anthropic-native: the two rolling marks sit a full lookback window apart", async () => {
+    await chat(
+      { baseUrl: base, apiKey: "t", models: ["claude-sonnet-5"], api: "anthropic", maxRetries: 0 },
+      { messages: burstHistory() },
+    );
+    const idx = markedBlockIndices(captured.messages as Array<{ content: unknown }>);
+    expect(idx.length).toBe(2); // spacing must not cost us the second mark on a real transcript
+    expect((idx[1] as number) - (idx[0] as number)).toBeGreaterThanOrEqual(DOCUMENTED_LOOKBACK);
+  });
+
+  test("openai-wire: the two rolling marks sit a full lookback window apart", async () => {
+    await chat(
+      { baseUrl: base, apiKey: "t", models: ["anthropic/claude-sonnet-5"], maxRetries: 0 },
+      { messages: burstHistory() },
+    );
+    // The system mark is inside `messages` on this wire, so drop it before measuring the rolling
+    // pair. Both serializers must agree: the first cut of an earlier breakpoint fix shipped to
+    // this path only and left native — the wire the affected agent runs — unfixed (codex P1).
+    const msgs = (captured.messages as Array<{ role: string; content: unknown }>).filter(
+      (m) => m.role !== "system",
+    );
+    const idx = markedBlockIndices(msgs);
+    expect(idx.length).toBe(2);
+    expect((idx[1] as number) - (idx[0] as number)).toBeGreaterThanOrEqual(DOCUMENTED_LOOKBACK);
+  });
+
+  test("the lookback constant matches Anthropic's documented window", () => {
+    // Pinned separately from the spacing tests so the two cannot drift together.
+    expect(CACHE_LOOKBACK_BLOCKS).toBe(DOCUMENTED_LOOKBACK);
   });
 
   // codex P3: the documented clamping was asserted only through one finite value. Pin the
