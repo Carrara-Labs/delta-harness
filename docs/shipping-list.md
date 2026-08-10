@@ -93,11 +93,21 @@ collapse to a two-column join); correctness (high - S5/S3/S6); mechanism (**cont
   self-correcting, but the retries are a real cost. One hypothesis is already dead: keeping a preview
   of the original inside the marker made it *worse* (20 to 26 refusals, 163k to 202k tokens) because
   it gave the model a more convincing thing to imitate.
-- ~~**Spill retention.**~~ **DONE, unreleased (on `main`, 2026-08-10).** `sweepSpill` mirrors
-  `sweepTrash`: boot-only, 7-day TTL, keyed on mtime because a spill file carries no timestamp in
-  its name. The reference-lifecycle objection was resolved by the TTL rather than by design: at 7
-  days the referencing history is already past the `journal` and `events` horizons, and the failure
-  is graceful, since `read_file` reports the file is gone.
+- **Spill retention. STILL OPEN, and a TTL is the wrong shape — do not re-attempt it.** A boot-time
+  7-day mtime sweep (`sweepSpill`) was built on 2026-08-10 and **reverted the same day** after codex
+  caught it. The reference-lifecycle objection was never actually answered: I resolved it against
+  the `journal` and `events` horizons, which are not the reference holders. The real ones are the
+  **transcript**, **compaction's accumulated pointers** (`compaction.ts:collectArtifacts`, which
+  exists precisely so a spill pointer outlives the tool message compaction deactivates), and
+  **`recall`**, which reconstructs spill paths and surfaces COMPACTED rows as well as live ones. So
+  the referencing set is "anything ever mentioned in this thread", which no age approximates and
+  which a reference-aware sweep would find almost entirely undeletable.
+  **On a lane like Aperture that depends on cross-run recall, the sweep destroys recoverable output
+  on first boot.** `queue.ts` already had the correct policy and a comment stating it: wipe run
+  spill ONLY for ephemeral (`store: false`) turns, which have no durable transcript by construction.
+  Bounding this directory needs a real lifecycle — spill owned by the session row and dropped with
+  it, or reference counting — not a timer. Regression-locked by a test asserting the boot sweep
+  leaves `.delta/spill` alone.
 - **Effort inheritance** (their #2). One line of code, not a one-line decision: every existing child
   runs at model default today, so inheriting silently raises cost and latency for every consumer on
   upgrade. Belongs in a brief, not a patch note.
