@@ -665,26 +665,28 @@ describe("prompt-cache retention (DELTA_CACHE_TTL)", () => {
 // missing its version path and the host answered the POST with a bare 404. The status is on the
 // result object, but the error STRING travels alone into logs, run rows and agent-visible text.
 describe("empty provider error bodies diagnose themselves", () => {
-  test("a bare 404 names the likely cause (base URL missing its version path)", async () => {
-    reset(() => new Response("", { status: 404 }));
+  /** Drive one failing call and return the failure branch. `ModelResult` is a discriminated union,
+   *  so the narrowing has to be a real check rather than an expect() the compiler cannot see. */
+  async function failedCall(body: string, status: number) {
+    reset(() => new Response(body, { status }));
     const r = await chat(cfg({ maxRetries: 0 }), { messages: [{ role: "user", content: "hi" }] });
-    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("expected the call to fail");
+    return r;
+  }
+
+  test("a bare 404 names the likely cause (base URL missing its version path)", async () => {
+    const r = await failedCall("", 404);
     expect(r.status).toBe(404);
     expect(r.error).toContain("MODEL_BASE_URL");
     expect(r.error).not.toBe("(empty error body)");
   });
 
   test("any other empty body still carries its status", async () => {
-    reset(() => new Response("", { status: 502 }));
-    const r = await chat(cfg({ maxRetries: 0 }), { messages: [{ role: "user", content: "hi" }] });
-    expect(r.error).toBe("HTTP 502 with an empty error body");
+    expect((await failedCall("", 502)).error).toBe("HTTP 502 with an empty error body");
   });
 
   test("a NON-empty body is untouched by the status argument", async () => {
-    reset(
-      () => new Response(JSON.stringify({ error: { message: "over quota" } }), { status: 429 }),
-    );
-    const r = await chat(cfg({ maxRetries: 0 }), { messages: [{ role: "user", content: "hi" }] });
-    expect(r.error).toBe("over quota");
+    const body = JSON.stringify({ error: { message: "over quota" } });
+    expect((await failedCall(body, 429)).error).toBe("over quota");
   });
 });
