@@ -1131,7 +1131,17 @@ export async function executeRun(
     // the right scope for the long autonomous tasks this measures (Aperture's engagements run 19-23
     // model calls inside one run); a chat-shaped session of many one-call runs will see it only
     // when a run makes more than one call.
-    const shortfall = lastInputTokens > 0 ? lastInputTokens - result.usage.cacheRead : undefined;
+    //
+    // Bounded by THIS turn's gross input as well as the previous turn's. A request cannot re-read
+    // more than it contains, so when the current turn is SMALLER than its predecessor — which is
+    // precisely what compaction produces — the unbounded form reports a large shortfall for a turn
+    // that cached perfectly. Floored at 0 for the same reason. Pi's harness derived the identical
+    // `min(prev, current) - cacheRead` independently, which is the strongest evidence available
+    // that the shape is right (`docs/research/competitor-cache-instrumentation-2026-08-10.md`).
+    const shortfall =
+      lastInputTokens > 0
+        ? Math.max(0, Math.min(lastInputTokens, result.usage.input) - result.usage.cacheRead)
+        : undefined;
     lastInputTokens = result.usage.input;
     // Pair the real gross input with a byte-estimate of the SAME (final, post-compaction) request,
     // so next turn can project growth off a provider-measured anchor (S7). `history` is unchanged
