@@ -1,6 +1,6 @@
 # Release brief — Harness 0.2.14 "the second breakpoint"
 
-Status: **drafted, release not cut.** 2026-08-10.
+Status: **PUBLISHED 2026-08-10** (npm + ghcr + `v0.2.14`, site deployed, Ferni redeployed onto the released package and verified).
 
 ## What it is
 

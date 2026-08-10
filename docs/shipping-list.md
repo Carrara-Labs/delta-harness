@@ -1,4 +1,10 @@
-# Delta shipping list (as of 2026-08-07, 0.2.12 built and unreleased)
+# Delta shipping list (as of 2026-08-10, 0.2.14 PUBLISHED)
+
+**0.2.14 is out** (npm + ghcr + `v0.2.14`, site deployed, Ferni on the released package). It is a
+bounds-and-correctness release; its cache fix needs 10+ parallel tool calls and no lane in our fleet
+issues more than 3. The prompt-cache defect Aperture escalated is **still open** and is now
+reproducible on Ferni. Aperture manifests are bumped to 0.2.14 but **not rolled**: the restore-and-boot
+drill comes first, then lab lanes, then carrara, then clients.
 
 ## Where 0.2.12 stands
 

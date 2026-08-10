@@ -1,6 +1,6 @@
 # Harness 0.2.14 — "the second breakpoint"
 
-Status: **headline fix built and measured live; release not cut.** Written 2026-08-10.
+Status: **PUBLISHED 2026-08-10.** Written 2026-08-10.
 
 **The release changed shape twice in one day.** It was scoped as a diagnostic ("name the miss"),
 codex returned NO-GO on that instrument, and then the mechanism was found by enumerating our own
