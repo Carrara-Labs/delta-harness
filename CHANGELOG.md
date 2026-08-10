@@ -9,18 +9,19 @@ All notable changes to this project are documented here. The format is based on
 ## [0.2.14] - 2026-08-10
 
 The second breakpoint. A turn that calls many tools in parallel no longer loses the prompt cache,
-because our two rolling cache breakpoints were landing one block apart and sharing a single lookback
-window instead of starting two.
+because our rolling cache breakpoints were landing one block apart and sharing a single lookback
+window instead of starting separate ones.
 
 Anthropic's cache lookback is 20 blocks per breakpoint and finds only positions earlier requests
 already wrote. A width-N parallel tool turn is roughly 2N blocks, so about **10 parallel tool calls**
 outran both marks and re-billed the entire prefix. Measured live, arms differing only in placement:
-at burst width 12 a turn's cache read went **2,522 to 10,206** and its cache write **8,745 to 1,061**,
+at burst width 12 a turn's cache read went **2,523 to 10,207** and its cache write **8,745 to 1,061**,
 which is 4.8x cheaper on an affected turn.
 
-**If your agent calls fewer than about 8 tools in parallel, this release changes nothing for you.**
-At burst width 4 the two arms are byte-identical. That is also why the defect appeared on a lane
-doing wide record fan-out and never on a chat-shaped one.
+**If your agent calls fewer than 10 tools in parallel, this release changes nothing for you.**
+At widths 4 and 9 the two arms are identical to the token; the threshold is exactly 10, which is what
+the model predicts: a turn adds 2N+2 blocks and two adjacent marks cover at most 20. That is also
+why the defect appeared on a lane doing wide record fan-out and never on a chat-shaped one.
 
 ### Upgrade
 0.2.14 adds no migration, so from 0.2.13 it is reversible. **From 0.2.11 or earlier it is not** — it
@@ -29,9 +30,12 @@ archive for `DELTA.md`, then restore it and boot the old version against it befo
 snapshot that exists is not a rollback path that works.
 
 ### Fixed
-- **Rolling cache breakpoints are spaced a full 20-block lookback window apart**, on both the native
-  Anthropic and OpenAI-compatible wires. Block counting is real: an assistant turn carrying N tool
-  calls is N blocks, not one.
+- **Rolling cache breakpoint windows are chained contiguously**, on both the native Anthropic and
+  OpenAI-compatible wires. A breakpoint covers 20 blocks including itself, so the next window begins
+  exactly 20 back; three marks now rather than two, since Anthropic allows four, the system prefix
+  takes one, and breakpoints cost nothing. Block counting is real: an assistant turn carrying N tool
+  calls is N blocks, not one. Beyond a burst of ~19 the cache is still lost and no placement fixes
+  it — that burst is a single message wider than the entire lookback window.
 - **`calls` is bounded** by age and a byte budget (`DELTA_RETENTION_MAX_CALL_BYTES`, default 32MB).
   The debug-capture table had no bound at all; on one lane it reached 45% of the database from a flag
   left on. Bytes rather than rows, because a captured call is ~95KB on one lane and ~700KB on another.
