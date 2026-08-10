@@ -28,13 +28,18 @@ import { elide, type ToolCtx, type ToolDef, type Tools, toolSpecs } from "./tool
 // The sub-agent role framing — rides a USER message ahead of the task, exactly as the parent's
 // per-turn instructions do (the engine identity + safety norms + self + policy come from the shared
 // spine, so a child inherits the parent's operating rules, not just a claim of them — codex).
-const RESEARCH_ROLE =
+export const RESEARCH_ROLE =
   "You are a sub-agent working one task in isolation for the agent that spawned you. Your tools are READ-ONLY by design, so answer the question rather than making the change — report what should be done and let your parent do it. Use whatever of your tools the task needs. Be thorough, then finish with a tight, outcome-first answer: a one-paragraph SUMMARY, then detailed FINDINGS (facts, numbers, sources, file paths). Your full answer is saved to a file for you but only the SUMMARY returns to your parent — put the signal in the summary.\n\nYour task:";
 
 /** A child's callable universe + its resident set + the parent's spine layers (self / rendered policy
  * / boot-stable context). Passing the spine layers means a child is built from the SAME buildSpine as
  * the parent — same identity, same engine safety norms, same policy — so it inherits the parent's
- * OPERATING RULES along with its rights: same-rights AND same-rules, not powerful-but-unconstrained. */
+ * OPERATING RULES.
+ *
+ * NOT its rights. This comment read "same-rights AND same-rules" until 2026-08-10, which was the
+ * fifth place in the codebase repeating a claim that stopped being true in 0.2.4 — in the same file
+ * whose header documents the drift. Rules are inherited; rights are narrowed to read-only by
+ * `childTools`. `test/research.test.ts` pins the two together so the next edit cannot separate them. */
 export type ChildConfig = {
   tools: Tools;
   pinned: string[];

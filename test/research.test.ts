@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { builtinTools } from "../src/builtins";
 import type { ChatMsg, ChatRequest, ModelResult, Usage } from "../src/provider";
 import { Queue } from "../src/queue";
-import { childTools, runResearch } from "../src/research";
+import { childTools, RESEARCH_ROLE, runResearch } from "../src/research";
 import type { ToolCtx, ToolDef, Tools } from "../src/tools";
 import { makeDeps, textResult, toolCallResult } from "./helpers";
 
@@ -83,6 +83,48 @@ describe("childTools — read-only tools only (positive, fail-closed admission, 
   test("an unmarked NEW tool is excluded by default (a forgotten flag can't leak a write)", () => {
     const allowed: Tools = new Map([["some_new_tool", fakeTool("some_new_tool")]]);
     expect(childTools(allowed).has("some_new_tool")).toBe(false);
+  });
+
+  // THE PROSE LOCK. Children became read-only in 0.2.4 and FIVE places went on saying otherwise
+  // for ten releases: the tool description, this file's header, the ChildConfig comment, the
+  // published guide, and — the one that actually costs something — the child's own role prompt,
+  // which instructed it to write files the engine would refuse.
+  //
+  // A per-tool-name assertion is not implementable here: the description is built statically in
+  // `builtinTools`, before any run-specific universe exists, and listing every child tool would
+  // bloat the schema the searchable-tool design exists to keep small. So lock the CAPABILITY
+  // CLASS instead, on both surfaces at once. Loosening `childTools` without rewriting the prose
+  // now fails, and so does softening the prose while the filter still enforces read-only.
+  test("the enforced filter and the prose the model reads cannot drift apart", () => {
+    const universe: Tools = new Map([
+      ["read_file", fakeTool("read_file", undefined, true)],
+      ["write_file", fakeTool("write_file")],
+      ["remember", fakeTool("remember")],
+    ]);
+    // Enforcement: read-only, and nothing else, gets in.
+    const admitted = [...childTools(universe).values()];
+    expect(admitted.length).toBeGreaterThan(0); // a filter that admits nothing proves nothing
+    for (const def of admitted) expect(def.readonly).toBe(true);
+
+    // The child is told exactly that, in the one place it can act on before choosing a tool.
+    expect(RESEARCH_ROLE).toMatch(/read-only/i);
+
+    // And so is the parent, in the description it plans against.
+    const research = builtinTools({
+      workspace: "/tmp/delta-prose-lock",
+      codeCli: ["true"],
+      selfCmd: ["true"],
+      subagentDepth: 0,
+    }).get("research");
+    expect(research?.description).toMatch(/read-only/i);
+    // Naming the restriction beats implying it: the parent plans better against "cannot write"
+    // than against "read-only", and this is the sentence that was wrong for ten releases.
+    expect(research?.description).toMatch(/cannot[^.]*(write|remember|run code)/i);
+    // The literal claim that shipped from 0.2.4 to 0.2.13, on both surfaces. Blunt on purpose:
+    // a regex over prose cannot prove a description is honest, but it can stop this exact
+    // sentence coming back, and this exact sentence is what an agent planned around.
+    expect(research?.description).not.toMatch(/same (tools|rights)/i);
+    expect(RESEARCH_ROLE).not.toMatch(/same (tools|rights)/i);
   });
 });
 
