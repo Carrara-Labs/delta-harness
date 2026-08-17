@@ -152,14 +152,33 @@ precisely the failure mode [[feedback_cache_keys_on_identity]] was written about
 prefix, real miss" claim in this dataset, ours included, is really "spine and tools stationary; the
 history segment unmeasured".
 
-**Add `history_hash` before building anything else.** It is one line next to `spine_hash`, it uses
-the same salted `prefixDigest`, and it splits the open defect cleanly in two:
+**Add a history digest before building anything else.** It splits the open defect cleanly in two:
 - history moved → we are mutating the prefix. A serialization bug we own, fixable by us.
 - history stationary → we are placing breakpoints badly. An engine bug in `rollingMarks` placement.
 
-Nothing currently distinguishes these, and they need opposite fixes. A rolling per-message digest is
-better still (it names *where* the divergence starts), but the single segment digest is the cheap
-first cut.
+Nothing currently distinguishes these, and they need opposite fixes.
+
+**It is NOT "one line next to `spine_hash`", and that framing would ship a useless instrument.**
+`spine_hash` works as a change signal because the spine is stable between turns. History *grows*
+every turn, so a digest of the whole thing always moves and answers nothing. The instrument has to
+cover **the span that also existed on the previous call**:
+
+- `history_hash` over everything sent now, so the NEXT turn has an anchor to compare against.
+- `history_prefix_hash` over only the first `lastHistoryN` messages, directly comparable to the
+  previous turn's `history_hash`.
+- `history_n`, so a reader can tell a suppressed comparison from a matching one.
+
+That needs `lastHistoryN` carried across turns beside `lastInputTokens`, and suppressed the same way
+on the first call of a run and after a compaction, where there is no comparable span and a mismatch
+would be noise indistinguishable from signal. Serializing per-message (`history.map(JSON.stringify)`)
+lets both digests come from one pass.
+
+**The cost objection in `run.ts` is false and should be deleted with the change.** It rejects a
+digest for costing "a full ~1MB serialization every turn", but `msgBytes` is
+`utf8(JSON.stringify(ms))` - that stringify is already paid. Measured on a 1MB history: stringify
+0.097ms (already paid), `Bun.hash` 0.066ms (the entire addition), against a turn that takes seconds.
+The comment's other half, "two events already answer it", is an assertion that no third writer
+mutates history, never controlled for, and precisely the assumption the open defect puts in doubt.
 
 **What the dataset shows once compaction turns are separated out.** Compare each miss against
 `prevInput - prevCached`, the region the previous turn actually paid for, and the misses split into
