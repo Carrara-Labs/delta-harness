@@ -232,10 +232,16 @@ the pausable-and-cheap property that defines a Delta agent.
   the lever that serves Aperture and Quarry. They shipped two double-compaction bugs at exactly the
   compaction/marker seam, so budget for that.
 
-### Before Aperture crosses the one-way step
+### ~~Before Aperture crosses the one-way step~~ DONE 2026-08-10
 
-**A restore-and-boot drill.** The backup procedure has never been restored and booted. "A snapshot
-exists" and "the rollback path works" are different claims, and 0.2.11 to 0.2.14 has no reverse.
+**The restore-and-boot drill PASSES.** Aperture ran it end to end on a throwaway app against a real
+`google-deepmind` v14 archive: restore v14, boot 0.2.11, migrate to 0.2.14, roll back, watch 0.2.11
+refuse v15 and crash-loop, restore, full recovery. The rollback path is now a tested claim rather
+than an assumed one. Two findings folded into `hosting.md`: `DELTA.md` survives even the crash loop
+(bundle apply runs before the DB open), and recovery needs an init override such as `sleep infinity`
+because you cannot ssh into a machine whose daemon exits on boot.
+
+**The fleet crossed on 2026-08-10**: all 12 Aperture lanes 0.2.11 → 0.2.14, no rollbacks.
 
 ### Spill lifetime, still unsolved
 
@@ -273,9 +279,9 @@ Specs: `spec-cache-breakpoints.md`, `spec-compaction-tail.md`.
 
 ## Next - fleet upgrade, then what 0.2.11 deliberately left
 
-1. **Aperture QS lab lane to 0.2.11**, then the rest of QS, then Intake. Beneficiary and volume rig
-   in one.
-2. **Meeting Processor last**, as a beneficiary of a proven fix, never as a testbed.
+1. ~~**Aperture QS lab lane to 0.2.11**, then the rest of QS, then Intake.~~ **DONE 2026-08-10** -
+   the fleet went straight to 0.2.14, all 12 lanes.
+2. **Meeting Processor last**, as a beneficiary of a proven fix, never as a testbed. Still open.
 3. ~~**Anthropic's block-count cache lookback.**~~ **THIS WAS THE 1-IN-25 CACHE MISS.** Filed here
    as an optimisation since 0.2.11, carried through three releases, and never once tested as the
    suspect while four other mechanisms were proposed and killed. It was written down correctly the
@@ -370,7 +376,7 @@ Specs: `spec-cache-breakpoints.md`, `spec-compaction-tail.md`.
   `calls` by age plus a BYTE budget (`DELTA_RETENTION_MAX_CALL_BYTES`, 32MB), not a row count,
   because a captured call is ~95KB on one lane and ~700KB on another. The newest call is always
   kept even when it alone exceeds the budget, so the bound can never discard the turn being
-  debugged; overshoot is one call.
+  debugged; overshoot is one call. **RELEASED in 0.2.14.**
 - **`DELTA_CAPTURE_PAYLOADS` vs `DELTA_CAPTURE_CALLS` has now cost two engineers a day each** - once
   on our side, once on Aperture's, in the same week, in opposite directions. Partly mitigated in
   0.2.13: `/v1/dev/runs/:id/calls` now returns `capture_enabled` and, when empty, says *why* rather
