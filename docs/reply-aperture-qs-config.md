@@ -174,20 +174,41 @@ Honest boundary: schema-parity and credential design for *write*-capable childre
 engine work. The read-only inheritance is what un-blocks screening parallelism, and it may be
 live on your side this week.
 
-## 4. The suspend soak (R1) — config, one bench lane, this week
+## 4. The suspend soak (R1) — but first, check what your fleet is actually doing
 
-The engine work you've been asking for since July shipped in v0.2.4 (lease renew-or-reacquire)
-and 0.2.5 (post-resume connection self-heal + first-byte deadline), and your fleet has run both
-all period — in stop-mode, unexercised. What's missing is not code, it is **evidence under real
-suspend**, and only your side can produce it:
+**Before anything else: R1's premise may be stale.** Your report says "we still run
+stop-not-suspend," but your own control plane disagrees on paper: `agent-lane.server.ts:94`
+(`restVerb`) selects **suspend** for any lane whose observed `engine_version` is ≥ 0.2.4 — the
+generalized form of the flip Nic approved on 2026-07-29 after your own head-to-head
+(`suspend-vs-stop-0.2.4.md`: resume 105 ms–1.1 s vs 10–14 s stop-wake, A2 held through a 36-min
+drift). Your lanes run 0.2.14, so as written you should already be suspending. Either
+`engine_version` is null in prod for those lanes (never health-refreshed → conservative stop),
+or R1 was written from the July field report's state rather than the code — the same
+stale-learned-fact pattern you diagnosed in `qs_step`. **The check:**
+`select workspace_id, engine_version from agent_lane` in prod, or look at a machine's state
+after a run settles (`suspended` vs `stopped`). If you're already suspending, R1 is closed and
+the −3.6 s is already banked; tell us and we'll mark it. Cost is not a factor either way — both
+verbs rest at storage-pennies; the difference is purely wake speed and the (fixed) lease risk.
 
-- Flip **speed-lab** (or whichever bench lane you prefer) to Fly suspend-mode now.
+If the check says stop, the engine work shipped in v0.2.4 (lease renew-or-reacquire) and 0.2.5
+(post-resume connection self-heal + first-byte deadline), and your fleet has run both all
+period — unexercised. What's missing is not code, it is **evidence under a long hold** (your
+July decision doc itself lists the multi-hour drift as the open follow-up), and only your side
+can produce it:
+
+- Ensure **speed-lab** (or whichever bench lane you prefer) is actually resting via suspend —
+  health-refresh it so `restVerb` sees 0.2.14, and keep the two July riders: `autostart: false`
+  on the service (any stray HTTP silently resumes a suspended machine) and the busy-gate before
+  resting.
 - Let it run its normal week. Watch three things: daemon exits after resume (there should be
   none), first-turn latency after wakes (should drop toward the ~1.1 s resume figure), and any
   `lease` anomalies in the logs.
 - Production lanes don't move until that is a week clean. And for the demo itself, your own 24h
   plan is right and stands regardless: **keep the demo machine started** — that removes the wake
-  entirely, which is worth more than R1 for one afternoon.
+  entirely, which is worth more than R1 for one afternoon. One expectation to keep clean:
+  suspend does NOT warm the prompt cache (it is server-side and TTL-based), so the between-runs
+  cache cold band persists under either verb — that is §1's `DELTA_CACHE_TTL` lever, not this
+  one.
 
 Report the soak result either way — "a week clean under suspend" is the sentence that lets every
 lane take the −3.6 s.
@@ -279,7 +300,7 @@ honest about what it's doing.
 
 1. Alpha-school's **daemon env history** (the R3a question — cap drift or a write path I can't
    find).
-2. The **soak verdict** on speed-lab after a week of suspend.
+2. The **`restVerb` check result** (already suspending, or stop with null `engine_version`?), then the **soak verdict** on speed-lab after a week of suspend.
 3. The **`readOnlyHint` result** — did one annotated spawn read your data?
 4. Your **R6 dataset, standing** — accepted with thanks; continuous pipe preferred over
    on-request export. We're also running Anthropic's cache-diagnosis beta out-of-band against
