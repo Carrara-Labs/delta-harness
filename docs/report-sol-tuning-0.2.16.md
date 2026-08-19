@@ -78,11 +78,53 @@ Artifact length was unaffected by verbosity (1.3–1.9 KB in both arms, uncorrel
 ## Recommendation for the demo lane
 
 ```dotenv
-DELTA_REASONING_EFFORT=low        # medium is the HARD-tier ceiling if the battery shows gaps; high is contraindicated
+DELTA_REASONING_EFFORT=low        # whole lane, hard tier included (round-2 head-to-head below); high is contraindicated
 DELTA_TEXT_VERBOSITY=low          # confirmed win for user-facing updates
 DELTA_REASONING_SUMMARY=auto      # observability for the debrief, never blocks a turn
 # caching: nothing to set — explicit breakpoints + prompt_cache_key are automatic on gpt-5.6/openai.com
 ```
+
+## Round 2 — low vs medium head-to-head on HARD tasks (same day)
+
+The first grid's tasks were easy; this round is the shape real QS hard-tier work takes. Three
+tasks × 3 repetitions × both configs (verbosity low), 18 live sol runs:
+
+- **disambig** — two companies share a name; funding data conflicts across an old and a new
+  source. Correct = right person, newer round, conflict flagged, namesake's $80M not leaked.
+- **compare** — three companies, but round 1 only returns two: a second search round is
+  REQUIRED, then ARR-per-employee arithmetic and a ranking.
+- **gap** — the asked-for facts don't exist: no CFO title (only a Head of Finance) and no
+  current valuation. Correct = "not disclosed" + the 2024 figure flagged stale; inventing a
+  number or promoting the CEO to CFO fails.
+
+Script: `/Users/nictouron/delta-harness/docs/bench/sol-low-vs-medium.ts`; raw:
+`/Users/nictouron/delta-harness/docs/bench/sol-low-vs-medium-results.json`.
+
+| arm (n=9 each) | facts | conflict/gap flags | invented figures | avg searches | avg wall | avg output tokens | avg cost |
+|---|---|---|---|---|---|---|---|
+| **low** | 27/27 | 6/6 | 0 | **7.4** | **16.6 s** | **716** | **$0.043** |
+| medium | 27/27 | 6/6 | 0 | 10.8 | 20.0 s | 920 | $0.053 |
+
+Both arms did the hard things perfectly, every rep: right person picked, namesakes flagged,
+second search round taken when required, ARR-per-employee arithmetic exact ($300,000 vs
+$161,364 vs $100,000), no invented valuation, "not disclosed" said when true. (Two grader
+artifacts, inspected by hand: a "leak" flag that fired on artifacts correctly FLAGGING the
+namesake, symmetric across arms; and one low-arm "invented" figure that was $49M — the correct
+sum of the two disclosed rounds.)
+
+The differences, all favoring low:
+
+1. **The single genuine user-facing error in 18 runs was medium's**: one disambiguation rep
+   told the user the "latest verifiable funding" was the older $12M Series A instead of the
+   newer $37M Series B.
+2. **Medium over-searches on hard tasks too**: +46% search calls (10.8 vs 7.4 avg; up to 17 in
+   one run), the on-stage hesitancy pattern from round 1, now confirmed under load.
+3. **−17% wall time, −19% cost, −22% output tokens** for low, at identical measured quality.
+
+**Verdict, now n=9 per arm on hard tasks: `DELTA_REASONING_EFFORT=low` for the whole QS lane,
+including the hard tier.** Medium remains the documented escalation if Aperture's real battery
+(real search noise, real ambiguity) finds a case class these tasks don't cover — but the burden
+of proof now sits on medium, not on low.
 
 ## Honest caveats
 
