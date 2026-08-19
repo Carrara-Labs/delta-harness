@@ -6,6 +6,14 @@ the receipt recomputed from the raw JSONL in `qs-review-2026-08-19-data/`, and t
 read at the line in this repo. This is the last input to the 0.2.15 cut — the version boundary is
 now closed.
 
+> **Post-Codex revision (same day).** An adversarial Codex pass over this doc and the code demoted
+> A-3 and A-5 to 0.2.16 (both honestly MEDIUM), split A-4 (ship the structured-refusal half, defer
+> the overflow-path promise into R3d), corrected the R1/R2 ship version to **v0.2.4**, and hardened
+> A-1/A-2 (appendix bytes reserved inside `SUMMARY_CAP`; `tool.rejected` added to the exporter's
+> payload-event set with a closed reason enum). The final cut and full corrections live in
+> `harness-0.2.15-plan.md` §Addendum. Dispositions below that conflict with the addendum are
+> superseded by it; the *verdicts* (what is real, what is config, what already shipped) stand.
+
 **Numbers verified against the raw receipts** (my recomputation ≈ their claim in every case):
 remember refusals 86/240 full-period, 25/98 post-upgrade, speed-lab 21/32, alpha-school 35/61 ·
 identifier loss 34% post-upgrade (n=35) vs 18% pre (n=192), worst rows 30/30, 25/25, 23/23 ·

@@ -29,24 +29,46 @@ a run doing the wrong work and a run throwing good work away.
 because it is the smaller diff and its regression test is the fixture item 2 also needs. Item 4
 unblocks `config/ferni-codex-sol`, which is held until it lands.
 
-## Addendum 2026-08-19: five Aperture items close the cut
+## Addendum 2026-08-19: three Aperture items close the cut (post-Codex)
 
 The Aperture two-week report (`~/ai-recruiter/docs/research/qs-harness-asks-2026-08-19.md`) was the
-last open input. Verified verdicts and receipts: `docs/aperture-asks-0.2.15-triage.md`. Five
-additions, all LOW risk, each ≤ ~30 lines + a fail-without-fix test:
+last open input. Verified verdicts and receipts: `docs/aperture-asks-0.2.15-triage.md`. The first
+draft added five items; a Codex adversarial pass (session `01a0196c…`, 2026-08-19) demoted two of
+them and corrected the surviving three. Final additions:
 
-| # | item | from |
-|---|---|---|
-| 10 | A-1 · identifier appendix after the compaction summary retry loop | R4 |
-| 11 | A-2 · `tool.rejected` telemetry on the unknown-tool branch | R9a |
-| 12 | A-3 · auto-activate a named allowed-but-unactivated tool (parent `execCall` + child `research.ts:235`) | R9b / R7 |
-| 13 | A-4 · `self_cap` refusal carries current file + headroom; latch norm names an overflow path (message-only) | R3b |
-| 14 | A-5 · opt-in Anthropic cache-diagnosis pass-through (`DELTA_CACHE_DIAGNOSIS=1`) | R6 |
+| # | item | from | Codex correction folded in |
+|---|---|---|---|
+| 10 | A-1 · identifier appendix after the compaction summary retry loop | R4 | byte-bound ids individually AND in aggregate; **reserve appendix bytes inside `SUMMARY_CAP`** (never append after the elide); build the final serialized row before the shrink gate, as today; test both "missing ids present" and "compaction still commits" |
+| 11 | A-2 · `tool.rejected` telemetry on the unknown-tool branch | R9a | add it to the exporter's `PAYLOAD_EVENTS` set (`exporter.ts:41`) and export only a closed reason enum (`not_allowed` / `breaker_disabled` / `unknown`); the raw model-controlled tool name stays local unless payload capture is on |
+| 12 | A-4a · `self_cap` refusal carries current file + exact headroom | R3b | `writeSelf` returns structured `{current, overBy, cap}` fields; ONLY the `remember` tool renders them into the model-facing message — the Cockpit endpoint keeps the short error. Precedent: `self_conflict` already embeds the current file, and `toolErrorClass` matches `self_cap` by prefix regex before any embedded text (`run.ts:1391`) |
 
-Deferred to 0.2.16 by that triage: R5 sticky provider health, R3c distill-on-refuse, R8 utility-tier
-cache marks. R1 and R2 need **no engine work** (shipped 0.2.5/0.2.10) — they are host wiring and a
-config soak, in the triage doc's no-release lane. Items 10–14 are independent of items 1–9; the D-1
-→ D-9 ordering above still governs.
+**Demoted to 0.2.16 by the Codex pass** (both were honestly MEDIUM, not LOW):
+
+- **A-3 auto-activate** — it changes execution semantics, not just residency: a model could execute
+  a side-effecting allowed tool from a guessed name without ever seeing its schema
+  (`search_tools` currently provides argument grounding), and `execCall`'s contract, the
+  activation/journal atomicity, and resume semantics all need design. A-2 measures the class
+  first; fix follows the data. Pairs with the R7 parity design.
+- **A-5 cache-diagnosis pass-through** — the previous-response-id chain must be per-run
+  state threaded through provider closures that are shared across runs (`index.ts:59`), must
+  advance only on successful attempts across the retry/model-hop cascade, must compose the
+  `anthropic-beta` header with fast mode, and must isolate the utility lane. That is exactly the
+  CachePlan/ModelControls shape — it belongs in the 0.2.16 provider-controls batch. Interim: run
+  the beta **out-of-band** against captured Ferni payloads; the defect investigation does not wait
+  for the engine.
+- **A-4b latch-norm overflow path** — deferred into the R3d rail design: the promise is hollow for
+  profiles granted `remember` but not `write_file` (`profiles.ts:88`), and `scratch/<runId>` is
+  wiped at termination. A durable overflow rail is a feature, not a norm string.
+
+**Two plan corrections from the same pass:** (1) R1/R2 shipped in **v0.2.4**, not 0.2.10 — the
+earlier read truncated a lexically-sorted tag list; the verdict (host wiring only) is unchanged.
+(2) D-5 (§4): stat the individual `SKILL.md` files, not the parent directory mtime — the
+directory-mtime version documented a miss on re-description, which is the exact case operators
+expect it to catch.
+
+Final 0.2.15: **12 items** (nine Delos + A-1, A-2, A-4a). The D-1 → D-9 ordering above still
+governs; per Codex, verify D-8's `--disable` flags against the pinned codex executable before any
+merge, and keep A-1 in the same slice as the D-1/D-9 compaction work.
 
 ## Explicitly not in this release
 
