@@ -76,3 +76,44 @@ describe("Responses body assembly (D-12)", () => {
     expect(body.max_output_tokens).toBe(4000);
   });
 });
+
+describe("Responses usage parsing (M3, 0.2.16)", () => {
+  test("nested cache_write_tokens reaches usage.cacheWrite (and cost bills it at 1.25×)", async () => {
+    globalThis.fetch = (async () =>
+      new Response(
+        [
+          { type: "response.output_text.delta", delta: "ok" },
+          {
+            type: "response.completed",
+            response: {
+              usage: {
+                input_tokens: 2_600,
+                output_tokens: 10,
+                total_tokens: 2_610,
+                // The 5.6+ shape: BOTH cache fields nested under input_tokens_details
+                // (caching guide + openai-python ResponseUsage). A top-level read would miss it.
+                input_tokens_details: { cached_tokens: 2_000, cache_write_tokens: 400 },
+              },
+            },
+          },
+        ]
+          .map((e) => `data: ${JSON.stringify(e)}\n\n`)
+          .join(""),
+        { headers: { "content-type": "text/event-stream" } },
+      )) as unknown as typeof fetch;
+    const cfg: ProviderConfig = {
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "x",
+      models: ["gpt-5.6-sol"],
+      api: "responses",
+      maxRetries: 0,
+    };
+    const r = await chat(cfg, { messages: [{ role: "user", content: "hi" }] });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.usage.cacheRead).toBe(2_000);
+    expect(r.usage.cacheWrite).toBe(400);
+    // fresh 200*$5 + read 2000*$0.5 + write 400*$6.25 + out 10*$30 = 4800/1e6
+    expect(r.usage.costUsd).toBeCloseTo(0.0048, 8);
+  });
+});

@@ -306,7 +306,7 @@ export type ReasoningEffort = string;
 
 /** The efforts we recognize today — for docs + the Anthropic thinking-budget map ONLY. This is NOT a
  * gate: an effort outside this list still reaches the model. Mirrors the canonical OpenAI set. */
-export const KNOWN_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"] as const;
+export const KNOWN_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 /** Effort → Anthropic thinking budget (tokens); the native wire has no effort enum. An effort not in
  * the map (a model-specific or future tier) falls back to the `high` budget; `none` → 0 = no thinking. */
@@ -1742,6 +1742,10 @@ async function streamResponses(
             usage.input = u.input_tokens ?? 0;
             usage.output = u.output_tokens ?? 0;
             usage.cacheRead = u.input_tokens_details?.cached_tokens ?? 0;
+            // 5.6+ bills cache WRITES at 1.25× and reports them beside cached_tokens (nested —
+            // NOT top-level; openai-python ResponseUsage agrees). computeCost already applies
+            // the multiplier, so reading the field is the whole fix (M3).
+            usage.cacheWrite = u.input_tokens_details?.cache_write_tokens ?? 0;
             usage.total = u.total_tokens ?? usage.input + usage.output;
           }
           break;
@@ -1796,7 +1800,7 @@ type ResponsesEvent = {
       input_tokens?: number;
       output_tokens?: number;
       total_tokens?: number;
-      input_tokens_details?: { cached_tokens?: number };
+      input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
     };
   };
 };
