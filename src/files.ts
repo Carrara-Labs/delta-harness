@@ -82,11 +82,23 @@ export function confine(workspace: string, path: string): string {
 // marker text says so), re-registering it.
 const attachable = new Set<string>();
 
-export function registerImage(workspace: string, rel: string): void {
+export function registerImage(workspace: string, rel: string, scratchDir?: string): void {
   try {
-    attachable.add(confine(workspace, rel));
+    attachable.add(confineEither(workspace, scratchDir, rel));
   } catch {
     // an escaping path never becomes attachable
+  }
+}
+
+/** Workspace confinement with the scratch root as the second allowed root (D-7) — the image
+ * seam's mirror of builtins' `inside`, so an image the model read under a relocated scratch
+ * root actually attaches instead of being silently withheld while read_file claims otherwise. */
+function confineEither(workspace: string, scratchDir: string | undefined, path: string): string {
+  try {
+    return confine(workspace, path);
+  } catch (e) {
+    if (scratchDir && scratchDir !== workspace) return confine(scratchDir, path);
+    throw e;
   }
 }
 
@@ -323,6 +335,7 @@ export async function extractDocText(abs: string, mime: string): Promise<string 
 export async function expandImageMarkers(
   messages: ChatMsg[],
   workspace: string,
+  scratchDir?: string,
 ): Promise<ChatMsg[]> {
   // Collect markers from messages within the last N user turns. Tool + user text
   // only: an assistant echoing a marker every answer would otherwise renew the
@@ -353,7 +366,7 @@ export async function expandImageMarkers(
   for (const rel of paths) {
     if (parts.length >= MAX_IMAGES_PER_REQUEST) break;
     try {
-      const abs = confine(workspace, rel); // symlink-hard; throws on escape
+      const abs = confineEither(workspace, scratchDir, rel); // symlink-hard; throws on escape
       if (!attachable.has(abs) || seen.has(abs)) continue; // provenance gate (codex S8 #2)
       seen.add(abs);
       if (!existsSync(abs) || statSync(abs).size > MAX_IMAGE_BYTES) continue;

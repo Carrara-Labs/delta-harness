@@ -761,6 +761,18 @@ export function usesMaxCompletionTokens(baseUrl: string): boolean {
   return hostMatches(baseUrl, ["openai.com"]);
 }
 
+/** The ChatGPT/Codex subscription backend rejects `max_output_tokens` outright, at ANY value
+ * ("Unsupported parameter", HTTP 400) — parent turns never send one, so the same connection
+ * works for the parent and 400s every child call (D-12: 24 research starts, 24 failures).
+ * A DENYLIST of the one host with wire proof, not an allowlist of openai.com — an allowlist
+ * would silently uncap children on every third-party Responses endpoint that supports the
+ * param. hostMatches suffix semantics are the safe direction here: *.chatgpt.com is
+ * OpenAI-controlled DNS, and denying the param costs nothing while a 400 costs the call.
+ * Same host as `subscriptionBaseAllowed`'s default (config.ts) — keep the two in step. */
+export function acceptsMaxOutputTokens(baseUrl: string): boolean {
+  return !hostMatches(baseUrl, ["chatgpt.com"]);
+}
+
 /** Highest index a ROLLING cache breakpoint may land on: everything after it is a derived
  * per-turn block. Shared by BOTH wire serializers — they build different shapes but must agree
  * on eligibility, and the first version of this fix shipped it to only one of them (codex P1),
@@ -1597,7 +1609,11 @@ async function streamResponses(
   if (instructions) body.instructions = instructions;
   // Cache-affinity routing: same key → same cache shard → prefix hits across turns.
   if (req.cacheKey) body.prompt_cache_key = req.cacheKey.slice(0, 64);
-  if (req.maxTokens) body.max_output_tokens = req.maxTokens;
+  // D-12: suppressed for the subscription host (see acceptsMaxOutputTokens). The parent's
+  // run-level budget still bounds an uncapped child — softly (checked between calls), with the
+  // 200KB research artifact cap bounding persistence. Callers keep computing maxTokens: the
+  // value still feeds the budget claim and the reservation; only the wire field is dropped.
+  if (req.maxTokens && acceptsMaxOutputTokens(cfg.baseUrl)) body.max_output_tokens = req.maxTokens;
   // The Responses API (ChatGPT/Codex subscription backend) takes reasoning effort natively.
   if (req.reasoningEffort) body.reasoning = { effort: req.reasoningEffort };
   if (req.tools?.length) {

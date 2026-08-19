@@ -168,7 +168,7 @@ describe("W1 integration: recall + pointer ledger after a real compaction", () =
       chat,
       "s",
       { sessionId: "s" },
-      { recentBudgetTokens: 30 },
+      { recentBudgetTokens: 30, anchorRunId: "r" },
     );
     expect(did).toBeTruthy();
 
@@ -210,7 +210,14 @@ describe("W1 integration: recall + pointer ledger after a real compaction", () =
 
     const chat = async () =>
       ok({ role: "assistant", content: "Goal: g\nProgress: p\nNext: n\nArtifacts: (see ledger)" });
-    await maybeCompact(db, events, chat, "s", { sessionId: "s" }, { recentBudgetTokens: 30 });
+    await maybeCompact(
+      db,
+      events,
+      chat,
+      "s",
+      { sessionId: "s" },
+      { recentBudgetTokens: 30, anchorRunId: "r" },
+    );
 
     const summary = activeMsgs(db).find(
       (m) =>
@@ -243,7 +250,14 @@ describe("W1 integration: recall + pointer ledger after a real compaction", () =
     // never be exercised.
     for (let i = 0; i < 10; i++)
       addMsg(db, { role: i % 2 ? "assistant" : "user", content: `m${i}` });
-    await maybeCompact(db, events, okSummary, "s", { sessionId: "s" }, { recentBudgetTokens: 30 });
+    await maybeCompact(
+      db,
+      events,
+      okSummary,
+      "s",
+      { sessionId: "s" },
+      { recentBudgetTokens: 30, anchorRunId: "r" },
+    );
     let live = activeMsgs(db)
       .map((x) => JSON.stringify(x))
       .join("\n");
@@ -251,7 +265,14 @@ describe("W1 integration: recall + pointer ledger after a real compaction", () =
 
     for (let i = 0; i < 10; i++)
       addMsg(db, { role: i % 2 ? "assistant" : "user", content: `new${i}` });
-    await maybeCompact(db, events, okSummary, "s", { sessionId: "s" }, { recentBudgetTokens: 30 });
+    await maybeCompact(
+      db,
+      events,
+      okSummary,
+      "s",
+      { sessionId: "s" },
+      { recentBudgetTokens: 30, anchorRunId: "r" },
+    );
     live = activeMsgs(db)
       .map((x) => JSON.stringify(x))
       .join("\n");
@@ -277,7 +298,14 @@ describe("W1 integration: recall + pointer ledger after a real compaction", () =
     });
     for (let i = 0; i < 10; i++)
       addMsg(db, { role: i % 2 ? "assistant" : "user", content: `m${i} ${"x".repeat(300)}` });
-    await maybeCompact(db, events, okSummary, "s", { sessionId: "s" }, { recentBudgetTokens: 30 });
+    await maybeCompact(
+      db,
+      events,
+      okSummary,
+      "s",
+      { sessionId: "s" },
+      { recentBudgetTokens: 30, anchorRunId: "r" },
+    );
     const live = activeMsgs(db)
       .map((x) => JSON.stringify(x))
       .join("\n");

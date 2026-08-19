@@ -59,8 +59,9 @@ const bytes = (s: string): number => Buffer.byteLength(s, "utf8");
  * `runs.last_input` measured the PRE-compaction prompt; once history is rewritten it is a lie that
  * survives a crash, and `run.ts` reading it on resume would project over budget and re-compact
  * immediately. Committing it with the rewrite makes the two states impossible to separate. */
-const clearAnchor = (db: Database, runId?: string): void => {
-  if (runId) db.query("UPDATE runs SET last_input = 0 WHERE id = ?").run(runId);
+const clearAnchor = (db: Database, runId: string, sessionId: string): void => {
+  // Both keys: a mismatched (sessionId, anchorRunId) pair must reset nothing, not a foreign run.
+  db.query("UPDATE runs SET last_input = 0 WHERE id = ? AND session_id = ?").run(runId, sessionId);
 };
 
 const zeroUsage = (): Usage => ({
@@ -73,6 +74,8 @@ const zeroUsage = (): Usage => ({
 });
 const ASK_CAP = 4_000; // bound on the pinned original request
 const SUMMARY_CAP = 8_000; // bound on the persisted summary body (can't itself become the bloat)
+const IDS_APPENDIX_MAX = 1_000; // A-1: identifier appendix, reserved INSIDE the summary cap
+const IDS_MAX_ID_LEN = 120; // an "identifier" longer than this is a blob, not an id
 
 const SUMMARIZE_SYSTEM =
   "You compact an agent's working transcript so it can continue with less context. Produce EXACTLY these four sections, nothing else:\nGoal: the overall objective in one line.\nProgress: what's been done and every key FINDING, decision, name, date, and NUMBER so far.\nNext: what remains.\nArtifacts: files written (with paths), data gathered, links — anything needed to continue.\nBe specific and preserve EVERY path, number, date, name, and identifier verbatim. Under 350 words. This replaces the turns it summarizes, so lose nothing load-bearing.";
@@ -155,14 +158,16 @@ function defang(s: string): string {
   return s.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-/** The session's immutable original ask (first run's request.input), bounded. Read FRESH from
+/** The ask this compaction is serving: the CURRENT run's request.input, bounded. Read FRESH from
  * `runs` — never from a prior model summary — so an injected instruction can't rewrite the task.
- * Only `input` is read; the full request is never placed in context (metadata can carry creds). */
-function originalAsk(db: Database, sessionId: string): string {
+ * Only `input` is read; the full request is never placed in context (metadata can carry creds).
+ * Both keys are bound: 42 of 42 measured first-run pins were a DIFFERENT task than the run that
+ * compacted (D-1), so a mismatched (session, run) pair pins nothing rather than guessing. */
+function currentAsk(db: Database, runId: string, sessionId: string): string {
   try {
     const row = db
-      .query("SELECT request FROM runs WHERE session_id = ? ORDER BY seq LIMIT 1")
-      .get(sessionId) as { request: string } | null;
+      .query("SELECT request FROM runs WHERE id = ? AND session_id = ?")
+      .get(runId, sessionId) as { request: string } | null;
     const input = row ? (JSON.parse(row.request) as { input?: unknown }).input : "";
     return typeof input === "string" ? elide(input, ASK_CAP) : "";
   } catch {
@@ -196,7 +201,7 @@ const LEDGER_MAX_CHARS = 4000; // hard byte bound so the ledger can't itself bec
  *  Done at the compaction COMMIT on purpose: that already rewrites the active set, so the prompt
  *  prefix is invalidated at that instant anyway and demotion costs zero extra cache churn. Doing
  *  it per-turn instead would rewrite the prefix every turn and destroy the cache. */
-function demoteSpilled(row: Row, workspace: string): string {
+function demoteSpilled(row: Row, roots: { scratch: string; workspace: string }): string {
   const msg = row.msg;
   let m: ChatMsg;
   try {
@@ -209,18 +214,23 @@ function demoteSpilled(row: Row, workspace: string): string {
   // A tool result is model-visible and attacker-influenced: the first regex match could be a fake
   // that suppresses demotion, or a real file we should never point at, and a forged sentinel could
   // opt a row out entirely (codex P1). The engine knows where IT wrote the spill.
-  const path = spillPathFor(
-    workspace,
-    row.run_id,
-    (m as { tool_call_id?: string }).tool_call_id ?? "",
-  );
-  if (!m.content.includes(path)) return msg; // not one of ours → leave it alone
+  // Two candidates AT MOST (D-7 §3.1), both engine-derived: the configured scratch root, then the
+  // legacy workspace root — a root change must not silently stop historical rows demoting.
+  const callId = (m as { tool_call_id?: string }).tool_call_id ?? "";
+  const candidates =
+    roots.scratch === roots.workspace
+      ? [spillPathFor(roots.scratch, row.run_id, callId)]
+      : [
+          spillPathFor(roots.scratch, row.run_id, callId),
+          spillPathFor(roots.workspace, row.run_id, callId),
+        ];
   // Already demoted? The sentinel alone is forgeable — a hostile tool result can open with it and
   // opt its 20KB body out of demotion (codex P1). Our stub is BOUNDED, so authenticate by shape:
   // only a row short enough to actually BE a stub is treated as one.
   if (m.content.startsWith(DEMOTED_MARK) && m.content.length <= DEMOTE_HEAD + STUB_TAIL_MAX)
     return msg;
-  if (!existsSync(path)) return msg;
+  const path = candidates.find((p) => m.content.includes(p) && existsSync(p));
+  if (!path) return msg; // not one of ours (or the file is gone) → leave it alone
   const head = m.content.slice(0, DEMOTE_HEAD);
   return JSON.stringify({
     ...m,
@@ -342,13 +352,19 @@ export async function maybeCompact(
     workspace?: string;
     /** `DELTA_TOOL_ARG_MAX_BYTES` — bounds the assistant arguments in the retained tail. */
     argCap?: number;
+    /** Engine scratch root (D-7). Demotion derives spill paths against THIS root first, then
+     * falls back once to the workspace: pre-relocation rows carry workspace-root paths, and
+     * losing them would silently stop the retained tail shrinking — the exact 0.2.11 defect. */
+    scratchDir?: string;
     /** The run whose provider-anchored input estimate must be invalidated ATOMICALLY with the
      * message rewrite (S5). The caller used to reset `runs.last_input` after this returned, so a
      * crash in that window resumed with a COMPACTED history and a STALE pre-compaction anchor —
      * which re-triggers compaction on the first turn back, i.e. exactly the per-turn compaction
-     * this batch exists to remove, reachable by crash instead of by config (codex). */
-    anchorRunId?: string;
-  } = {},
+     * this batch exists to remove, reachable by crash instead of by config (codex).
+     * REQUIRED, and also names the run whose request is pinned as the trusted ask — the optional
+     * first-run-fallback path was the D-1 defect itself (42/42 wrong-task pins). */
+    anchorRunId: string;
+  },
 ): Promise<CompactResult | null> {
   const rows = db
     .query("SELECT id, run_id, msg FROM messages WHERE session_id = ? AND active = 1 ORDER BY id")
@@ -416,7 +432,9 @@ export async function maybeCompact(
     if (tailTokens <= budget) break;
     // Both halves of the tail, oldest-first: the tool result's spilled body, and the assistant's
     // own arguments. Either one alone leaves a floor the other cannot move.
-    const shrunk = opts.workspace ? demoteSpilled(r, opts.workspace) : r.msg;
+    const shrunk = opts.workspace
+      ? demoteSpilled(r, { scratch: opts.scratchDir ?? opts.workspace, workspace: opts.workspace })
+      : r.msg;
     const both = elideRowArgs({ ...r, msg: shrunk }, opts.argCap ?? 0);
     if (both === r.msg) continue;
     tailTokens -= tokEst(r.msg) - tokEst(both);
@@ -441,7 +459,7 @@ export async function maybeCompact(
         db.query(
           "INSERT INTO messages (run_id, session_id, msg, created_at) VALUES (?, ?, ?, ?)",
         ).run(r.run_id, sessionId, r.msg, Date.now());
-      clearAnchor(db, opts.anchorRunId);
+      clearAnchor(db, opts.anchorRunId, sessionId);
     })();
     events.emit("compaction", spine, {
       compacted_turns: 0,
@@ -559,7 +577,27 @@ export async function maybeCompact(
     }
     return null;
   }
-  const summary = elide(summaryRaw, SUMMARY_CAP); // hard bound in CODE, not just the prompt
+  // A-1: the audit's leftovers ride a machine-built appendix — the retry loop ships lossy after
+  // two attempts by design, and 18-34% of load-bearing identifiers were measured missing on the
+  // fleet. Bounded per id AND in aggregate, and RESERVED INSIDE SUMMARY_CAP (appending after the
+  // elide would grow the row past the cap and could flip the shrink gate). The harvested charsets
+  // (.delta paths, years, numbers — extractIdentifiers) cannot carry envelope delimiters, so the
+  // appendix needs no defang; it is engine-assembled from deterministic regex matches.
+  let idAppendix = "";
+  if (missing.length) {
+    const keep: string[] = [];
+    let total = 0;
+    for (const id of missing) {
+      if (id.length > IDS_MAX_ID_LEN) continue;
+      if (total + id.length + 2 > IDS_APPENDIX_MAX) break;
+      keep.push(id);
+      total += id.length + 2;
+    }
+    if (keep.length)
+      idAppendix = `\n\nLoad-bearing values from the compacted turns (verbatim):\n${keep.join(", ")}`;
+  }
+  // hard bound in CODE, not just the prompt — appendix chars come out of the same cap
+  const summary = elide(summaryRaw, Math.max(0, SUMMARY_CAP - idAppendix.length));
 
   // Deterministic pointer ledger (W1): the summarizer is TOLD to preserve paths, but don't
   // rely on it — scan the compacted prefix for capAndSpill markers and append a machine-built
@@ -574,13 +612,13 @@ export async function maybeCompact(
   // from UNTRUSTED historical data (a model-written summary over tool output that may carry an
   // injected instruction). The delimiters are defanged so embedded content can't break out.
   // Prompt-level hardening, not a true trust boundary — but materially better than a heading.
-  const ask = originalAsk(db, sessionId);
+  const ask = currentAsk(db, opts.anchorRunId, sessionId);
   const askBlock = ask
-    ? `Continue following the original session request:\n<original_request>\n${defang(ask)}\n</original_request>\n\n`
+    ? `Continue following the request you are working on:\n<original_request>\n${defang(ask)}\n</original_request>\n\n`
     : "";
   const summaryContent =
     `${askBlock}The following is ${HISTORICAL_FRAMING}:\n` +
-    `<historical_context>\n[${prefix.length} earlier turns compacted]\n${defang(summary)}${ledger}\n</historical_context>${SUMMARY_END_MARKER}`;
+    `<historical_context>\n[${prefix.length} earlier turns compacted]\n${defang(summary)}${idAppendix}${ledger}\n</historical_context>${SUMMARY_END_MARKER}`;
 
   // PROVE it shrinks before committing: replacing a small prefix with a bounded summary envelope
   // can GROW the active set (codex repro), which would make overflow recovery worse and churn the
@@ -641,7 +679,7 @@ export async function maybeCompact(
         "INSERT INTO messages (run_id, session_id, msg, created_at) VALUES (?, ?, ?, ?)",
       ).run(r.run_id, sessionId, r.msg, Date.now());
     }
-    clearAnchor(db, opts.anchorRunId);
+    clearAnchor(db, opts.anchorRunId, sessionId);
   })();
 
   events.emit("compaction", spine, {

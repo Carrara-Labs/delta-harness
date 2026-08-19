@@ -152,3 +152,21 @@ live one, which is where the harm is). Use the synthetic one in CI and the real 
    inferred from row order. Do not let this spec grow it.
 4. **Does anything else read the first run of a session?** Grep returned only this call site. Confirm
    independently.
+
+## 7. Review outcome — Codex pass, 2026-08-19 (pre-implementation)
+
+Session `01a0196c…`, high effort, claims re-verified against source before acceptance.
+
+1. **§6.1 decided: `anchorRunId` is REQUIRED.** "No call site omits it" was false counting tests —
+   ~27 test invocations omit it and get mechanical edits. The compiler now proves the third caller
+   doesn't exist.
+2. **Bind both keys.** `currentAsk` queries `WHERE id = ? AND session_id = ?`, and the anchor
+   reset does the same — a mismatched (sessionId, anchorRunId) pair must pin nothing and reset
+   nothing rather than cross sessions.
+3. **§4.3's byte-identity contradicts §4.2's wording change** — both were spec-mandated. Resolved:
+   the wording change ships (it has independent accuracy merit; nothing greps the sentence), and
+   the byte-identity property is restated as what it always meant: **the query swap is a no-op for
+   single-request sessions** — assert `currentAsk(B) === originalAsk(session)` there, plus a golden
+   render against the new lead-in.
+4. Spec nit: POLICY renders in the system block, before the history that carries the summary — not
+   "after it" (`run.ts:1232`). Doesn't change the fix.

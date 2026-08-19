@@ -21,6 +21,9 @@ primary_region = "iad"
   # all durable state on the volume
   DELTA_DB = "/data/delta.db"
   DELTA_WORKSPACE = "/data/bundle"
+  # D-7: engine scratch (spill/research/scratchpad) lives beside the DB, off the bundle —
+  # the workspace is the agent's document tree, not a dump for untrusted intermediate state.
+  DELTA_SCRATCH_DIR = "/data/scratch"
   CONNECT_DB = "/data/connect.sqlite"
   # provider: Opus 5 direct on Anthropic (MODEL_API_KEY is a Fly secret), OpenRouter failover
   MODEL_BASE_URL = "https://api.anthropic.com/v1"

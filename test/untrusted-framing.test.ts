@@ -232,7 +232,7 @@ describe("untrusted tool-result framing", () => {
       },
       "s",
       { sessionId: "s" },
-      { recentBudgetTokens: 30 },
+      { recentBudgetTokens: 30, anchorRunId: "r" },
     );
     expect(compacted).toContain(`TOOL: ${framed}`);
   });
@@ -280,7 +280,7 @@ describe("untrusted tool-result framing", () => {
       },
       "s",
       { sessionId: "s" },
-      { recentBudgetTokens: 30 },
+      { recentBudgetTokens: 30, anchorRunId: "r" },
     );
 
     expect(bounded.length).toBeGreaterThan(0);

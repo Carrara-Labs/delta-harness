@@ -295,7 +295,7 @@ describe("the elided-argument archive", () => {
       }),
       "s",
       {},
-      { recentBudgetTokens: 500, workspace: "/tmp", argCap: 4_096 },
+      { recentBudgetTokens: 500, workspace: "/tmp", argCap: 4_096, anchorRunId: "r" },
     );
     const rows = db.query("SELECT msg FROM messages WHERE session_id='s' AND active=1").all() as {
       msg: string;

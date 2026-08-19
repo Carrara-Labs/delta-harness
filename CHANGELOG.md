@@ -6,6 +6,116 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.15] - 2026-08-19
+
+Stop losing the task and the output. Twelve changes, every one motivated by a number measured on
+the live fleet: two fixed defects that were actively costing a paying consumer money and
+correctness, and ten closed the visibility and hygiene gaps that let those two hide. The receipts
+behind each number: `docs/harness-0.2.15-plan.md` and `docs/aperture-asks-0.2.15-triage.md`.
+
+**The headline pair.** Compaction pinned the session's FIRST request as trusted task instructions —
+measured across three lanes, 42 of 42 exposed compactions pinned a different task than the one
+being served, zero harmless; it now pins the compacting run's own request. And a budget-exhausted
+run returned one sentence of counters while its results sat on disk — eleven runs, 771 tool calls,
+$140.98 and 158 minutes of paid work returned as `budget exhausted: …`; it now returns the plan
+plus every spill and research artifact the run produced, with the counters kept in `runs.error`
+where operators look.
+
+### Upgrade
+0.2.15 adds no schema migration, so from 0.2.13 or 0.2.14 it is reversible. From 0.2.11 or earlier
+it is not — it carries the one-way step 0.2.13 introduced. Three behavior changes are visible on
+upgrade day and are deliberate; read `### Changed` before rolling a fleet:
+1. research artifacts move from `research/` to `.delta/research/` (every deployment);
+2. the delegated code CLI's default gains `--disable apps --disable plugins` (requires
+   codex-cli >= 0.146.0 — verified; anyone deliberately using an account connector through `code`
+   must now set `DELTA_CODE_CLI` explicitly, which is used verbatim);
+3. a failed run's `output_text` is now a user-facing handoff, not the operator counters — anything
+   that parsed `budget exhausted` out of `output_text` must read `runs.error` instead.
+
+### Fixed
+- **Compaction pins the request it is compacting, not the session's first.** `ORDER BY seq LIMIT 1`
+  was correct only for single-request sessions; on any threaded session the summary re-instructed
+  the agent to do old work, and 23 of 27 stale pins on the busiest lane were LONGER than the live
+  request they outranked. The pin now reads the anchor run's own request, bound by run AND session
+  id, and the first-run fallback — the defect itself — is deleted; the compiler proves no caller
+  can reach it. Single-request sessions render identically apart from the lead-in sentence, which
+  now says "the request you are working on".
+- **A budget-exhausted run hands back what it already has.** `output_text` carries the current
+  plan, this run's spill files and research artifacts (enumerated from disk under the run's own
+  sanitized-id prefix — run-scoped by construction, nothing stale or forged), the self-write note,
+  and advice to narrow rather than retry. Bounded at 10 KiB / 20 paths per family, truncation
+  named. Ephemeral (`store:false`) runs get no paths — the queue wipes theirs right after settle,
+  so a pointer would be dead on arrival. The counters stay in `runs.error` and the `error` event.
+- **`max_output_tokens` is never sent to the ChatGPT/Codex subscription backend**, which rejects it
+  at any value — parent turns never send one, so the identical connection worked for the parent
+  while every `research`/`eval_n`/reflection child died with a billed 400 (24 of 24 child starts on
+  one observed run). A denylist of the one host with wire proof; every other Responses endpoint
+  keeps its cap. Unblocks the Codex-subscription migration path.
+- **YAML block-scalar skill descriptions parse** (`description: >` / `|`), without adding a YAML
+  dependency. Two skills were registered but unsearchable for months — the identical file parses
+  fine under real YAML on a laptop, which is why nobody noticed. A description under 10 characters
+  now warns loudly at scan time: this defect class is defined by its silence.
+- **Identifiers the compaction summary dropped ride a machine-built appendix.** The audit retry
+  ships lossy after two attempts by design, and 18-34% of load-bearing identifiers were measured
+  missing from committed summaries (worst cases lost 30 of 30). The appendix is bounded per id and
+  in aggregate, and reserved INSIDE the summary cap so it can never bloat the context it protects.
+
+### Added
+- **`DELTA_SCRATCH_DIR`** — one root for all three per-run artifact families the engine used to
+  write into the workspace: spilled tool results (`.delta/spill/`), research artifacts (now
+  `.delta/research/`), and the model's per-run scratchpad (`scratch/<runId>/`, wiped every run).
+  Defaults to the workspace, so nothing moves unless set. On a git-tracked or human-browsed
+  workspace, point it at machine-local disposable storage (the Fly template now ships
+  `/data/scratch`). File tools accept the scratch root as a second confined root, so relocated
+  artifacts stay readable and the scratchpad stays writable; `.delta/*` is write-reserved under
+  BOTH roots; pre-existing artifacts keep resolving via a legacy fallback (no migration — delete
+  old trees at leisure); demotion derives paths against both roots so historical rows keep
+  shrinking the retained tail. A root that would contain the daemon DB or the workspace is refused
+  back to the workspace with a WARN rather than handing the model file-tool reach over `delta.db`.
+- **`GET /v1/status` reports tool usability** in three states, because the operator's next action
+  differs: `registered` (in the live registry, read per request), `unusable` (registered but a live
+  precondition fails NOW — e.g. no `EXA_API_KEY` in env or vault; heals the moment a credential
+  lands, no restart), and `omitted` (never registered this boot, with a reason: no vault, CLI
+  missing, sub-agent depth, not control-plane-wired, or an allowlist name matching nothing). One
+  stderr line at boot when something is omitted or unusable. No tool is ever de-registered for a
+  missing credential — the 0.2.10 vault contract stands, locked by test.
+- **`tool.rejected` telemetry event** on the unknown-tool branch, with a closed reason enum
+  (`unknown` / `not_allowed` / `breaker_disabled`) that exports bare; the raw model-requested name
+  is payload and stays local unless `DELTA_CAPTURE_PAYLOADS=1`. 9.4% of one lane's tool calls were
+  rejections no counter recorded.
+- **`DELTA_MAX_STEPS`** completes the third budget axis, same shape as tokens and cost but floored
+  at 1 (a zero-step budget fails every run before step 1, undiagnosably). Honest scope: the fleet's
+  binding constraint is tokens — max observed steps is 62 of 100 — so this is a knob for
+  deep-research shapes, not a change anyone currently deployed will see.
+- **The skill index refreshes without a restart.** `search()` re-scans behind a per-`SKILL.md`
+  stat (mtime AND size — a same-timestamp rewrite still re-indexes), so skills added, renamed, or
+  re-described after boot are findable. Never a watcher: a watcher is a timer by another name and
+  this daemon must be able to suspend.
+- **A `remember` refusal for size names the exact overage and hands back the current file** as a
+  merge base. 86 of 240 fleet saves were refused with neither, so the model compressed by
+  guesswork, re-fired, and hit the three-strike breaker — the largest self-learning failure mode
+  on the fleet. One informed retry instead of three blind ones; the Cockpit keeps the short error.
+
+### Changed
+- **The delegated code CLI defaults to `--disable apps --disable plugins`.** A `codex exec`
+  session, asked to prove its Gmail skill was inert, listed the operator's real inbox — 6,913
+  messages, write scope — granted by nothing on the host: account connectors live server-side on
+  the CLI's own login. Anyone who deliberately relies on a connector through `code` must set
+  `DELTA_CODE_CLI` explicitly (used verbatim, never modified). Requires codex-cli >= 0.146.0; an
+  older binary resolves and then rejects the flags per-call.
+- **A failed run's `output_text` is the user-facing outcome, not the operator diagnostic.** The
+  diagnostic (`budget exhausted: N/M steps, …`) lives in `runs.error` and the `error` event, as it
+  always did. Consumers that string-matched counters out of `output_text` must move to
+  `runs.error`.
+- **Research artifacts write under `.delta/research/`** instead of a bare `research/` directory in
+  the workspace — hidden and uniquely named, so no operator has to write the ignore rule that, on
+  one deployment, silently swallowed new files in five legitimate vault folders. Old trees stay
+  where they are and are wiped/read via the legacy fallback.
+- **The compaction summary's lead-in says "the request you are working on"** rather than "the
+  original session request" — the sentence now matches what is actually pinned. The
+  `<original_request>` tag name is unchanged, so nothing that greps the wire format breaks.
+
+
 ## [0.2.14] - 2026-08-10
 
 Bounds and correctness. The debug capture table can no longer fill a volume, a shrinking turn no

@@ -319,7 +319,7 @@ The concrete outcome that defines good work.
 Durable lessons worth carrying into every future run.
 ```
 
-The file is human-editable and agent-editable. The model can replace it through the `remember` tool. A content-changing overwrite is atomic and size-capped. When prior content exists, Delta records it in SQLite before retaining the newest 20 previous revisions. The first write and a same-content write do not create a revision. The Cockpit can compare and restore recorded revisions. The filesystem rename happens just before the database snapshot, so a process crash in that narrow interval can leave the new file in place without a revision for the immediately prior content.
+The file is human-editable and agent-editable. The model can replace it through the `remember` tool. A content-changing overwrite is atomic and size-capped; since 0.2.15 a refusal for size tells the agent exactly how many bytes over it is and hands back the current on-disk file as a merge base, so an over-cap save resolves in one informed retry instead of blind compression attempts that end in the repeat-failure breaker. When prior content exists, Delta records it in SQLite before retaining the newest 20 previous revisions. The first write and a same-content write do not create a revision. The Cockpit can compare and restore recorded revisions. The filesystem rename happens just before the database snapshot, so a process crash in that narrow interval can leave the new file in place without a revision for the immediately prior content.
 
 Important behavior:
 
@@ -580,6 +580,8 @@ MODEL_HEADERS={"originator":"codex_cli_rs"}
 The harness requires the Responses wire, an endpoint-native model ID, an allowed backend host, and a usable broker response. `DELTA_BROKER_AUTH` and `MODEL_HEADERS` are optional to Delta but may be required by the deployed broker or backend.
 
 Delta sends a `GET` to the broker with the optional bearer and a 15-second timeout. A usable JSON response contains non-empty `accessToken`, non-empty `accountId`, and an ISO `expiresAt` more than five minutes in the future. Delta caches the token and coalesces concurrent mints. A `401` or `403` invalidates it and permits one re-mint retry; `409` immediately advances to another provider; a `429` temporarily cools the shared credential and advances to a keyed provider.
+
+On this backend, `max_output_tokens` is never sent — the endpoint rejects it at any value, which would fail every sub-agent call with a billed 400 (fixed in 0.2.15; live-verified 3/3 children, with the pre-fix behavior reproducing 0/3 the same minute). One header note for a **static-key** Codex lane: `chatgpt-account-id` is a reserved header the subscription credential owns, so `MODEL_HEADERS` may not set it — the daemon refuses with `may not set the reserved header 'chatgpt-account-id'`. That refusal is correct and the backend does not require the header on the static-key path (verified both ways); if you hit it, remove the header rather than hunting for a config mistake that does not exist.
 
 Subscription tokens are sent only to exact HTTPS hosts in `DELTA_BROKER_ALLOWED_HOSTS`, whose default is `chatgpt.com`. Add the real backend host explicitly when required. The broker URL must be HTTPS, except for loopback development. Configure a keyed provider in `DELTA_PROVIDERS` as a production fallback for broker exhaustion, authentication failure, or rate limiting. Subscription-route `cost_usd` is API-rate-equivalent consumption from Delta's price table, not the incremental subscription bill.
 
@@ -885,7 +887,7 @@ Override it as a whitespace-separated command:
 DELTA_CODE_CLI=claude --print
 ```
 
-The command runs with the workspace as its current directory and has no harness timeout. Delta splits `DELTA_CODE_CLI` on spaces without shell or quote parsing, so quoted arguments and executable paths containing spaces are unsupported. The default container does not install a coding CLI. Add one to the image and provision its credentials if the `code` tool is required. Delta's default asks Codex for its own `workspace-write` sandbox; a custom CLI receives no equivalent sandbox from Delta.
+The command runs with the workspace as its current directory and has no harness timeout. Since 0.2.15 the built-in default appends `--disable apps --disable plugins`: a delegated CLI signs in with its own account, and account connectors live server-side on that login — a session with no send-capable tool was demonstrated listing the operator's real inbox through a Gmail connector nothing on the host granted. The default requires codex-cli 0.146.0 or newer; an older binary resolves at boot and then rejects the flags on every call. A deployment that deliberately relies on a connector sets `DELTA_CODE_CLI` explicitly — the operator's value is used verbatim, never modified. Delta splits `DELTA_CODE_CLI` on spaces without shell or quote parsing, so quoted arguments and executable paths containing spaces are unsupported. The default container does not install a coding CLI. Add one to the image and provision its credentials if the `code` tool is required. Delta's default asks Codex for its own `workspace-write` sandbox; a custom CLI receives no equivalent sandbox from Delta.
 
 ### Subagents and `eval_n`
 
@@ -1154,7 +1156,7 @@ skills/
     rubric.md       # reference files, data, or scripts — read on demand
 ```
 
-Only each skill's `name` and `description` enter the prompt (progressive disclosure). The agent reads `SKILL.md` and any bundled files on demand with `read_file`, and runs bundled scripts with the `code` tool. Discovery is boot-time, direct-child-only, and rejects symlinks. Local skills are read-only in this release: reflection proposes improvements only to a backend that accepts writes (the MCP registry). `off` is fully invisible. Default `mcp` needs no change.
+Only each skill's `name` and `description` enter the prompt (progressive disclosure). The agent reads `SKILL.md` and any bundled files on demand with `read_file`, and runs bundled scripts with the `code` tool. Discovery is direct-child-only and rejects symlinks. Since 0.2.15 the index refreshes without a restart: each search re-checks every skill's `SKILL.md` (modification time and size) and re-scans when anything moved, so skills added, renamed, or re-described after boot are findable. Frontmatter descriptions may use YAML block scalars (`description: >` or `|`) — previously such a skill registered but could never be surfaced by search — and a description under ten characters logs a loud warning, because an unsearchable skill is a defect defined by its silence. Local skills are read-only in this release: reflection proposes improvements only to a backend that accepts writes (the MCP registry). `off` is fully invisible. Default `mcp` needs no change.
 
 ### Promotion to shared knowledge
 
@@ -1239,7 +1241,11 @@ DELTA_MAX_TOKENS=250000
 DELTA_MAX_COST_USD=1
 ```
 
-There is no environment setting for maximum steps. Profiles are defined in the engine.
+Since 0.2.15, `DELTA_MAX_STEPS` completes the third axis and, like the other two, can raise or lower the profile's value. Unlike them it is floored at 1 — a zero-step budget would fail every run before its first model call with an error the operator cannot diagnose. Fractions floor. Honest scoping: across the measured fleet the binding constraint is tokens (the maximum observed step count is 62 of 100), so this is a knob for deep-research shapes at high reasoning effort, not something a typical deployment needs.
+
+```dotenv
+DELTA_MAX_STEPS=200
+```
 
 ### What the budget measures
 
@@ -1264,6 +1270,10 @@ Without a known price, Delta warns and records zero model cost for that path. A 
 Budgets are hard loop guards against usage Delta records, checked between model calls. The final call, its parallel tools, or background reflection can move recorded usage past the nominal threshold before the next guard. They do not cap failed provider attempts without usage, a child with a missing or malformed usage marker, provider under-reporting, coding CLI or subscription-account spend, MCP or search API fees, cloud cost, or the current `eval_n` judge. Subscription calls record API-rate-equivalent cost rather than the subscription's actual marginal bill. Treat these values as one-call-granularity model-loop guards, not prepaid authorization or a complete spend limit.
 
 Environment overrides use JavaScript number conversion. An exported empty `DELTA_MAX_TOKENS` or `DELTA_MAX_COST_USD` becomes zero rather than unset. Validate all budget variables before starting the daemon.
+
+### What an exhausted run returns
+
+Since 0.2.15, a run that hits a budget ceiling hands back what it already has instead of a sentence of counters. `output_text` carries the current plan, the paths of every spill file and research artifact this run produced (enumerated from disk under the run's own id, so nothing stale or forged can enter), a note if a durable `DELTA.md` write already committed, and advice to narrow the question rather than repeat it. The whole handoff is bounded at 10 KiB and 20 paths per artifact family, and truncation is named rather than silent. An ephemeral (`store: false`) run gets no paths, because its artifacts are wiped the moment the run settles. The operator diagnostic — `budget exhausted: N/M steps, …` — lives in `runs.error` and the `error` telemetry event, as it always did; a consumer that previously string-matched the counters out of `output_text` must read `runs.error` instead. The run's status remains `failed`.
 
 ### Compaction
 
@@ -1335,7 +1345,7 @@ Delta is built to run for hours across dozens of tool calls without the active c
 
 Before every model call, the engine estimates the fully assembled request — system spine, tool schemas, ephemeral blocks, message history, and reserved output — using serialized byte size rather than a naive character count, and treating attached images as a fixed token reserve rather than their base64 length. If the estimate exceeds `DELTA_COMPACT_AT_TOKENS`, it compacts **before** sending, so a resumed or continued session cannot overflow on its first call. It also compacts when the previous call's real gross prompt size crossed the threshold, since cached tokens still occupy the model's window.
 
-Compaction is archive-safe. Older turns are summarized into a structured note and their message rows are marked inactive — never deleted or overwritten. The recent tail is kept verbatim, sized by a token budget rather than a fixed message count, and snapped to a turn boundary so an assistant tool call always travels with its result. The original request is pinned verbatim, read fresh from the run record, and the summary is wrapped in a trusted-request / untrusted-history envelope with an explicit end marker so a weak model cannot read the historical note as fresh instructions.
+Compaction is archive-safe. Older turns are summarized into a structured note and their message rows are marked inactive — never deleted or overwritten. The recent tail is kept verbatim, sized by a token budget rather than a fixed message count, and snapped to a turn boundary so an assistant tool call always travels with its result. The request being served is pinned verbatim — since 0.2.15 this is the compacting run's own request, read fresh from the run record and bound to the session, never the session's first request (on threaded sessions the first-run pin re-instructed the agent to do old work in 42 of 42 measured cases). The summary is wrapped in a trusted-request / untrusted-history envelope with an explicit end marker so a weak model cannot read the historical note as fresh instructions. Load-bearing identifiers (IDs, counts, paths, years) that the summarizer drops despite an audit-and-retry pass ride a machine-built appendix inside the summary's size cap, so compression can no longer silently lose the values a task turns on.
 
 The context window is one dial:
 
@@ -1959,7 +1969,7 @@ The daemon starts neutral and unwedgeable: the `safe` tool floor, no MCP servers
 
 Since 0.2.8, safe mode is observable and self-aware. `GET /v1/status` reports `safe_mode: true`, so an edge client (a channel gateway's `/safemode` or `/status`) can confirm it without reading the boot log. The agent is also told: in a safe-mode boot the system spine drops the configured agent name and states that the persona, policy, and learned self-file are not loaded, so the agent does not present as its configured identity or role-play one from earlier conversation history. To demonstrate this cleanly, pair a safe-mode restart with a fresh conversation so no prior identity carries over.
 
-**Read current model, provider, tier, and budget (`GET /v1/status`).** A secret-free, seam-token-gated endpoint returns the running agent's version, tier, `safe_mode`, model, provider, reasoning effort, budget ceilings, and MCP server names — no keys. Since 0.2.8 the model view also names the `provider` in human terms (`anthropic-native`, `openai-native`, `openrouter`, `codex-sign-in`) with a `provider_chain` for the failover cascade, and `reasoning_effort` always resolves (an unset effort reports `default` rather than being omitted). It backs edge tooling such as a channel gateway's `/model`, `/provider`, and `/status` commands.
+**Read current model, provider, tier, and budget (`GET /v1/status`).** A secret-free, seam-token-gated endpoint returns the running agent's version, tier, `safe_mode`, model, provider, reasoning effort, budget ceilings, and MCP server names — no keys. Since 0.2.15 it also reports tool usability in three states, because the operator's next action differs for each: `tools.registered` (in the live registry, read per request), `tools.unusable` (registered, but a live precondition says a call fails right now — a missing `EXA_API_KEY`, for example; this heals the moment a credential lands in the environment or the vault, no restart), and `tools.omitted` (never registered this boot, each with a reason — no vault, an unresolvable code CLI, sub-agent depth, missing control-plane wiring, or an allowlist name that matches nothing; fix the configuration and restart). Names and engine-authored reasons only, never values. The daemon also prints one stderr line at boot when anything is omitted or unusable. The allowlist remains a ceiling, not a guarantee — but the gap between the two is no longer silent. Since 0.2.8 the model view also names the `provider` in human terms (`anthropic-native`, `openai-native`, `openrouter`, `codex-sign-in`) with a `provider_chain` for the failover cascade, and `reasoning_effort` always resolves (an unset effort reports `default` rather than being omitted). It backs edge tooling such as a channel gateway's `/model`, `/provider`, and `/status` commands.
 
 ## Security model
 
@@ -2082,6 +2092,7 @@ The values below are the current public operating surface. Unless noted otherwis
 | `DELTA_BIND` | all interfaces | Bind host. `delta dev` defaults it to `127.0.0.1`. |
 | `DELTA_DB` | `data/delta.db` | SQLite path. Container default is `/data/delta.db`. |
 | `DELTA_WORKSPACE` | `workspace` | Agent bundle and working-file root. Container default is `/data/workspace`. |
+| `DELTA_SCRATCH_DIR` | the workspace | Root for engine-written per-run intermediates: spilled tool results (`.delta/spill/`), research artifacts (`.delta/research/`), and the model's per-run scratchpad (`scratch/<run-id>/`, wiped every run). Point it at machine-local disposable storage when the workspace is git-tracked or human-browsed. File tools accept it as a second confined root; pre-existing artifacts under the workspace keep resolving. A value containing the daemon DB or the workspace is refused back to the workspace with a warning. Since 0.2.15. |
 | `DELTA_AGENT_ID` | unset | Stable identity for memory and telemetry. Set it in every real deployment. |
 | `DELTA_BUILD` | unset | Build or commit identifier returned by `/healthz`. |
 | `DELTA_LEASE_HOLDER` | `FLY_MACHINE_ID`, then hostname | Override the machine-scoped writer identity. Usually leave unset. |
@@ -2127,7 +2138,7 @@ The values below are the current public operating surface. Unless noted otherwis
 |---|---|---|
 | `EXA_API_KEY` | unset | Enables `web_search`. |
 | `DELTA_FETCH_ALLOW_PRIVATE` | off | `1` allows `web_fetch` to private addresses. Local development only. |
-| `DELTA_CODE_CLI` | Codex command | Space-separated coding CLI command. No shell parsing is performed. |
+| `DELTA_CODE_CLI` | Codex command with connectors disabled | Space-separated coding CLI command; no shell parsing. The 0.2.15 default appends `--disable apps --disable plugins` (needs codex-cli >= 0.146.0); an explicit value is used verbatim. |
 | `DELTA_SUBAGENT_DEPTH` | `0` | Internal depth guard. Top-level agents should keep `0`. |
 | `DELTA_MCP_SERVERS` | `[]` | JSON array of HTTP or stdio MCP servers. |
 | `DELTA_MCP_REFRESH_URL` | unset | Rotating MCP token endpoint. |
@@ -2162,6 +2173,7 @@ The values below are the current public operating surface. Unless noted otherwis
 | `DELTA_PINNED_TOOLS` | unset | Comma-separated tools kept resident from step one, intersected with the resolved allow-list. |
 | `DELTA_SAFE_MODE` | unset | `1` boots a neutral recovery agent: `safe` floor, no MCP, no self-write, no reflection, workspace prompt layers skipped. Ignores the two variables above. |
 | `DELTA_SKILLS` | `mcp` | Capability backend: `mcp` (registry, unchanged), `local` (workspace `skills/` folders, use-only), or `off` (fully invisible). |
+| `DELTA_MAX_STEPS` | profile value | Optional step-budget override, raise or lower; floored at 1. Since 0.2.15. |
 | `DELTA_MAX_TOKENS` | profile value | Optional lower fresh-token cap. |
 | `DELTA_MAX_COST_USD` | profile value | Optional lower model-cost cap. |
 | `DELTA_COMPACT_AT_TOKENS` | `120000` | Previous-input threshold for automatic compaction. |
@@ -2277,7 +2289,7 @@ A custom policy over `DELTA_POLICY_MAX_TOKENS` is a fatal configuration error. T
 
 ### The `code` tool returns an executable error
 
-The standard container does not include Codex or Claude Code. Install the selected CLI, confirm it is on `PATH`, set `DELTA_CODE_CLI`, and provision its home-directory authentication. Delta does not parse shell quoting, so use an executable path and arguments without spaces.
+The standard container does not include Codex or Claude Code. Install the selected CLI, confirm it is on `PATH`, set `DELTA_CODE_CLI`, and provision its home-directory authentication. Since 0.2.15 a missing CLI is loud rather than silent: the boot log and `GET /v1/status` name `code` as omitted with the reason. Delta does not parse shell quoting, so use an executable path and arguments without spaces.
 
 ### A subagent cannot call the model or tools
 

@@ -8,6 +8,7 @@
 
 import type { Database } from "bun:sqlite";
 import { randomBytes } from "node:crypto";
+import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { SkillRegistryAdapter } from "./adapter-defaults";
 import type { CapabilityAdapter } from "./adapters";
@@ -36,7 +37,7 @@ import {
   outputCapped,
   providerErrorClass,
 } from "./provider";
-import { childTools, runResearch } from "./research";
+import { childTools, researchRunPrefix, runResearch } from "./research";
 import { retrieveSkills } from "./retrieval";
 import { redactSecretValues, scrubText } from "./scrub";
 import { type Charter, currentSelf, loadSelf, parseCharterMarkdown, writeSelf } from "./self";
@@ -45,6 +46,7 @@ import {
   capAndSpill,
   elide,
   elidedArgsRejection,
+  spillRunPrefix,
   type ToolCtx,
   type ToolDef,
   type Tools,
@@ -146,6 +148,8 @@ export type Deps = {
   chatUtility?: (req: ChatRequest) => Promise<ModelResult>;
   tools: Tools;
   workspace: string;
+  /** Engine scratch root; defaults to the workspace (see config.scratchDir). */
+  scratchDir?: string;
   agentId?: string;
   /** Placement profile ceiling; requests may narrow, never escalate. */
   profile?: string;
@@ -461,8 +465,10 @@ export async function executeRun(
     ),
     maxCostUsd: Math.max(0, profile.budget.maxCostUsd - usage.costUsd),
   });
+  const scratchRoot = resolve(deps.scratchDir ?? deps.workspace);
   const ctx: ToolCtx = {
     workspace: resolve(deps.workspace),
+    scratchDir: scratchRoot,
     ...(deps.toolResultCap !== undefined ? { resultCap: deps.toolResultCap } : {}),
     activate,
     owner: runOwner,
@@ -722,7 +728,7 @@ export async function executeRun(
 
   for (;;) {
     if (opts.signal?.aborted)
-      return finalize(deps, run, spine, "cancelled", "cancelled", model, usage);
+      return finalize(deps, run, spine, "cancelled", { user: "cancelled" }, model, usage);
 
     const tools = effectiveTools();
     const last = lastRunMessage(db, run.id);
@@ -766,7 +772,7 @@ export async function executeRun(
       }
       // all tool results in — fall through to the next model call
     } else if (assistant) {
-      return finalize(deps, run, spine, "done", assistant.content ?? "", model, usage);
+      return finalize(deps, run, spine, "done", { user: assistant.content ?? "" }, model, usage);
     }
 
     // Budget guard — the only thing that bounds the loop (spec §B: no wall-clock).
@@ -780,7 +786,15 @@ export async function executeRun(
     if (stepCount >= b.maxSteps || billed >= b.maxTokens || usage.costUsd >= b.maxCostUsd) {
       const why = `budget exhausted: ${stepCount}/${b.maxSteps} steps, ${billed}/${b.maxTokens} tokens, $${usage.costUsd.toFixed(4)}/$${b.maxCostUsd}`;
       events.emit("error", spine, { "error.type": "budget", message: why });
-      return finalize(deps, run, spine, "failed", selfWriteNote(why), model, usage);
+      return finalize(
+        deps,
+        run,
+        spine,
+        "failed",
+        { user: exhaustionHandoff(deps, run, committedSelfWrite), diagnostic: selfWriteNote(why) },
+        model,
+        usage,
+      );
     }
 
     // Build the turn's STABLE parts once — the spine, the ephemeral blocks, and the tool
@@ -825,7 +839,13 @@ export async function executeRun(
           // active window lean and survive compaction. Engine-advertised, product-neutral: a bundle
           // opts in with {{run.scratch}} in PROMPT_CONTEXT.md. Auto-wiped when the run terminates
           // (see Queue.wipeRunScratch) — so it holds within-run state only, never cross-turn state.
-          "run.scratch": `scratch/${run.id}`,
+          // Relative while scratch lives in the workspace (unchanged contract); ABSOLUTE when the
+          // operator moved it — file tools resolve relative paths against the workspace, so a
+          // relative advert under a moved root would point at the wrong tree.
+          "run.scratch":
+            scratchRoot === resolve(deps.workspace)
+              ? `scratch/${run.id}`
+              : `${scratchRoot}/scratch/${run.id}`,
         }).trim(),
         4_000,
       );
@@ -924,6 +944,7 @@ export async function executeRun(
         {
           recentBudgetTokens: recentBudget,
           workspace: deps.workspace,
+          scratchDir: scratchRoot,
           argCap: deps.toolArgCap ?? 0,
           anchorRunId: run.id, // S5: reset the stale anchor INSIDE the rewrite transaction
         },
@@ -936,7 +957,18 @@ export async function executeRun(
         if (stepCount >= b.maxSteps || billed2 >= b.maxTokens || usage.costUsd >= b.maxCostUsd) {
           const why = `budget exhausted (post-compaction): ${stepCount}/${b.maxSteps} steps, ${billed2}/${b.maxTokens} tokens, $${usage.costUsd.toFixed(4)}/$${b.maxCostUsd}`;
           events.emit("error", spine, { "error.type": "budget", message: why });
-          return finalize(deps, run, spine, "failed", selfWriteNote(why), model, usage);
+          return finalize(
+            deps,
+            run,
+            spine,
+            "failed",
+            {
+              user: exhaustionHandoff(deps, run, committedSelfWrite),
+              diagnostic: selfWriteNote(why),
+            },
+            model,
+            usage,
+          );
         }
         if (cu.shrank) {
           history = activeSessionMessages(db, run.session_id); // re-fetch the shrunken history
@@ -964,7 +996,7 @@ export async function executeRun(
     // persisted; done on the FINAL (post-compaction) history, once. Markers past the window stay
     // text: that's the prune (an image re-billed every turn is where the token money goes).
     const withImages = deps.vision
-      ? await expandImageMarkers([...history], resolve(deps.workspace))
+      ? await expandImageMarkers([...history], resolve(deps.workspace), scratchRoot)
       : history;
     const messages: ChatMsg[] = [{ role: "system", content: system }, ...withImages, ...ephemeral];
     // S1: prefix identity, measured on the EXACT values about to be sent. Only the two segments
@@ -1045,7 +1077,8 @@ export async function executeRun(
     });
 
     if (!result.ok) {
-      if (result.aborted) return finalize(deps, run, spine, "cancelled", "cancelled", model, usage);
+      if (result.aborted)
+        return finalize(deps, run, spine, "cancelled", { user: "cancelled" }, model, usage);
       // Context overflow is recoverable, not fatal: a big tool result or a long history blew the
       // window. Force a compaction and retry the SAME turn ONCE rather than terminal-failing an
       // hours-long task. Only retry if compaction actually shed tokens (else we'd re-overflow).
@@ -1066,6 +1099,7 @@ export async function executeRun(
             recentBudgetTokens: 0,
             force: true,
             workspace: deps.workspace,
+            scratchDir: scratchRoot,
             argCap: deps.toolArgCap ?? 0,
             // S5: the overflow-recovery path needs the atomic anchor reset just as much as the
             // proactive one — arguably more, since it runs on a turn that already failed. Omitting
@@ -1100,7 +1134,7 @@ export async function executeRun(
           message: result.error,
         },
       );
-      return finalize(deps, run, spine, "failed", result.error, result.model, usage);
+      return finalize(deps, run, spine, "failed", { user: result.error }, result.model, usage);
     }
 
     model = result.model;
@@ -1585,6 +1619,17 @@ async function execCall(
     result = `[interrupted] The daemon restarted while '${name}' was executing; it may or may not have taken effect. Verify the outcome before firing it again.`;
     events.emit("tool.result", spine, { "gen_ai.tool.name": name, interrupted: true });
   } else if (!tool) {
+    // A-2: the last silent rejection in the loop. A CLOSED reason enum (safe to export bare);
+    // the raw requested name is model-controlled free text under injection, so it rides as
+    // payload — local unless DELTA_CAPTURE_PAYLOADS is on. Telemetry only: the model-facing
+    // error string is unchanged, and no execution semantics move (that is A-3, which waits
+    // for this event's data).
+    const reason = breaker.disabled.has(name)
+      ? "breaker_disabled"
+      : deps.tools.has(name)
+        ? "not_allowed"
+        : "unknown";
+    events.emit("tool.rejected", spine, { requested_tool: name, reason });
     result = `[tool error] unknown tool '${name}'`;
   } else {
     events.emit("tool.call", spine, { "gen_ai.tool.name": name, "gen_ai.tool.call.id": call.id });
@@ -1666,7 +1711,13 @@ async function execCall(
     });
     // Cap oversized output at the source — it's persisted AND re-sent every turn, and a single
     // giant payload is the top cause of a mid-run context-window overflow. Spill keeps it re-readable.
-    result = await capAndSpill(result, ctx.workspace, run.id, call.id, deps.toolResultCap);
+    result = await capAndSpill(
+      result,
+      ctx.scratchDir ?? ctx.workspace,
+      run.id,
+      call.id,
+      deps.toolResultCap,
+    );
     const errClass = toolErrorClass(result);
     const isErr = result.startsWith("[tool error]");
     events.emit("tool.result", spine, {
@@ -1704,6 +1755,91 @@ async function execCall(
   })();
 }
 
+/** D-9-min: a budget-exhausted run hands back what it already has — the plan and the artifact
+ * paths already on disk — instead of one sentence of counters. Pointers, not prose: the cheap
+ * final "answer from context" call is 0.2.16 scope. Three properties hold by construction:
+ * (1) RUN-scoped — paths are enumerated from the filesystem under this run's sanitized-id
+ * prefix (the same one the writers used), never parsed out of model-visible rows, so nothing
+ * stale or forged can enter and no DB scan is needed; (2) fail-open — a block that throws is
+ * dropped, never the finalize; (3) bounded — 10 KiB by UTF-8 bytes, 20 paths per family.
+ * Ephemeral (store:false, non-idempotent-terminal) runs get no paths at all: queue.ts wipes
+ * this run's spill AND research right after settle, so a pointer would be dead on arrival.
+ * The model's scratchpad (`scratch/<runId>`) is never listed for the same reason — queue.ts
+ * wipes it for EVERY terminal run. */
+const HANDOFF_CAP_BYTES = 10_240;
+const HANDOFF_MAX_PER_FAMILY = 20;
+
+function exhaustionHandoff(deps: Deps, run: RunRow, committedSelfWrite: boolean): string {
+  const parts: string[] = ["This run hit its budget before finishing. Nothing below was lost."];
+  try {
+    const plan = readTodo(deps.db, run.session_id);
+    if (plan.length)
+      parts.push(
+        elide(
+          `Current plan (session working notes) at the point it stopped:\n${plan
+            .map((it) => `- [${it.status}] ${it.text}`)
+            .join("\n")}`,
+          4_000,
+        ),
+      );
+  } catch {}
+  let ephemeral = false;
+  try {
+    const req = JSON.parse(run.request) as RunRequest;
+    ephemeral = req.store === false && !req.idempotency_terminal;
+  } catch {}
+  if (ephemeral) {
+    parts.push("Intermediate results were not retained (this was an ephemeral turn).");
+  } else {
+    try {
+      // BOTH roots when they differ, like the queue's wipes: a crash-resume across a root
+      // change may hold pre-change spill under the workspace and post-change spill under
+      // the scratch root — the handoff must name them all.
+      const scratch = resolve(deps.scratchDir ?? deps.workspace);
+      const ws = resolve(deps.workspace);
+      const roots = scratch === ws ? [scratch] : [scratch, ws];
+      const family = (dir: string, prefix: string): string[] => {
+        try {
+          return readdirSync(dir)
+            .filter((e) => e.startsWith(prefix))
+            .sort()
+            .map((e) => `${dir}/${e}`);
+        } catch {
+          return []; // most runs spill/research nothing — the dir may not exist
+        }
+      };
+      const spills = roots.flatMap((r) => family(`${r}/.delta/spill`, spillRunPrefix(run.id)));
+      // Research artifacts are FILES inside per-call dirs — list the files, which is what
+      // read_file takes (the dirs alone would send the user somewhere read_file rejects).
+      const research = roots
+        .flatMap((r) => family(`${r}/.delta/research`, researchRunPrefix(run.id)))
+        .flatMap((d) => family(d, ""));
+      const bounded = (paths: string[]): string[] => {
+        const head = paths.slice(0, HANDOFF_MAX_PER_FAMILY).map((p) => `- ${p}`);
+        if (paths.length > head.length) head.push(`- …and ${paths.length - head.length} more`);
+        return head;
+      };
+      const listed = [...bounded(spills), ...bounded(research)];
+      if (listed.length)
+        parts.push(
+          `Full results already on disk (read_file these, or recall a keyword):\n${listed.join("\n")}`,
+        );
+    } catch {}
+  }
+  if (committedSelfWrite)
+    parts.push(
+      "[note: a change to your self-file (DELTA.md) was saved during this turn and persists — it was not rolled back.]",
+    );
+  parts.push(
+    "The work was too large to finish in one run. Narrow the question rather than repeating it.",
+  );
+  let out = parts.join("\n\n");
+  // Byte-true cap: elide counts chars, so shrink until the UTF-8 measure agrees.
+  while (Buffer.byteLength(out, "utf8") > HANDOFF_CAP_BYTES)
+    out = elide(out, Math.floor(out.length * 0.8));
+  return out;
+}
+
 /** The driver-compatible Responses payload. Every terminal state gets one —
  * including cancellations that never started (queue.cancel uses this too). */
 export function responsePayload(
@@ -1737,17 +1873,24 @@ export function responsePayload(
   };
 }
 
+/** What a terminal run hands each audience: `user` becomes output_text (and, on failure, the
+ *  transcript row); `diagnostic` is the operator string for `runs.error` (defaults to `user`).
+ *  Split so a budget failure can carry the D-9 handoff to the user while the counters stay
+ *  where operators look. Mandatory at every call site — a bare string landing in the wrong
+ *  field is the exact confusion this shape exists to prevent. */
+type Outcome = { user: string; diagnostic?: string };
+
 function finalize(
   deps: Deps,
   run: RunRow,
   spine: Spine,
   status: "done" | "failed" | "cancelled",
-  text: string,
+  out: Outcome,
   model: string,
   usage: Usage,
 ): RunRow {
   const { db, events } = deps;
-  const payload = responsePayload(run, status, text, model, usage);
+  const payload = responsePayload(run, status, out.user, model, usage);
   const outputText = payload.output_text;
   db.transaction(() => {
     if (status !== "done") {
@@ -1763,7 +1906,7 @@ function finalize(
     ).run(
       status,
       JSON.stringify(payload),
-      status === "done" ? null : text,
+      status === "done" ? null : (out.diagnostic ?? out.user),
       JSON.stringify(usage),
       Date.now(),
       run.id,

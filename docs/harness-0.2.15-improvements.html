@@ -1,0 +1,345 @@
+<title>Stop Losing the Task</title>
+<style>
+  :root {
+    --paper: #fafaf7;
+    --card: #ffffff;
+    --ink: #1c2733;
+    --ink-soft: #55636f;
+    --line: #dcdfd9;
+    --accent: #0e6e8c;
+    --loss: #b23a2e;
+    --loss-bg: #faeeec;
+    --gain: #1e7a46;
+    --gain-bg: #ecf5ee;
+    --chip-bg: #eef1ee;
+    --mono-bg: #f1f2ee;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #14191f;
+      --card: #1b222b;
+      --ink: #e6e9ec;
+      --ink-soft: #9aa7b2;
+      --line: #303a44;
+      --accent: #4db3d4;
+      --loss: #e07b6f;
+      --loss-bg: #33221f;
+      --gain: #6cc492;
+      --gain-bg: #1d2e23;
+      --chip-bg: #242e38;
+      --mono-bg: #10151b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #14191f;
+    --card: #1b222b;
+    --ink: #e6e9ec;
+    --ink-soft: #9aa7b2;
+    --line: #303a44;
+    --accent: #4db3d4;
+    --loss: #e07b6f;
+    --loss-bg: #33221f;
+    --gain: #6cc492;
+    --gain-bg: #1d2e23;
+    --chip-bg: #242e38;
+    --mono-bg: #10151b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: Charter, "Iowan Old Style", Georgia, serif;
+    font-size: 17px;
+    line-height: 1.55;
+    margin: 0;
+    padding: 0 20px 80px;
+  }
+  main { max-width: 880px; margin: 0 auto; }
+  h1, h2, h3, .stat, .eyebrow, .chip, th {
+    font-family: "Avenir Next", Avenir, "Segoe UI", system-ui, sans-serif;
+  }
+  code, .mono, .receipt {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.86em;
+  }
+  code { background: var(--mono-bg); padding: 1px 5px; border-radius: 3px; }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    margin: 56px 0 8px;
+  }
+  h1 { font-size: 44px; line-height: 1.08; margin: 0 0 12px; text-wrap: balance; font-weight: 700; }
+  .lede { font-size: 20px; color: var(--ink-soft); max-width: 62ch; margin: 0 0 8px; }
+  h2 { font-size: 26px; margin: 56px 0 6px; text-wrap: balance; }
+  h2 .sec-note { font-size: 15px; font-weight: 400; color: var(--ink-soft); }
+  h3 { font-size: 18px; margin: 0; }
+  p { max-width: 68ch; }
+  /* headline stats */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 32px 0 8px; }
+  .stat {
+    background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px;
+  }
+  .stat .n { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--loss); }
+  .stat .n.good { color: var(--gain); }
+  .stat .d { font-size: 13.5px; color: var(--ink-soft); line-height: 1.35; margin-top: 2px; }
+  /* item cards */
+  .item {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 20px 24px; margin: 18px 0;
+  }
+  .item-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .chip {
+    font-size: 11.5px; font-weight: 700; letter-spacing: 0.06em; color: var(--ink-soft);
+    background: var(--chip-bg); border-radius: 99px; padding: 2px 10px; white-space: nowrap;
+  }
+  .ba { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  @media (max-width: 640px) { .ba { grid-template-columns: 1fr; } }
+  .ba > div { border-radius: 6px; padding: 12px 14px; font-size: 15.5px; line-height: 1.5; }
+  .before { background: var(--loss-bg); border-left: 3px solid var(--loss); }
+  .after { background: var(--gain-bg); border-left: 3px solid var(--gain); }
+  .ba b:first-child { display: block; font-family: "Avenir Next", Avenir, system-ui, sans-serif; font-size: 11.5px; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 4px; }
+  .before b:first-child { color: var(--loss); }
+  .after b:first-child { color: var(--gain); }
+  .receipt {
+    display: block; background: var(--mono-bg); border-radius: 5px; padding: 10px 13px;
+    margin: 10px 0 0; font-size: 13px; line-height: 1.55; overflow-x: auto; white-space: pre;
+    color: var(--ink-soft);
+  }
+  .num { font-variant-numeric: tabular-nums; font-weight: 700; }
+  .loss-n { color: var(--loss); }
+  .gain-n { color: var(--gain); }
+  figure { margin: 22px 0 6px; }
+  figure svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+  figcaption { font-size: 13.5px; color: var(--ink-soft); text-align: center; margin-top: 8px; max-width: 60ch; margin-left: auto; margin-right: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; }
+  .tablewrap { overflow-x: auto; margin: 16px 0; }
+  th { text-align: left; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); padding: 8px 12px 6px; border-bottom: 2px solid var(--line); white-space: nowrap; }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.n { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .note {
+    border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px;
+    background: var(--card); padding: 14px 18px; font-size: 15.5px; margin: 24px 0; max-width: none;
+  }
+  .foot { margin-top: 64px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 13.5px; color: var(--ink-soft); }
+</style>
+
+<main>
+  <div class="eyebrow">Delta Harness 0.2.15 · feat/0.2.15-stop-losing-the-task · 2026-08-19</div>
+  <h1>Stop Losing the Task</h1>
+  <p class="lede">Twelve fixes, every one motivated by a number measured on the live fleet.
+  Two of them were actively costing a paying customer money and correctness; the other ten are the
+  visibility and hygiene gaps that let those two hide for weeks.</p>
+
+  <div class="stats">
+    <div class="stat"><div class="n">42 / 42</div><div class="d">compactions on multi-request sessions pinned the <em>wrong task</em> — zero were harmless</div></div>
+    <div class="stat"><div class="n">$141 + 2h38m</div><div class="d">of paid client work returned as <em>one sentence of counters</em>, eleven times</div></div>
+    <div class="stat"><div class="n">724,804</div><div class="d">input tokens burned by <em>one missing API key</em> nothing reported</div></div>
+    <div class="stat"><div class="n">24 / 24</div><div class="d">sub-agent calls failed — and billed — on the OpenAI demo backend</div></div>
+    <div class="stat"><div class="n">86 / 240</div><div class="d">memory saves refused with no way for the agent to know how to fix it</div></div>
+    <div class="stat"><div class="n good">978 / 978</div><div class="d">tests green; every fix has a test that failed before it</div></div>
+  </div>
+
+  <div class="note"><b>How to read the numbers.</b> The red figures are <em>measured</em> — recomputed
+  from the Aperture lane databases, Ferni's live database, and the Delos field report, not quoted from
+  memory. The improvements are <em>by construction</em>: each defect's firing condition was removed and
+  locked by a test that failed on the old code, then verified live on a from-source deploy. Fleet-level
+  re-measurement is the Aperture A/B rerun on 0.2.15 — the same pinned battery, which is exactly why it
+  was designed to be re-runnable.</div>
+
+  <h2>The two that were losing money <span class="sec-note">— correctness and output</span></h2>
+
+  <div class="item">
+    <div class="item-head"><span class="chip">D-1 · COMPACTION</span><h3>The agent now stays on <em>your</em> question after compaction</h3></div>
+    <p>When a long session ran out of context, the engine compressed the history and pinned "the task"
+    at the top of the summary as trusted instructions. It pinned <b>the first request the session ever
+    saw</b> — not the one being worked on. On any session with more than one request, the agent was
+    re-instructed to do old work.</p>
+    <figure>
+      <svg viewBox="0 0 760 190" role="img" aria-label="Before, compaction pinned the session's first request; after, it pins the current run's request">
+        <g fill="none" stroke="currentColor" stroke-width="1.3" font-size="12" font-family="system-ui">
+          <text x="10" y="26" fill="currentColor" font-weight="700" font-size="13">BEFORE</text>
+          <rect x="70" y="12" width="130" height="34" rx="4"/>
+          <text x="135" y="33" fill="currentColor" text-anchor="middle">run 1 · old ask</text>
+          <rect x="220" y="12" width="130" height="34" rx="4" stroke-dasharray="4 3"/>
+          <text x="285" y="33" fill="currentColor" text-anchor="middle" opacity="0.6">run 2 …</text>
+          <rect x="370" y="12" width="130" height="34" rx="4"/>
+          <text x="435" y="33" fill="currentColor" text-anchor="middle">run 16 · LIVE ask</text>
+          <rect x="560" y="6" width="188" height="46" rx="4" stroke="#b23a2e"/>
+          <text x="654" y="25" fill="#b23a2e" text-anchor="middle" font-weight="700">summary pins run 1</text>
+          <text x="654" y="42" fill="#b23a2e" text-anchor="middle">42/42 = wrong task</text>
+          <path d="M 200 29 C 380 -14, 500 -8, 558 20" stroke="#b23a2e" marker-end="url(#ar)"/>
+          <text x="10" y="140" fill="currentColor" font-weight="700" font-size="13">AFTER</text>
+          <rect x="70" y="126" width="130" height="34" rx="4" opacity="0.55"/>
+          <text x="135" y="147" fill="currentColor" text-anchor="middle" opacity="0.55">run 1 · old ask</text>
+          <rect x="220" y="126" width="130" height="34" rx="4" stroke-dasharray="4 3" opacity="0.55"/>
+          <text x="285" y="147" fill="currentColor" text-anchor="middle" opacity="0.5">run 2 …</text>
+          <rect x="370" y="126" width="130" height="34" rx="4"/>
+          <text x="435" y="147" fill="currentColor" text-anchor="middle">run 16 · LIVE ask</text>
+          <rect x="560" y="120" width="188" height="46" rx="4" stroke="#1e7a46"/>
+          <text x="654" y="139" fill="#1e7a46" text-anchor="middle" font-weight="700">summary pins run 16</text>
+          <text x="654" y="156" fill="#1e7a46" text-anchor="middle">the run that compacted</text>
+          <path d="M 500 143 L 556 143" stroke="#1e7a46" marker-end="url(#ag)"/>
+          <defs>
+            <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b23a2e"/></marker>
+            <marker id="ag" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1e7a46"/></marker>
+          </defs>
+        </g>
+      </svg>
+      <figcaption>The pinned "trusted task" arrow moves from the session's first row to the run actually being served. For single-request sessions the two queries return the same row, so nothing changes.</figcaption>
+    </figure>
+    <div class="ba">
+      <div class="before"><b>Measured</b><span class="num loss-n">42 of 42</span> exposed compactions pinned a different task than the live one, across three lanes (27 on the paid client lane, 13 on Ferni). On the busiest lane, <span class="num loss-n">23 of 27</span> stale pins were <em>longer</em> than the real request — a big old instruction outranking a short live one. Delos watched an agent answer a 40-minute-old question twice, with no error anywhere.</div>
+      <div class="after"><b>Now</b>The pin is read from the compacting run's own request, bound by both run and session id, and the fallback that <em>was</em> the bug is deleted — the compiler proves no caller can reach it. On the paid lane's shape (23 of 71 sessions hold more than one run; the longest holds 19) this defect simply cannot fire again.</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-head"><span class="chip">D-9 · EXHAUSTION</span><h3>A run that hits its budget hands you its work, not an apology</h3></div>
+    <p>A budget-exhausted run had its results sitting on disk — spilled tool outputs, research files,
+    the agent's own plan — and returned none of it. The user got one sentence of internal counters,
+    wrapped by the chat layer in "try again in a moment", which reproduces the failure and bills again.</p>
+    <div class="ba">
+      <div class="before"><b>Measured</b>On two Aperture lanes: <span class="num loss-n">11 runs</span>, <span class="num loss-n">771 tool calls</span>, <span class="num loss-n">$140.98</span> and <span class="num loss-n">158 minutes</span> of paid work destroyed — each run returning literally <code>budget exhausted: 295 calls…</code>. Delos's worst case: 66 steps, 379 calls, 33 minutes, 26 spill files and 13 research directories on disk — zero bytes of it offered.</div>
+      <div class="after"><b>Now</b>The reply carries the plan at the moment it stopped, every spill and research file this run produced (enumerated from disk under the run's own ID — nothing stale, nothing forged), and advice to narrow instead of retry. The counters still exist — in <code>runs.error</code> and telemetry, where operators look. Verified live: a real over-budget run returned its plan and both artifact paths.</div>
+    </div>
+    <span class="receipt">live, from-source daemon · status: failed
+output_text: "This run hit its budget before finishing. Nothing below was lost.
+  Current plan … [done] fetch the RFC(s) / [doing] summarize
+  Full results already on disk … /scratch/.delta/spill/resp_7b6e….txt (×2)"
+runs.error:  "budget exhausted: 2/100 steps, 17938/5200 tokens, $0.0461/$5"</span>
+  </div>
+
+  <div class="item">
+    <div class="item-head"><span class="chip">D-12 · PROVIDER</span><h3>Sub-agents work on the OpenAI backend — the demo path is unblocked</h3></div>
+    <div class="ba">
+      <div class="before"><b>Measured</b>The ChatGPT/Codex backend rejects <code>max_output_tokens</code> at any value. Parent turns never send it, so the connection worked for the parent while <span class="num loss-n">24 of 24</span> sub-agent calls on one observed run 400'd — each attempt billed, the whole delegation surface dead, and no config setting could show why.</div>
+      <div class="after"><b>Now</b>The parameter is suppressed for that one host (wire-proofed denylist; every other endpoint keeps its cap). This is the prerequisite for <code>ferni-codex-sol</code> and the <code>gpt-5.6-sol</code> demo route. Final gate: Delos's live 3/3-children check.</div>
+    </div>
+  </div>
+
+  <h2>Seeing what was invisible <span class="sec-note">— the gaps that let the above hide</span></h2>
+
+  <div class="item">
+    <div class="item-head"><span class="chip">D-3 · STATUS</span><h3>A tool that can't work is no longer silently offered</h3></div>
+    <p>The tool allowlist was a ceiling, not a guarantee: registration preconditions failed silently.
+    Delos configured 16 tools and had 13 — and nothing, anywhere, said so. When a tool errors, the
+    model doesn't stop; it routes around it, expensively.</p>
+    <div class="ba">
+      <div class="before"><b>Measured</b>One Telegram question with no search key: the agent brute-forced raw HTML instead — <span class="num loss-n">74 tool calls, 724,804 input tokens</span>, wrong answer. The same question with the key: 37 calls, 350k tokens, right answer. One absent env var ≈ <span class="num loss-n">2×</span> the cost <em>and</em> the correctness.</div>
+      <div class="after"><b>Now</b><code>/v1/status</code> reports three states with reasons — <em>registered</em>, <em>unusable now</em> (heals the moment a credential lands, no restart), <em>omitted</em> (fix config, restart) — plus one loud boot line. First live boot on Ferni it immediately exposed a real, previously invisible hole: <code>codex</code> was never installed in the image, so the <code>code</code> tool had been silently missing all along.</div>
+    </div>
+    <span class="receipt">ferni boot · delta: 18 tools registered.
+  Omitted: code (CLI 'codex' not found or not executable on this host)</span>
+  </div>
+
+  <div class="item">
+    <div class="item-head"><span class="chip">A-4a · MEMORY</span><h3>Memory-save refusals tell the agent exactly how to fix them</h3></div>
+    <div class="ba">
+      <div class="before"><b>Measured</b><span class="num loss-n">86 of 240</span> fleet <code>remember</code> calls were refused for size — with no overage number and no current file. The agent shrank by guesswork, re-fired, failed again, and hit the three-strike breaker: the single largest self-learning failure on the Aperture lanes. Lanes silently stopped learning.</div>
+      <div class="after"><b>Now</b>The refusal says exactly how many bytes over, and hands back the current on-disk file as a merge base — one informed retry instead of three blind ones. Ferni's self-file is at 79% of its cap right now; this lands just in time.</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-head"><span class="chip">A-1 · COMPACTION</span><h3>Load-bearing identifiers survive compression</h3></div>
+    <div class="ba">
+      <div class="before"><b>Measured</b>The summary audit retries once, then ships lossy by design. Measured on the fleet: <span class="num loss-n">18–34%</span> of load-bearing identifiers (IDs, counts, paths, years) missing from committed summaries; worst cases lost <span class="num loss-n">30 of 30</span>. For a recruiting product, that's candidate identity evaporating mid-task.</div>
+      <div class="after"><b>Now</b>Whatever the model drops, a machine-built appendix carries verbatim — bounded, and reserved <em>inside</em> the summary's size cap so it can never bloat the context it protects. The accuracy floor is no longer "whatever the summarizer felt like keeping".</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-head"><span class="chip">A-2 · TELEMETRY</span><h3>Rejected tool calls are finally countable</h3></div>
+    <div class="ba">
+      <div class="before"><b>Measured</b><span class="num loss-n">9.4%</span> of one lane's tool calls were "unknown tool" rejections that no counter recorded — the model routes around them and the money is spent before anyone can notice a pattern.</div>
+      <div class="after"><b>Now</b>Every rejection emits <code>tool.rejected</code> with a closed reason (<code>unknown</code> / <code>not_allowed</code> / <code>breaker_disabled</code>). The raw model-invented name stays on-box unless payload capture is on. This is the data the 0.2.16 auto-activate decision waits for.</div>
+    </div>
+  </div>
+
+  <h2>Hygiene &amp; safety <span class="sec-note">— what should never have been possible</span></h2>
+
+  <div class="item">
+    <div class="item-head"><span class="chip">D-8 · SECURITY</span><h3>The delegated CLI can no longer reach the operator's accounts</h3></div>
+    <div class="ba">
+      <div class="before"><b>Demonstrated</b>A delegated <code>codex</code> session, asked to prove its Gmail skill was inert, <em>listed the operator's real inbox</em> — <span class="num loss-n">6,913 messages, write scope</span>. Nothing on the host granted it: the connector lives server-side on the CLI's own login. An agent with no send-capable tool could have sent mail as its owner in one hop.</div>
+      <div class="after"><b>Now</b>Connectors are disabled by default (<code>--disable apps --disable plugins</code>, verified end-to-end on the pinned CLI). Operators who deliberately want a connector set the command explicitly — and their setting is used verbatim, never modified.</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-head"><span class="chip">D-7 · SCRATCH</span><h3>Engine scratch moves off your documents</h3></div>
+    <p>Three families of per-run intermediate state — spilled tool outputs, research artifacts, the
+    model's scratchpad — were written into the agent's workspace. Fine for a throwaway checkout;
+    on Delos's git-tracked, phone-synced document vault it meant <b>raw untrusted web fetches committed
+    to git and delivered to the operator's phone</b>, and engine output landing in the same folder
+    namespace as human research notes.</p>
+    <figure>
+      <svg viewBox="0 0 760 200" role="img" aria-label="Engine writes rerouted from the workspace to a dedicated scratch root; the model can still read artifacts and write its scratchpad there">
+        <g fill="none" stroke="currentColor" stroke-width="1.3" font-size="12" font-family="system-ui">
+          <rect x="20" y="40" width="200" height="130" rx="6"/>
+          <text x="120" y="62" fill="currentColor" text-anchor="middle" font-weight="700">workspace</text>
+          <text x="120" y="80" fill="currentColor" text-anchor="middle" opacity="0.65">your documents · git · phone</text>
+          <text x="120" y="106" fill="currentColor" text-anchor="middle">DELTA.md · vocab · notes</text>
+          <rect x="540" y="40" width="200" height="130" rx="6" stroke="#1e7a46"/>
+          <text x="640" y="62" fill="#1e7a46" text-anchor="middle" font-weight="700">DELTA_SCRATCH_DIR</text>
+          <text x="640" y="80" fill="currentColor" text-anchor="middle" opacity="0.65">machine-local, disposable</text>
+          <text x="640" y="106" fill="currentColor" text-anchor="middle">.delta/spill/</text>
+          <text x="640" y="124" fill="currentColor" text-anchor="middle">.delta/research/</text>
+          <text x="640" y="142" fill="currentColor" text-anchor="middle">scratch/&lt;run&gt;/ (wiped per run)</text>
+          <rect x="315" y="72" width="130" height="40" rx="20"/>
+          <text x="380" y="97" fill="currentColor" text-anchor="middle" font-weight="700">engine</text>
+          <path d="M 445 85 L 536 85" stroke="#1e7a46" marker-end="url(#ag2)"/>
+          <text x="490" y="78" fill="#1e7a46" text-anchor="middle" font-size="11">writes</text>
+          <path d="M 315 100 L 224 100" stroke="currentColor" marker-end="url(#ac2)" opacity="0.6"/>
+          <text x="270" y="94" fill="currentColor" text-anchor="middle" font-size="11" opacity="0.7">only real files</text>
+          <path d="M 540 155 C 460 190, 300 190, 226 158" stroke="currentColor" stroke-dasharray="4 3" marker-end="url(#ac2)"/>
+          <text x="383" y="192" fill="currentColor" text-anchor="middle" font-size="11">model still reads artifacts + writes its scratchpad (second confined root)</text>
+          <defs>
+            <marker id="ag2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1e7a46"/></marker>
+            <marker id="ac2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="currentColor"/></marker>
+          </defs>
+        </g>
+      </svg>
+      <figcaption>One knob reroutes all three artifact families. File tools accept the scratch root as a second confined root, old artifacts keep resolving via a fallback, and a root that would expose the daemon DB is refused.</figcaption>
+    </figure>
+    <div class="ba">
+      <div class="before"><b>Measured</b>Research trees reached Delos's git twice. Their workaround — a bare <code>research/</code> gitignore rule — was itself a footgun that silently swallowed new files in <span class="num loss-n">5 legitimate</span> vault folders. The default said nothing about any of this.</div>
+      <div class="after"><b>Now</b><code>DELTA_SCRATCH_DIR</code> (Fly deploys default to <code>/data/scratch</code>), research renamed under hidden <code>.delta/research/</code> so <em>no one</em> needs an ignore rule, per-run scratchpad wiped as before. The two hazards the review caught are closed: legacy artifacts still demote (no silent context-bloat regression), and the model can still read everything the engine points it at.</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-head"><span class="chip">D-4 + D-5 · SKILLS</span><h3>Skills stay findable — and stay current without restarts</h3></div>
+    <div class="ba">
+      <div class="before"><b>Measured</b>Two Delos skills were unreachable <span class="num loss-n">for months</span>: a YAML block-scalar description parsed to nothing, so the skill registered but search could never surface it — and the identical file works fine on a laptop, which is why nobody noticed. Separately, the skill index was built once at boot; Delos ran a 2-minute external <em>restart timer</em> just to pick up skill edits.</div>
+      <div class="after"><b>Now</b>Block-scalar descriptions parse (no YAML dependency added); a too-short description warns loudly. The index re-scans behind a cheap per-file stat, so added, renamed, and re-described skills appear without a restart. Delos deletes the restart timer.</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-head"><span class="chip">D-11 · BUDGET</span><h3>Plus one small knob</h3></div>
+    <p style="margin-bottom:0"><code>DELTA_MAX_STEPS</code> completes the third budget axis (steps, alongside tokens and cost) for deep-research workloads. Honest scope note: the fleet's binding constraint is tokens — max observed steps is 62 of 100 — so nobody currently deployed will see a change.</p>
+  </div>
+
+  <h2>How it was hardened</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Gate</th><th>Result</th></tr>
+    <tr><td>Test-first discipline</td><td>Every item's test <b>failed on the old code first</b>, then passed — <span class="num gain-n">978 tests</span>, 0 failures, typecheck + lint clean</td></tr>
+    <tr><td>Independent review, before</td><td>Codex spec review reshaped 3 of 5 specs — including catching that the scratch relocation as specced would have made every artifact <em>unreadable to the model</em></td></tr>
+    <tr><td>Independent review, after</td><td>Codex full-diff review found <span class="num">9 real issues</span> (worst: images under a relocated root claimed "attached" but silently withheld) — all fixed, each with a regression test</td></tr>
+    <tr><td>Live, local</td><td>Smoke green; a genuine over-budget run produced the D-9 handoff with real paths</td></tr>
+    <tr><td>Live, production</td><td><code>--from-source</code> deployed to Ferni: boot shows the scratch WARN + legacy probe (found real pre-0.2.15 artifacts), the D-3 line exposed the missing <code>codex</code> binary, live turn + live status verified</td></tr>
+  </table></div>
+
+  <h2>Still open before publish</h2>
+  <p>Three gates, all deliberate: the human-in-the-loop Telegram test on Ferni (running this branch now),
+  Delos's live 3/3-children confirmation for D-12 on the one codex-backend lane, and the version bump +
+  <code>npm publish</code> + redeploy-from-published + post-release battery. The Aperture A/B rerun on
+  0.2.15 is the fleet-level acceptance measurement — same pinned prompts, so the before/after is attributable.</p>
+
+  <div class="foot">Delta Harness 0.2.15 · receipts: docs/harness-0.2.15-plan.md, docs/aperture-asks-0.2.15-triage.md,
+  the five spec files with review addenda, and the Aperture/Delos lane databases the red numbers were recomputed from.</div>
+</main>

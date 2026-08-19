@@ -28,6 +28,7 @@ import { type Queue, SessionOwnershipError, UnknownPreviousResponse } from "./qu
 import type { RunRequest } from "./run";
 import { scrubText } from "./scrub";
 import { currentSelf, listRevisions, revertSelf, SELF_FILE, writeSelf } from "./self";
+import type { Tools } from "./tools";
 import type { Vault } from "./vault";
 import { HARNESS_VERSION } from "./version";
 
@@ -112,6 +113,14 @@ export function createServer(
     config?: Record<string, unknown>;
     /** The single-file Cockpit UI served (inert, public) at `GET /dev`. */
     cockpitHtml?: string;
+    /** The LIVE tool registry (D-3) — read per request, not snapshotted: MCP reconnects after a
+     * credential intake mutate it, and `usable()` answers must reflect a key that landed a minute
+     * ago. Names and engine-authored reasons only; never values. */
+    tools?: Tools;
+    /** Tools a failed precondition kept out of the registry at boot, with reasons (D-3). Only a
+     * restart changes these — the operator's cue is "fix the config", vs `unusable`'s "provide
+     * the credential". */
+    toolsOmitted?: Array<{ name: string; reason: string }>;
     /** Bind host (DELTA_BIND). `delta dev` sets `127.0.0.1` so a local test agent is
      *  loopback-only; unset ⇒ Bun's default (all interfaces), exactly as prod. */
     hostname?: string;
@@ -468,6 +477,29 @@ export function createServer(
           // fleet fullness turned out to be the single best predictor of degraded self-learning.
           // It was computed on every run and dropped, discoverable only by querying the collector.
           self: selfFullness(opts?.workspace, opts?.selfMaxBytes ?? 3200),
+          // Tool usability (D-3, 0.2.15). Three states because the operator's next action differs:
+          // registered = offered from the live registry; unusable = registered but a live
+          // precondition says a call fails NOW (may heal without a restart — hand the agent the
+          // credential); omitted = never registered this boot (fix config and restart).
+          ...(opts?.tools
+            ? {
+                tools: {
+                  registered: [...opts.tools.keys()],
+                  unusable: [...opts.tools.values()].flatMap((d) => {
+                    try {
+                      const u = d.usable?.();
+                      return u && !u.ok ? [{ name: d.name, reason: u.reason }] : [];
+                    } catch {
+                      return []; // a throwing predicate must not fail the status read
+                    }
+                  }),
+                  // Filtered against the LIVE registry: an MCP reconnect after credential intake
+                  // can register a tool whose boot-time omission would otherwise contradict
+                  // `registered` forever.
+                  omitted: (opts?.toolsOmitted ?? []).filter((o) => !opts.tools?.has(o.name)),
+                },
+              }
+            : {}),
         });
       }
 

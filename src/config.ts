@@ -44,6 +44,10 @@ export type Config = {
    * DELTA_PROVIDERS fallbacks. `chatVia` walks this on a failover-worthy error. */
   providers: ProviderConfig[];
   workspace: string;
+  /** Engine scratch root — spill, research artifacts, and the model's per-run scratchpad live
+   * here. Defaults to the workspace; DELTA_SCRATCH_DIR moves the whole family off a precious
+   * (git-tracked, human-browsed) workspace. */
+  scratchDir: string;
   exaKey?: string;
   fetchAllowPrivate: boolean;
   codeCli: string[];
@@ -154,6 +158,27 @@ export type Config = {
   retentionSweepMs: number;
 };
 
+/** D-7 overlap guard: the scratch root is fully model-accessible through the file tools, so a
+ * root that contains the daemon DB (`DELTA_SCRATCH_DIR=/data` beside /data/delta.db) or the
+ * whole workspace would hand the model write access to state nothing else protects. Fall back
+ * to the workspace with a loud WARN rather than refusing to boot — an unattended agent that
+ * won't start reports nothing (the spec-scratch-dir §6.1 lesson). */
+function scratchDirFor(envVal: string | undefined, workspace: string, dbPath: string): string {
+  if (!envVal) return workspace;
+  const scratch = resolve(envVal);
+  const containsPath = (root: string, p: string) => p === root || p.startsWith(`${root}/`);
+  if (
+    containsPath(scratch, dbPath) ||
+    (scratch !== workspace && containsPath(scratch, workspace))
+  ) {
+    console.error(
+      `delta: WARN DELTA_SCRATCH_DIR=${scratch} contains the daemon DB or the workspace — ignoring it (scratch stays in the workspace). Point it at a dedicated directory, e.g. /data/scratch.`,
+    );
+    return workspace;
+  }
+  return scratch;
+}
+
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
   const safeMode = env.DELTA_SAFE_MODE === "1";
   warnLegacyBundleEnv(env);
@@ -161,6 +186,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   // file form the Cockpit shows/edits); else the neutral default. Reading the bundle
   // file here keeps a product's nouns out of a giant env string.
   const workspaceDir = resolve(env.DELTA_WORKSPACE ?? "workspace");
+  const dbPathResolved = resolve(env.DELTA_DB ?? "data/delta.db");
   const vocab = safeMode
     ? NEUTRAL_VOCAB
     : parseVocab(env.DELTA_VOCAB ?? readIfExists(resolve(workspaceDir, "vocab.json")));
@@ -290,7 +316,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   return {
     safeMode,
     port: Number(env.PORT ?? 8080),
-    dbPath: env.DELTA_DB ?? "data/delta.db",
+    dbPath: dbPathResolved,
     maxConcurrency: Math.min(256, positiveInt(env.DELTA_MAX_CONCURRENCY, 8)),
     leaseTtlMs: Number.isFinite(leaseTtl) ? Math.max(5_000, leaseTtl) : 30_000,
     // Machine-scoped, stable across restarts: Fly's per-machine id in prod, hostname
@@ -300,10 +326,19 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     provider,
     providers,
     workspace: workspaceDir,
+    scratchDir: scratchDirFor(env.DELTA_SCRATCH_DIR, workspaceDir, dbPathResolved),
     ...(env.EXA_API_KEY ? { exaKey: env.EXA_API_KEY } : {}),
     fetchAllowPrivate: env.DELTA_FETCH_ALLOW_PRIVATE === "1",
+    // `--disable apps --disable plugins` (D-8): the delegated CLI signs in with its OWN account,
+    // and account connectors live server-side on that auth token — a codex session with no
+    // send-capable tool listed the operator's real inbox (6,913 messages, write scope) through a
+    // Gmail plugin nothing on the host granted. Anyone who deliberately relies on a connector
+    // through `code` sets DELTA_CODE_CLI explicitly (used verbatim — no flag injection).
+    // Requires codex-cli >= 0.146.0 (verified: both are stable feature flags; a bad flag would
+    // make codeCliResolves fail per-call, not at boot — the brief names the minimum version).
     codeCli: (
-      env.DELTA_CODE_CLI ?? "codex exec --sandbox workspace-write --skip-git-repo-check"
+      env.DELTA_CODE_CLI ??
+      "codex exec --sandbox workspace-write --skip-git-repo-check --disable apps --disable plugins"
     ).split(" "),
     subagentDepth: Number(env.DELTA_SUBAGENT_DEPTH ?? 0),
     profile: safeMode ? "safe" : (env.DELTA_PROFILE ?? "trusted"),

@@ -45,6 +45,10 @@ export type TodoItem = { text: string; status: TodoStatus };
 export type ToolCtx = {
   /** Workspace root for file tools; absolute path. */
   workspace: string;
+  /** Engine scratch root (DELTA_SCRATCH_DIR); equals workspace unless the operator moved it.
+   * Spill/research/scratchpad live here, and file tools accept it as a second confined root so
+   * the model can read what the engine tells it to read_file. */
+  scratchDir?: string;
   /** This run's tool-result cap. A tool that returns bounded pages sizes them from this, so its
    * output can never itself trip `capAndSpill` and write a spill file (0.2.12). */
   resultCap?: number;
@@ -108,7 +112,12 @@ export type ToolCtx = {
   };
   /** Persist the agent's own DELTA.md self-file (the `remember` tool): atomic replace,
    * prior version snapshotted, oversized rejected. Absent in bare/oneshot contexts. */
-  writeSelf?: (content: string) => { ok: boolean; error?: string; bytes?: number };
+  writeSelf?: (content: string) => {
+    ok: boolean;
+    error?: string;
+    bytes?: number;
+    overCap?: { attempted: number; cap: number; overBy: number; current: string };
+  };
 };
 
 export type ToolDef = {
@@ -123,6 +132,13 @@ export type ToolDef = {
    * new tool without this flag is safe by construction — it simply won't reach children. */
   readonly?: boolean;
   execute: (args: Record<string, unknown>, ctx: ToolCtx) => Promise<string>;
+  /** Live precondition check for a tool that is registered but may not be callable RIGHT NOW —
+   * a missing credential today, a provider incompatibility tomorrow (the reason is free text; it
+   * is NOT credential-specific). Must be pure and local: no network, no probe request. Absent →
+   * assumed usable. Reported by /v1/status; NEVER a call gate — the tool still runs and returns
+   * its own error, so a credential handed to the agent mid-session keeps working the moment it
+   * lands (the 0.2.10 vault contract). */
+  usable?: () => { ok: true } | { ok: false; reason: string };
   /** Per-tool wall-clock ceiling (ms). Overrides the run default. Set `0` for tools that
    * legitimately run long (the `code`/`codex` CLI, sub-agents) so they're never guillotined
    * — declarative, unlike a model-slug allowlist. Unset → the run's `toolTimeoutMs`. */
@@ -158,6 +174,13 @@ export function elide(text: string, max = 20_000): string {
 export function spillPathFor(workspace: string, runId: string, callId: string): string {
   const safe = (s: string) => s.replace(/[^\w-]/g, "_").slice(0, 80);
   return `${workspace}/.delta/spill/${safe(runId)}.${safe(callId)}.txt`;
+}
+
+/** The sanitized `<runId>.` filename prefix spill files carry — one definition beside
+ *  spillPathFor, so the exhaustion handoff (run.ts) enumerates exactly what capAndSpill
+ *  wrote for this run and nothing else. */
+export function spillRunPrefix(runId: string): string {
+  return `${runId.replace(/[^\w-]/g, "_").slice(0, 80)}.`;
 }
 
 export async function capAndSpill(

@@ -424,24 +424,38 @@ export class Queue {
       });
   }
 
+  /** Every root a run-scoped artifact may live under: the scratch root (where current writes
+   *  land), plus the workspace when the two differ — a crash-resume across a root change must not
+   *  strand run-scoped dirs under the old root (D-7 §3, second instance). Write sites and wipe
+   *  sites move in the SAME commit or the cleanup no-ops forever. */
+  private artifactRoots(): string[] {
+    const scratch = this.deps.scratchDir ?? this.deps.workspace;
+    return scratch === this.deps.workspace ? [scratch] : [scratch, this.deps.workspace];
+  }
+
   /** Remove the run's scratch dir (`scratch/<runId>/`). Called for every terminal run: the dir is
    *  run-scoped by contract so wiping it can never touch another run's state (runIds are unique).
    *  force:true → a no-op when the run never wrote scratch (the common case). */
   private wipeRunScratch(runId: string): void {
-    rmSync(`${this.deps.workspace}/scratch/${runId}`, { recursive: true, force: true });
+    for (const root of this.artifactRoots())
+      rmSync(`${root}/scratch/${runId}`, { recursive: true, force: true });
   }
 
   /** Remove the run's spilled tool results (`.delta/spill/<runId>.*`). EPHEMERAL-ONLY — see the call
    *  site: durable recall/compaction reconstruct these paths in later runs. safe(runId)===runId for a
    *  `resp_…` id, so the prefix match is exact. */
   private wipeRunSpill(runId: string): void {
-    this.wipeByPrefix(`${this.deps.workspace}/.delta/spill`, `${runId}.`);
+    for (const root of this.artifactRoots()) this.wipeByPrefix(`${root}/.delta/spill`, `${runId}.`);
   }
 
-  /** Remove the run's research artifacts (`research/<runId>.<seq>/`). EPHEMERAL-ONLY (transcript-
-   *  derived, and durable sessions may re-read them via recall). */
+  /** Remove the run's research artifacts (`.delta/research/<runId>.<seq>/`). EPHEMERAL-ONLY
+   *  (transcript-derived, and durable sessions may re-read them via recall). The bare `research/`
+   *  segment is the pre-D-7 layout — wiped too, so an upgrade mid-session leaks nothing. */
   private wipeRunResearch(runId: string): void {
-    this.wipeByPrefix(`${this.deps.workspace}/research`, `${runId}.`);
+    for (const root of this.artifactRoots()) {
+      this.wipeByPrefix(`${root}/.delta/research`, `${runId}.`);
+      this.wipeByPrefix(`${root}/research`, `${runId}.`);
+    }
   }
 
   /** rm every direct child of `dir` whose name starts with `prefix`. Best-effort: a missing dir or

@@ -7,10 +7,12 @@
 import {
   accessSync,
   constants,
+  cpSync,
   existsSync,
   mkdirSync,
   readdirSync,
   renameSync,
+  rmSync,
   statSync,
 } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
@@ -79,7 +81,20 @@ const clip = (text: string, max = 2000): string => elide(text, max);
 
 // Resolve a user-supplied path inside the workspace; refuses `..` escapes AND
 // symlinks pointing outside (confine is realpath-hard — codex S8 #3).
-const inside = confine;
+/** Workspace confinement with the configured scratch root as a SECOND allowed root (D-7).
+ * The engine tells the model to read_file spill/research paths and to write its scratchpad —
+ * when the operator moves scratch off the workspace, those paths must stay reachable or the
+ * relocation silently deletes the recovery contract. Both roots are engine-configured; the
+ * reserved-path classes still apply under each (see guardWrite). Relative paths resolve against
+ * the workspace exactly as before; only an absolute path under the scratch root gains entry. */
+const inside = (ctx: { workspace: string; scratchDir?: string }, path: string): string => {
+  try {
+    return confine(ctx.workspace, path);
+  } catch (e) {
+    if (ctx.scratchDir && ctx.scratchDir !== ctx.workspace) return confine(ctx.scratchDir, path);
+    throw e;
+  }
+};
 
 // A5 probe: can the code CLI actually run? A bare name is resolved on PATH (Bun.which returns only
 // executables); an explicit path must be a regular, executable FILE (existsSync alone accepts a
@@ -139,7 +154,11 @@ function fileClass(workspace: string, abs: string): "self" | "operator" | "reser
 }
 
 /** The error a mutation tool returns for `abs`, or null when the write is allowed. */
-function guardWrite(workspace: string, abs: string): string | null {
+function guardWrite(workspace: string, abs: string, scratchDir?: string): string | null {
+  // Under the SCRATCH root only the reserved class applies — a DELTA.md there is a plain file,
+  // not the self-file, but `.delta/*` (spill, research) stays engine-owned under both roots.
+  if (scratchDir && scratchDir !== workspace && fileClass(scratchDir, abs) === "reserved")
+    return RESERVED_FILE_ERROR;
   switch (fileClass(workspace, abs)) {
     case "self":
       return SELF_FILE_ERROR;
@@ -259,13 +278,27 @@ function stripHtml(html: string): string {
     .trim();
 }
 
-export function builtinTools(cfg: BuiltinConfig): Tools {
+/** Build the builtin registry. `onOmit` reports every tool a failed precondition kept OUT of the
+ * registry, with a reason the operator can act on — DELTA_ALLOWED_TOOLS is a ceiling, not a
+ * guarantee, and the gates below used to fail silently (D-3: a deployment configured 16 tools,
+ * had 13, and nothing said so). */
+export function builtinTools(
+  cfg: BuiltinConfig,
+  onOmit?: (name: string, reason: string) => void,
+): Tools {
   const tools: Tools = new Map();
   const add = (t: ToolDef) => tools.set(t.name, t);
+  const omit = (name: string, reason: string) => onOmit?.(name, reason);
 
   add({
     name: "web_search",
     readonly: true,
+    // The same expression the tool evaluates at call time, so the status answer and the call
+    // outcome cannot disagree. A report, not a gate — see ToolDef.usable.
+    usable: () =>
+      credentialFor("EXA_API_KEY", cfg.exaKey, cfg.vault)
+        ? { ok: true }
+        : { ok: false, reason: "no EXA_API_KEY in the environment or the vault" },
     description: "Search the web (Exa). Returns titles, URLs, and text snippets.",
     parameters: {
       type: "object",
@@ -372,7 +405,7 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
     idempotent: true,
     execute: async (args, ctx) => {
       const rel = String(args.path);
-      const abs = inside(ctx.workspace, rel);
+      const abs = inside(ctx, rel);
       const f = Bun.file(abs);
       if (!(await f.exists())) return `[tool error] no such file: ${rel}`;
       // Sniff from the head, decide from the stat — materializing the whole file
@@ -389,7 +422,7 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
       if (isImageMime(mime)) {
         if (size > MAX_IMAGE_BYTES)
           return `[tool error] ${rel} is an image too large to attach (${kb}KB > ~3.3MB wire cap) — downscale it via the code tool, then read the smaller file`;
-        registerImage(ctx.workspace, rel); // provenance: this marker may expand
+        registerImage(ctx.workspace, rel, ctx.scratchDir); // provenance: this marker may expand
         return cfg.vision
           ? `[delta:image ${rel}]\n(image ${mime}, ${kb}KB — attached to your context while recent; re-read this file to re-attach it)`
           : `[delta:image ${rel}]\n(image ${mime}, ${kb}KB. Your current model CANNOT view images — you know only this file's name and size. Never guess or describe its contents; delegate visual analysis or say you can't see it.)`;
@@ -449,15 +482,25 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
     },
     idempotent: false,
     execute: async (args, ctx) => {
-      const from = inside(ctx.workspace, String(args.from));
-      const to = inside(ctx.workspace, String(args.to));
-      const err = guardWrite(ctx.workspace, from) ?? guardWrite(ctx.workspace, to);
+      const from = inside(ctx, String(args.from));
+      const to = inside(ctx, String(args.to));
+      const err =
+        guardWrite(ctx.workspace, from, ctx.scratchDir) ??
+        guardWrite(ctx.workspace, to, ctx.scratchDir);
       if (err) return err;
       if (!existsSync(from)) return `[tool error] no such file: ${args.from}`;
       if (existsSync(to) && args.overwrite !== true)
         return `[tool error] ${args.to} exists — pass overwrite=true to replace it`;
       mkdirSync(dirname(to), { recursive: true });
-      renameSync(from, to);
+      try {
+        renameSync(from, to);
+      } catch (e) {
+        // Cross-root moves may cross FILESYSTEMS (workspace on a volume, scratch on another):
+        // rename EXDEVs there, so fall back to copy+delete. Same visible semantics.
+        if ((e as { code?: string }).code !== "EXDEV") throw e;
+        cpSync(from, to, { recursive: true });
+        rmSync(from, { recursive: true, force: true });
+      }
       return `moved ${args.from} → ${args.to}`;
     },
   });
@@ -474,13 +517,19 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
     idempotent: false,
     execute: async (args, ctx) => {
       const rel = String(args.path);
-      const abs = inside(ctx.workspace, rel);
-      const err = guardWrite(ctx.workspace, abs);
+      const abs = inside(ctx, rel);
+      const err = guardWrite(ctx.workspace, abs, ctx.scratchDir);
       if (err) return err;
       if (!existsSync(abs)) return `[tool error] no such file: ${rel}`;
       if (statSync(abs).isDirectory() && args.recursive !== true)
         return `[tool error] ${rel} is a directory — pass recursive=true to trash it`;
-      trashFile(ctx.workspace, rel, abs);
+      // Trash under the root that OWNS the path: workspace trash for a scratch file would drag
+      // engine state back into the workspace and EXDEV across filesystems.
+      const owner =
+        abs === ctx.workspace || abs.startsWith(`${ctx.workspace}/`)
+          ? ctx.workspace
+          : (ctx.scratchDir ?? ctx.workspace);
+      trashFile(owner, rel, abs);
       return `trashed ${rel} (recoverable ~7 days in .delta/trash)`;
     },
   });
@@ -501,7 +550,7 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
     },
     idempotent: true,
     execute: async (args, ctx) => {
-      const root = inside(ctx.workspace, String(args.path ?? "."));
+      const root = inside(ctx, String(args.path ?? "."));
       if (!existsSync(root)) return `[tool error] no such path: ${args.path}`;
       // System grep, not a JS RegExp: a model-supplied pattern like `(a+)+$`
       // backtracks catastrophically, and a synchronous JS regex blocks the whole
@@ -699,8 +748,8 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
     // Full-content overwrite with the same args lands the same bytes — safe to re-fire.
     idempotent: true,
     execute: async (args, ctx) => {
-      const abs = inside(ctx.workspace, String(args.path));
-      const err = guardWrite(ctx.workspace, abs);
+      const abs = inside(ctx, String(args.path));
+      const err = guardWrite(ctx.workspace, abs, ctx.scratchDir);
       if (err) return err;
       await Bun.write(abs, String(args.content), { createPath: true });
       return `wrote ${String(args.content).length} chars to ${args.path}`;
@@ -737,6 +786,16 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
       if (looksLikeSpineEcho(content))
         return `[tool error] That looks like your whole system prompt, not your DELTA.md. Pass ONLY the DELTA.md body — its # Persona / # Mission / # Success / # Learned sections. Drop the # Norms, # Context, # You, # Policy, and # Tools sections; the engine adds those. Your current DELTA.md is:\n\n${currentSelf(ctx.workspace)}`;
       const r = ctx.writeSelf(content);
+      // A-4a: a size refusal names the exact headroom and hands back the merge base — 86 of 240
+      // fleet remembers were refused with neither, so the model shrank by guesswork, re-fired,
+      // and hit the breaker. The lead sentence keeps the exact self_cap classifier shape
+      // ("DELTA.md would be N bytes (cap M)"), like self_conflict keeps its own.
+      if (!r.ok && r.overCap)
+        return (
+          `[tool error] DELTA.md would be ${r.overCap.attempted} bytes (cap ${r.overCap.cap}) — that is ${r.overCap.overBy} bytes over. ` +
+          `Cut at least that much and send the FULL file again (it rides in every prompt, so it must stay lean). ` +
+          `Your merge base — the current DELTA.md on disk — is:\n\n${r.overCap.current}`
+        );
       return r.ok
         ? `updated DELTA.md (${r.bytes} bytes) — takes effect on your next run`
         : `[tool error] ${r.error}`;
@@ -747,6 +806,7 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
   // There is deliberately no `get_secret` — a tool that returns a value would make every
   // other tool an exfiltration path, which is exactly the mistake to avoid. The agent asks
   // its human for a credential; the edge runs the secure intake; egress code does the rest.
+  if (!cfg.vault) omit("list_secrets", "no vault (DELTA_VAULT_KEY unset, or safe mode)");
   if (cfg.vault)
     add({
       name: "list_secrets",
@@ -778,10 +838,16 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
     },
     idempotent: true,
     execute: async (args, ctx) => {
-      const abs = inside(ctx.workspace, String(args.path ?? "."));
+      const abs = inside(ctx, String(args.path ?? "."));
+      // Under the scratch root, return ABSOLUTE paths: a workspace-relative slice of a foreign
+      // root produces paths like "/.delta/…" that read_file (workspace-relative) can't resolve.
+      const inWs = abs === ctx.workspace || abs.startsWith(`${ctx.workspace}/`);
       const entries = readdirSync(abs, { recursive: true, withFileTypes: true })
         .filter((e) => e.isFile())
-        .map((e) => resolve(e.parentPath, e.name).slice(ctx.workspace.length + 1));
+        .map((e) => {
+          const full = resolve(e.parentPath, e.name);
+          return inWs ? full.slice(ctx.workspace.length + 1) : full;
+        });
       return entries.length ? entries.sort().join("\n") : "(empty)";
     },
   });
@@ -791,10 +857,14 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
   // looked up on PATH, an explicit path is checked on disk. Absent → skip registration + warn loud.
   const codeBin = cfg.codeCli[0];
   const codeAvailable = codeBin ? codeCliResolves(codeBin, cfg.workspace) : false;
-  if (!codeAvailable)
+  if (!codeAvailable) {
     console.error(
       `delta: code CLI '${codeBin ?? "(unset)"}' not found — 'code' tool disabled this run (set DELTA_CODE_CLI or install it).`,
     );
+    // Binary NAME only — the full argv is operator config and may carry private paths or
+    // inline tokens; the reason rides /v1/status and stderr.
+    omit("code", `CLI '${codeBin ?? "(unset)"}' not found or not executable on this host`);
+  }
   if (codeAvailable)
     add({
       name: "code",
@@ -1002,6 +1072,11 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
         return `[eval_n: ${valid.length}/${n} variants, winner #${winnerIdx}]\n${winner}`;
       },
     });
+  } else {
+    // Expected suppression, not a config error — reported in the child's status, and index.ts
+    // keeps it OUT of the startup warning so every child process doesn't cry wolf on stderr.
+    for (const name of ["research", "spawn_subagent", "eval_n"])
+      omit(name, "sub-agent depth ≥ 1 — delegation tools are parent-only");
   }
 
   // ── Self-scheduling (Sprint 4) ────────────────────────────────────────────────
@@ -1009,6 +1084,9 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
   // suspend. These tools register a durable schedule at the CP (authed by this VM's own
   // gateway token, hash-matched server-side); a 60s CP ticker fires due schedules as wake
   // turns. Only registered when CP-wired: a bare dev binary boots without them.
+  if (!cfg.controlUrl || !cfg.controlToken)
+    for (const name of ["schedule_self", "list_schedules", "cancel_schedule"])
+      omit(name, "no controlUrl/controlToken — not control-plane-wired; fix config and restart");
   if (cfg.controlUrl && cfg.controlToken) {
     // `owner` asserts WHICH user this schedule call is for (x-delta-user), so the gateway binds the
     // schedule to the right conversation even when several users' turns run concurrently — the async

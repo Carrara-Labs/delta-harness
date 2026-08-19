@@ -76,3 +76,49 @@ describe("DELTA_MAX_CONCURRENCY", () => {
     expect(loadConfig({ DELTA_MAX_CONCURRENCY: "nope" }).maxConcurrency).toBe(8); // garbage → default
   });
 });
+
+describe("code CLI default (D-8)", () => {
+  test("connectors are disabled by default — the delegated CLI must not inherit account plugins", () => {
+    // A codex session proved its "inert" Gmail skill by listing the operator's real inbox:
+    // 6,913 messages, write scope, granted by NOTHING on the host — the connection lives
+    // server-side on the CLI's own auth token. Verified against pinned codex-cli 0.146.0:
+    // both flags are stable feature names, unknown names error loudly.
+    const cli = loadConfig({}).codeCli;
+    expect(cli).toContain("--disable");
+    expect(cli).toContain("apps");
+    expect(cli).toContain("plugins");
+  });
+
+  test("an operator-set DELTA_CODE_CLI is used verbatim — no flag injection", () => {
+    const cli = loadConfig({ DELTA_CODE_CLI: "codex exec --sandbox workspace-write" }).codeCli;
+    expect(cli).not.toContain("--disable");
+  });
+});
+
+describe("scratch-root overlap guard (D-7 review fix)", () => {
+  test("a scratch root that contains the daemon DB is refused back to the workspace", () => {
+    const errs: string[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => errs.push(a.join(" "));
+    try {
+      const cfg = loadConfig({
+        DELTA_WORKSPACE: "/data/bundle",
+        DELTA_DB: "/data/delta.db",
+        DELTA_SCRATCH_DIR: "/data",
+      });
+      expect(cfg.scratchDir).toBe(cfg.workspace); // the model must never gain file-tool reach over the DB
+      expect(errs.join("\n")).toContain("DELTA_SCRATCH_DIR");
+    } finally {
+      console.error = orig;
+    }
+  });
+
+  test("a dedicated sibling directory passes", () => {
+    const cfg = loadConfig({
+      DELTA_WORKSPACE: "/data/bundle",
+      DELTA_DB: "/data/delta.db",
+      DELTA_SCRATCH_DIR: "/data/scratch",
+    });
+    expect(cfg.scratchDir).toBe("/data/scratch");
+  });
+});
