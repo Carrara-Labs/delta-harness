@@ -1,0 +1,226 @@
+[
+ {
+  "model": "gpt-5.6-sol",
+  "effort": "medium",
+  "label": "sol-medium",
+  "ok": true,
+  "toolCalled": true,
+  "args": "{\"city\":\"Paris\"}",
+  "reasoningCaptured": 0,
+  "encryptedBytes": 0,
+  "phase1": null,
+  "phase2": "final_answer",
+  "answer": "WEATHER Paris 24C",
+  "answerCorrect": true,
+  "turn1": {
+   "in": 2016,
+   "out": 18,
+   "cacheRead": 0,
+   "cacheWrite": 2013,
+   "costUsd": 0.01313625,
+   "ms": 1818
+  },
+  "turn2": {
+   "in": 2076,
+   "out": 10,
+   "cacheRead": 2013,
+   "cacheWrite": 60,
+   "costUsd": 0.0016965,
+   "ms": 1527
+  },
+  "cacheWorked": true,
+  "summaryChars": 0
+ },
+ {
+  "model": "gpt-5.6-sol",
+  "effort": "low",
+  "label": "sol-low",
+  "ok": true,
+  "toolCalled": true,
+  "args": "{\"city\":\"Paris\"}",
+  "reasoningCaptured": 0,
+  "encryptedBytes": 0,
+  "phase1": null,
+  "phase2": "final_answer",
+  "answer": "WEATHER Paris 24C",
+  "answerCorrect": true,
+  "turn1": {
+   "in": 2016,
+   "out": 18,
+   "cacheRead": 0,
+   "cacheWrite": 2013,
+   "costUsd": 0.01313625,
+   "ms": 3531
+  },
+  "turn2": {
+   "in": 2076,
+   "out": 10,
+   "cacheRead": 2013,
+   "cacheWrite": 60,
+   "costUsd": 0.0016965,
+   "ms": 2088
+  },
+  "cacheWorked": true,
+  "summaryChars": 0
+ },
+ {
+  "model": "gpt-5.6-terra",
+  "effort": "medium",
+  "label": "terra-medium",
+  "ok": true,
+  "toolCalled": true,
+  "args": "{\"city\":\"Paris\"}",
+  "reasoningCaptured": 1,
+  "encryptedBytes": 1252,
+  "phase1": null,
+  "phase2": "final_answer",
+  "answer": "WEATHER Paris 24C",
+  "answerCorrect": true,
+  "turn1": {
+   "in": 2016,
+   "out": 31,
+   "cacheRead": 0,
+   "cacheWrite": 2013,
+   "costUsd": 0.0054105,
+   "ms": 1676
+  },
+  "turn2": {
+   "in": 2089,
+   "out": 10,
+   "cacheRead": 2013,
+   "cacheWrite": 73,
+   "costUsd": 0.0007111,
+   "ms": 1455
+  },
+  "cacheWorked": true,
+  "summaryChars": 0
+ },
+ {
+  "model": "gpt-5.6-terra",
+  "effort": "low",
+  "label": "terra-low",
+  "ok": true,
+  "toolCalled": true,
+  "args": "{\"city\":\"Paris\"}",
+  "reasoningCaptured": 0,
+  "encryptedBytes": 0,
+  "phase1": null,
+  "phase2": "final_answer",
+  "answer": "WEATHER Paris 24C",
+  "answerCorrect": true,
+  "turn1": {
+   "in": 2016,
+   "out": 18,
+   "cacheRead": 0,
+   "cacheWrite": 2013,
+   "costUsd": 0.0052545,
+   "ms": 1581
+  },
+  "turn2": {
+   "in": 2076,
+   "out": 10,
+   "cacheRead": 2013,
+   "cacheWrite": 60,
+   "costUsd": 0.0006786,
+   "ms": 1361
+  },
+  "cacheWorked": true,
+  "summaryChars": 0
+ },
+ {
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "label": "luna-medium",
+  "ok": true,
+  "toolCalled": true,
+  "args": "{\"city\":\"Paris\"}",
+  "reasoningCaptured": 1,
+  "encryptedBytes": 1252,
+  "phase1": null,
+  "phase2": "final_answer",
+  "answer": "WEATHER Paris 24C",
+  "answerCorrect": true,
+  "turn1": {
+   "in": 2016,
+   "out": 32,
+   "cacheRead": 0,
+   "cacheWrite": 2013,
+   "costUsd": 0.00054225,
+   "ms": 2286
+  },
+  "turn2": {
+   "in": 2090,
+   "out": 10,
+   "cacheRead": 2013,
+   "cacheWrite": 74,
+   "costUsd": 0.00007136,
+   "ms": 847
+  },
+  "cacheWorked": true,
+  "summaryChars": 0
+ },
+ {
+  "model": "gpt-5.6-luna",
+  "effort": "none",
+  "label": "luna-none",
+  "ok": true,
+  "toolCalled": true,
+  "args": "{\"city\":\"Paris\"}",
+  "reasoningCaptured": 0,
+  "encryptedBytes": 0,
+  "phase1": null,
+  "phase2": "final_answer",
+  "answer": "WEATHER Paris 24C",
+  "answerCorrect": true,
+  "turn1": {
+   "in": 2016,
+   "out": 18,
+   "cacheRead": 0,
+   "cacheWrite": 2013,
+   "costUsd": 0.00052545,
+   "ms": 1310
+  },
+  "turn2": {
+   "in": 2076,
+   "out": 10,
+   "cacheRead": 2013,
+   "cacheWrite": 60,
+   "costUsd": 0.00006786,
+   "ms": 1261
+  },
+  "cacheWorked": true,
+  "summaryChars": 0
+ },
+ {
+  "model": "gpt-5.6-luna",
+  "effort": "(default)",
+  "label": "luna-default",
+  "ok": true,
+  "toolCalled": true,
+  "args": "{\"city\":\"Paris\"}",
+  "reasoningCaptured": 1,
+  "encryptedBytes": 1228,
+  "phase1": null,
+  "phase2": "final_answer",
+  "answer": "WEATHER Paris 24C",
+  "answerCorrect": true,
+  "turn1": {
+   "in": 2016,
+   "out": 29,
+   "cacheRead": 0,
+   "cacheWrite": 2013,
+   "costUsd": 0.00053865,
+   "ms": 1253
+  },
+  "turn2": {
+   "in": 2087,
+   "out": 10,
+   "cacheRead": 2013,
+   "cacheWrite": 71,
+   "costUsd": 0.00007061,
+   "ms": 1269
+  },
+  "cacheWorked": true,
+  "summaryChars": 0
+ }
+]

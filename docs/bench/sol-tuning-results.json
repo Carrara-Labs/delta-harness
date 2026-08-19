@@ -1,0 +1,292 @@
+[
+ {
+  "label": "none-low",
+  "effort": "none",
+  "verbosity": "low",
+  "ok": true,
+  "facts": "4/6",
+  "searchCalls": 8,
+  "modelCalls": 4,
+  "distractorLeaked": false,
+  "artifactChars": 1415,
+  "updateChars": 411,
+  "update": "Found **Maren Kollberg**, CTO and co-founder, formerly a DeepMind robotics lead (2019–2023).\n\nReported company metrics:\n- **USD 48M Series B**, led by Northzone\n- **USD 9.4M ARR** in Q2 2026\n- Customers include Zalando a",
+  "perCall": [
+   {
+    "ms": 2494,
+    "out": 110,
+    "in": 818,
+    "cacheRead": 0,
+    "cost": 0.00739
+   },
+   {
+    "ms": 2402,
+    "out": 131,
+    "in": 1874,
+    "cacheRead": 0,
+    "cost": 0.01563875
+   },
+   {
+    "ms": 6996,
+    "out": 409,
+    "in": 2951,
+    "cacheRead": 1871,
+    "cost": 0.01995175
+   },
+   {
+    "ms": 6179,
+    "out": 116,
+    "in": 3405,
+    "cacheRead": 2948,
+    "cost": 0.0078065
+   }
+  ],
+  "totalMs": 18071,
+  "totalOut": 766,
+  "totalCost": 0.050787000000000006
+ },
+ {
+  "label": "low-low",
+  "effort": "low",
+  "verbosity": "low",
+  "ok": true,
+  "facts": "4/6",
+  "searchCalls": 9,
+  "modelCalls": 4,
+  "distractorLeaked": false,
+  "artifactChars": 1487,
+  "updateChars": 375,
+  "update": "Saved the brief to `brief-fjordlight.md`.\n\nFound **Maren Kollberg**, reportedly CTO and co-founder, formerly a DeepMind robotics lead. Fjordlight reportedly raised a **USD 48 million Series B** and reached **USD 9.4 mill",
+  "perCall": [
+   {
+    "ms": 2808,
+    "out": 151,
+    "in": 818,
+    "cacheRead": 0,
+    "cost": 0.00862
+   },
+   {
+    "ms": 4338,
+    "out": 208,
+    "in": 1915,
+    "cacheRead": 0,
+    "cost": 0.018205
+   },
+   {
+    "ms": 8030,
+    "out": 505,
+    "in": 3305,
+    "cacheRead": 1912,
+    "cost": 0.0248085
+   },
+   {
+    "ms": 2380,
+    "out": 86,
+    "in": 3855,
+    "cacheRead": 3302,
+    "cost": 0.0076835
+   }
+  ],
+  "totalMs": 17556,
+  "totalOut": 950,
+  "totalCost": 0.059317
+ },
+ {
+  "label": "low-defv",
+  "effort": "low",
+  "verbosity": "(default)",
+  "ok": true,
+  "facts": "4/6",
+  "searchCalls": 8,
+  "modelCalls": 4,
+  "distractorLeaked": false,
+  "artifactChars": 1924,
+  "updateChars": 620,
+  "update": "I found **Maren Kollberg**, CTO and co-founder of Fjordlight Robotics. She previously led robotics at **DeepMind from 2019–2023**.\n\nKey findings:\n- **Funding:** US$48 million Series B led by Northzone, announced 2026-03-",
+  "perCall": [
+   {
+    "ms": 4050,
+    "out": 129,
+    "in": 818,
+    "cacheRead": 0,
+    "cost": 0.00796
+   },
+   {
+    "ms": 3849,
+    "out": 180,
+    "in": 1893,
+    "cacheRead": 0,
+    "cost": 0.0172275
+   },
+   {
+    "ms": 11678,
+    "out": 576,
+    "in": 3019,
+    "cacheRead": 1890,
+    "cost": 0.0252775
+   },
+   {
+    "ms": 5995,
+    "out": 158,
+    "in": 3640,
+    "cacheRead": 3016,
+    "cost": 0.01014425
+   }
+  ],
+  "totalMs": 25572,
+  "totalOut": 1043,
+  "totalCost": 0.06060925
+ },
+ {
+  "label": "medium-low",
+  "effort": "medium",
+  "verbosity": "low",
+  "ok": true,
+  "facts": "4/6",
+  "searchCalls": 13,
+  "modelCalls": 5,
+  "distractorLeaked": false,
+  "artifactChars": 1319,
+  "updateChars": 338,
+  "update": "Saved the brief to **`brief-fjordlight.md`**.\n\nThe search dataset lists **Maren Kollberg** as CTO/co-founder, formerly a DeepMind robotics lead. It reports a **US$48M Series B**, **US$9.4M ARR**, and customers including ",
+  "perCall": [
+   {
+    "ms": 3429,
+    "out": 124,
+    "in": 818,
+    "cacheRead": 0,
+    "cost": 0.00781
+   },
+   {
+    "ms": 4342,
+    "out": 203,
+    "in": 1652,
+    "cacheRead": 0,
+    "cost": 0.01641125
+   },
+   {
+    "ms": 5405,
+    "out": 277,
+    "in": 3037,
+    "cacheRead": 1649,
+    "cost": 0.01780575
+   },
+   {
+    "ms": 7555,
+    "out": 475,
+    "in": 4496,
+    "cacheRead": 3034,
+    "cost": 0.02490075
+   },
+   {
+    "ms": 2418,
+    "out": 90,
+    "in": 5016,
+    "cacheRead": 4493,
+    "cost": 0.0082115
+   }
+  ],
+  "totalMs": 23149,
+  "totalOut": 1169,
+  "totalCost": 0.07513924999999999
+ },
+ {
+  "label": "medium-defv",
+  "effort": "medium",
+  "verbosity": "(default)",
+  "ok": true,
+  "facts": "4/6",
+  "searchCalls": 9,
+  "modelCalls": 4,
+  "distractorLeaked": false,
+  "artifactChars": 1466,
+  "updateChars": 573,
+  "update": "I found **Maren Kollberg**, CTO and co-founder of Fjordlight Robotics. She was a **DeepMind robotics lead from 2019–2023**.\n\nKey findings:\n- **Funding:** $48 million Series B, led by Northzone on 2026-03-12\n- **Traction:",
+  "perCall": [
+   {
+    "ms": 4262,
+    "out": 144,
+    "in": 818,
+    "cacheRead": 0,
+    "cost": 0.00841
+   },
+   {
+    "ms": 4923,
+    "out": 206,
+    "in": 1908,
+    "cacheRead": 0,
+    "cost": 0.01810125
+   },
+   {
+    "ms": 10714,
+    "out": 588,
+    "in": 3296,
+    "cacheRead": 1905,
+    "cost": 0.0272825
+   },
+   {
+    "ms": 2890,
+    "out": 154,
+    "in": 3929,
+    "cacheRead": 3293,
+    "cost": 0.01023775
+   }
+  ],
+  "totalMs": 22789,
+  "totalOut": 1092,
+  "totalCost": 0.0640315
+ },
+ {
+  "label": "high-low",
+  "effort": "high",
+  "verbosity": "low",
+  "ok": true,
+  "facts": "4/6",
+  "searchCalls": 15,
+  "modelCalls": 5,
+  "distractorLeaked": false,
+  "artifactChars": 1749,
+  "updateChars": 374,
+  "update": "Saved the brief to **`brief-fjordlight.md`**.\n\nFound **Maren Kollberg**, CTO and co-founder, reportedly a DeepMind robotics lead from 2019–2023. Fjordlight reportedly raised a **US$48M Series B**, has **US$9.4M ARR**, 11",
+  "perCall": [
+   {
+    "ms": 2944,
+    "out": 154,
+    "in": 818,
+    "cacheRead": 0,
+    "cost": 0.00871
+   },
+   {
+    "ms": 9392,
+    "out": 221,
+    "in": 1918,
+    "cacheRead": 0,
+    "cost": 0.01861375
+   },
+   {
+    "ms": 6876,
+    "out": 359,
+    "in": 3557,
+    "cacheRead": 1915,
+    "cost": 0.02198625
+   },
+   {
+    "ms": 10272,
+    "out": 779,
+    "in": 5098,
+    "cacheRead": 3554,
+    "cost": 0.03479325
+   },
+   {
+    "ms": 2099,
+    "out": 102,
+    "in": 5922,
+    "cacheRead": 5095,
+    "cost": 0.0107725
+   }
+  ],
+  "totalMs": 31583,
+  "totalOut": 1615,
+  "totalCost": 0.09487575
+ }
+]
