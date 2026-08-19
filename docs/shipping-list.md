@@ -267,6 +267,60 @@ because you cannot ssh into a machine whose daemon exits on boot.
 See the entry above: a TTL is the wrong shape and was reverted before release. Needs spill owned by
 the session row, or reference counting.
 
+## P1 - opened by the Quick Search tuning pass (2026-08-19)
+
+Full findings, with every query inline so the numbers are reproducible:
+[`aperture-qs-tuning-findings.md`](./aperture-qs-tuning-findings.md). Visual:
+[`aperture-qs-quick-wins.html`](./aperture-qs-quick-wins.html). Measured on
+`aperture-qs-69598a208017`, 140 runs, 2,718 model calls, $669.02 metered - **0.2.11 snapshot data, so
+every magnitude is an upper bound on the current 0.2.14 build.**
+
+### The opt-in default produced zero adoption, and that is the finding
+
+`DELTA_TOOL_ARG_MAX_BYTES` defaults to **0 = off** (`config.ts:230`). It was built for Aperture as
+their rank-1 ask, measured at **-36.5% cost / -29.9% input tokens / 5 compactions to 0**, and shipped
+opt-in for one cycle because its marker-echo guard was new. That cycle has passed. **No lane in the
+fleet has ever set it** - including the lane it was built for, by us.
+
+On that lane today: 4.83 MB of stored tool arguments, **1.99 MB (41.2%) reclaimable at a 4 KB cap**,
+and **81% of the reclaim is one tool** (`aperture__qs_stage_body`, 206 calls, avg 11,831 B, max
+47,709 B). Exactly the case named in the config comment when the rail was written.
+
+**Candidate: flip the default to 4096.** An opt-in default for a measured win is a default of "nobody
+gets it". 0.2.16 with a canary, or 0.2.15 if the config canary lands clean first.
+
+### The post-compaction reload is 30.6% of spend and has no telemetry naming it
+
+192 calls - 7.1% of traffic - at 32% cache hit on 226,897 average input tokens, **$205.05 of $669.02**.
+$1.07 a call against $0.16 for an ordinary one. It is structural (a prefix rewrite costs one full
+re-cache), so the lever is compacting less often, not changing compaction.
+
+It is only visible by joining `model.call` against `compaction` on timestamp, which nobody does.
+**A `turns_since_compaction` scalar on `model.call` makes it a one-column group-by.** Sibling of the
+history-digest item above; same instrumentation gap, different segment.
+
+### Effective tuning config is invisible
+
+Three different `DELTA_SELF_MAX_TOKENS` across one fleet (4000 / 2400 / 1600), and **no lane sets
+`DELTA_TOOL_ARG_MAX_BYTES` or `DELTA_CACHE_TTL`** - none of it reported anywhere. Extends D-3 in
+`spec-tool-usability.md`: `/v1/status` should report the **effective tuning values**, not only tools.
+On the QS lane the self cap alone accounts for **125 refused self-writes, 42% of that lane's tool
+errors**, and a lane that has silently stopped learning.
+
+### Falsified, recorded so nobody re-argues them
+
+- **Self-file writes churn the prefix cache.** False - calls within 2 min of a `remember` show
+  *higher* cache hit (93% vs 82%) and lower cost. The self-file is small against a 130k prompt and
+  sits in the stable segment.
+- **Tool latency matters for run time.** False - model time beats tool time **12.4 : 1** on this lane.
+- **The 5-minute cache TTL lapses mid-run.** False - zero intra-run gaps over 5 minutes. The cold band
+  is *between* runs, which still argues for `DELTA_CACHE_TTL=1h`, but for a different reason.
+
+### Not ours, worth telling Aperture
+
+`aperture__qs_save_artifact` failed **26 of 148 calls (17.6%)**; `aperture__qs_start` 15 of 153 (9.8%).
+The agent recovers, which is why it went unnoticed, but each failure costs a visible turn.
+
 ## P2 - open, unchanged
 
 - **Connect: stream the reply text itself.** 0.5.0 ships rich rendering and a live progress line but

@@ -1,0 +1,459 @@
+<title>Tuning Quick Search</title>
+
+<style>
+  :root {
+    --paper:#f1f3f5; --surface:#fff; --sunk:#e8ebef; --ink:#14181f; --muted:#5f6877;
+    --faint:#8b95a4; --rule:#d5d9e0; --hair:#e3e7ec;
+    --accent:#2f5074; --crit:#9c3a2e; --watch:#856112; --settled:#3d6a45;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    --serif:Georgia,"Iowan Old Style","Times New Roman",serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --w:70ch; --wide:1080px;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --paper:#11141a; --surface:#181c23; --sunk:#1e232b; --ink:#e5e9ef; --muted:#98a2b1;
+    --faint:#6d7887; --rule:#2b313b; --hair:#23282f;
+    --accent:#82a9d8; --crit:#e2897a; --watch:#d4ad57; --settled:#83b78d;}}
+  :root[data-theme="dark"]{
+    --paper:#11141a; --surface:#181c23; --sunk:#1e232b; --ink:#e5e9ef; --muted:#98a2b1;
+    --faint:#6d7887; --rule:#2b313b; --hair:#23282f;
+    --accent:#82a9d8; --crit:#e2897a; --watch:#d4ad57; --settled:#83b78d;}
+
+  *{box-sizing:border-box}
+  body{background:var(--paper);color:var(--ink);font-family:var(--serif);font-size:17px;
+       line-height:1.62;margin:0;padding:0 1.5rem 6rem;-webkit-font-smoothing:antialiased}
+  .col{max-width:var(--w);margin-inline:auto}
+  .band{max-width:var(--wide);margin-inline:auto}
+  p{margin:0 0 1.05em}
+  strong{font-weight:700}
+  code,.m{font-family:var(--mono);font-size:.86em}
+  code{background:var(--sunk);padding:.1em .34em;border-radius:2px}
+
+  header.mast{max-width:var(--wide);margin:0 auto;padding:4.5rem 0 2.25rem}
+  .eyebrow{font-family:var(--mono);font-size:.6875rem;letter-spacing:.1em;text-transform:uppercase;
+           color:var(--muted);margin:0 0 1.4rem}
+  h1{font-family:var(--sans);font-size:clamp(2.1rem,5.2vw,3.4rem);line-height:1.02;
+     letter-spacing:-.028em;font-weight:700;margin:0 0 1.3rem;max-width:20ch;text-wrap:balance}
+  .standfirst{font-size:1.18rem;line-height:1.5;color:var(--muted);max-width:60ch;margin:0}
+
+  section{margin-top:4.25rem}
+  h2{font-family:var(--sans);font-size:1.55rem;line-height:1.16;letter-spacing:-.018em;
+     font-weight:700;margin:0 0 .35em;text-wrap:balance}
+  .sublede{color:var(--muted);font-size:1.0625rem;margin:0 0 2rem}
+  .kicker{font-family:var(--mono);font-size:.6875rem;letter-spacing:.1em;text-transform:uppercase;
+          color:var(--muted);border-top:1px solid var(--rule);padding-top:.7rem;margin:0 0 2rem;display:block}
+
+  .thesis{max-width:var(--w);margin:2.5rem auto 0;padding:1.7rem 0;
+          border-top:2px solid var(--ink);border-bottom:1px solid var(--rule)}
+  .thesis p{font-size:1.3rem;line-height:1.42;margin:0}
+  .thesis p+p{margin-top:.65em;color:var(--muted);font-size:1.0625rem}
+
+  /* ── the three registers ─────────────────────────────── */
+  .item{padding:2.25rem 0;border-top:1px solid var(--rule)}
+  .item:first-of-type{border-top:2px solid var(--ink)}
+  .itemhead{display:flex;align-items:baseline;gap:.7rem;flex-wrap:wrap;margin-bottom:1.1rem}
+  .fid{font-family:var(--mono);font-size:.75rem;font-weight:600;color:var(--crit);flex:none}
+  .itemhead h3{font-family:var(--sans);font-size:1.16rem;font-weight:700;letter-spacing:-.01em;
+               margin:0;flex:1 1 22ch;text-wrap:balance}
+  .sev{font-family:var(--mono);font-size:.6rem;letter-spacing:.09em;text-transform:uppercase;
+       border:1px solid var(--rule);color:var(--muted);padding:.16rem .42rem;white-space:nowrap}
+  .sev.hi{color:var(--crit);border-color:var(--crit)}
+  .sev.lo{color:var(--settled);border-color:var(--settled)}
+  .sev.mid{color:var(--watch);border-color:var(--watch)}
+
+  .reg{padding:.85rem 0;border-top:1px dotted var(--rule)}
+  .reg:first-of-type{border-top:none;padding-top:0}
+  .rl{font-family:var(--mono);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;
+      color:var(--faint);display:block;margin-bottom:.4rem}
+  .reg-plain p{font-size:1.12rem;line-height:1.5;margin:0}
+  .reg-tech p{font-size:1rem;color:var(--muted);margin:0}
+  .reg-spec .mech{margin:0}
+  .mech{font-family:var(--mono);font-size:.77rem;line-height:1.62;background:var(--sunk);
+        border-left:2px solid var(--accent);padding:.75rem .95rem;overflow-x:auto}
+  .mech b{color:var(--crit);font-weight:600}
+  .mech span{color:var(--muted)}
+
+  .tw{overflow-x:auto;margin:0 0 1.5rem}
+  table{border-collapse:collapse;width:100%;font-family:var(--sans);font-size:.89rem}
+  caption{text-align:left;font-family:var(--mono);font-size:.6875rem;letter-spacing:.09em;
+          text-transform:uppercase;color:var(--muted);padding-bottom:.6rem}
+  th{text-align:left;font-size:.6875rem;font-family:var(--mono);letter-spacing:.08em;
+     text-transform:uppercase;color:var(--faint);font-weight:500;padding:0 .85rem .5rem 0;
+     border-bottom:1px solid var(--ink);vertical-align:bottom;white-space:nowrap}
+  td{padding:.62rem .85rem .62rem 0;border-bottom:1px solid var(--hair);vertical-align:top;line-height:1.45}
+  td:last-child,th:last-child{padding-right:0}
+  tbody tr:last-child td{border-bottom:1px solid var(--rule)}
+  .num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+  td .m{font-size:.8rem;color:var(--muted)}
+  .grp td{font-family:var(--mono);font-size:.6875rem;letter-spacing:.09em;text-transform:uppercase;
+          color:var(--faint);padding-top:1.35rem;border-bottom:1px solid var(--rule)}
+  .r-hi{color:var(--crit);font-weight:600;font-family:var(--mono);font-size:.7rem}
+  .r-mid{color:var(--watch);font-family:var(--mono);font-size:.7rem}
+  .r-lo{color:var(--settled);font-family:var(--mono);font-size:.7rem}
+
+  figure{margin:2rem 0}
+  figure svg{max-width:100%;height:auto;display:block}
+  figcaption{font-size:.9rem;color:var(--muted);margin-top:.85rem;max-width:68ch}
+  .dg-box{fill:var(--surface);stroke:currentColor;stroke-width:1}
+  .dg-box-crit{fill:var(--surface);stroke:var(--crit);stroke-width:1.5}
+  .dg-t{font-family:var(--sans);font-size:12px;fill:currentColor}
+  .dg-t-s{font-family:var(--mono);font-size:10.5px;fill:var(--muted)}
+  .dg-t-c{font-family:var(--mono);font-size:10.5px;fill:var(--crit);font-weight:600}
+  .dg-line{stroke:currentColor;stroke-width:1.2;fill:none}
+  .dg-line-crit{stroke:var(--crit);stroke-width:1.6;fill:none}
+
+  .battery{list-style:none;padding:0;margin:0;counter-reset:b}
+  .battery>li{counter-increment:b;position:relative;padding:1.1rem 0 1.1rem 2.9rem;
+              border-top:1px solid var(--hair)}
+  .battery>li:first-child{border-top:none}
+  .battery>li::before{content:counter(b);position:absolute;left:0;top:1rem;font-family:var(--mono);
+    font-size:.7rem;font-weight:600;color:var(--paper);background:var(--accent);width:1.5rem;
+    height:1.5rem;border-radius:50%;display:grid;place-items:center}
+  .battery b{display:block;font-family:var(--sans);font-size:1.02rem;margin-bottom:.2em}
+  .battery span{color:var(--muted);font-size:.97rem}
+  .gate{background:var(--surface);border-top:3px solid var(--crit);border-bottom:1px solid var(--rule);
+        padding:1.75rem;margin:1.5rem 0}
+  .gate h3{font-family:var(--sans);font-size:1.08rem;margin:0 0 .6em}
+  .gate p:last-child{margin-bottom:0}
+  ul.tight{margin:0 0 1em;padding-left:1.15rem}
+  ul.tight li{margin-bottom:.42em}
+  footer{max-width:var(--w);margin:5rem auto 0;padding-top:1.4rem;border-top:1px solid var(--rule);
+         font-family:var(--mono);font-size:.72rem;line-height:1.7;color:var(--faint)}
+  @media (max-width:640px){body{font-size:16px;padding:0 1.1rem 4rem}header.mast{padding-top:3rem}
+    .gate{padding:1.4rem 1.1rem}}
+</style>
+<header class="mast">
+  <p class="eyebrow">Aperture Quick Search &middot; pre-demo tuning &middot; 19 Aug 2026</p>
+  <h1>Tuning Quick Search</h1>
+  <p class="standfirst">Three settings we can change today, with no code and no release, measured
+  against 140 real runs of this exact lane. Then what 0.2.15 adds, and the two things we should
+  deliberately not touch before a demo.</p>
+</header>
+
+<div class="thesis">
+  <p><strong>7% of model calls are consuming 31% of the spend, and one unused setting reclaims 41%
+  of the bytes that cause it.</strong></p>
+  <p>Everything below comes from the lane itself &mdash; <code>aperture-qs-69598a208017</code>, 140
+  runs, 2,718 model calls, $669 of measured spend. Not from the docs, and not from another lane.</p>
+</div>
+
+<section class="col">
+  <span class="kicker">Baseline</span>
+  <h2>What the founder will actually experience</h2>
+  <p class="sublede">Before deciding what to change, this is what a Quick Search run is today.</p>
+
+  <div class="tw">
+    <table>
+      <caption>aperture-qs-69598a208017 &middot; 140 runs</caption>
+      <thead><tr><th>Measure</th><th class="num">Value</th><th>What it means in the room</th></tr></thead>
+      <tbody>
+        <tr><td>Median run</td><td class="num">8 min</td><td>A typical search finishes while they are still talking.</td></tr>
+        <tr><td>p90 run</td><td class="num">25 min</td><td>One in ten will outlast the meeting.</td></tr>
+        <tr><td>Model calls per run</td><td class="num">19.4</td><td>Each one is a visible pause.</td></tr>
+        <tr><td>Median single call</td><td class="num">17.3 s</td><td>The felt tempo of the thing.</td></tr>
+        <tr><td>p99 single call</td><td class="num">130 s</td><td>Occasionally it just sits there for two minutes.</td></tr>
+        <tr><td>Cost per run</td><td class="num">$4.78</td><td>Fine for client work. Worth halving anyway.</td></tr>
+        <tr><td>Runs that compacted</td><td class="num">31 of 140</td><td>The expensive ones, see below.</td></tr>
+        <tr><td>Failed runs</td><td class="num">5</td><td>All budget exhaustion &mdash; each returned nothing.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p><strong>One thing to rule out immediately:</strong> the tools are not the bottleneck. Every
+  tool call on this lane put together accounts for about 101 minutes of wall clock; the model calls
+  account for about 21 hours. That is a ratio of roughly <strong>12 to 1</strong>. Making
+  <code>fiber_read</code> faster would be invisible. Making the prompt smaller would not.</p>
+</section>
+
+<section class="band">
+  <div class="col">
+    <span class="kicker">The finding</span>
+    <h2>Where the money actually goes</h2>
+    <p class="sublede">Not spread evenly. Concentrated in one moment, repeated 192 times.</p>
+
+    <p><strong>In plain terms.</strong> When the conversation gets too long, the agent stops and
+    rewrites its own history into a summary to make room. The very next thing it does is re-send
+    that whole rewritten history to the model &mdash; and because it changed, none of it is cached
+    any more. So it pays full price for about 227,000 tokens, in one call, and that single call
+    costs roughly <strong>seven times</strong> what a normal one does.</p>
+
+    <p><strong>Technically.</strong> Compaction rewrites the prefix, which invalidates the prompt
+    cache from the first changed block onward. The reload is structural rather than a bug: any
+    prefix rewrite costs one full re-cache. It is not something to fix in compaction; it is
+    something to trigger less often.</p>
+
+    <div class="tw">
+      <table>
+        <caption>Model calls by position relative to a compaction</caption>
+        <thead><tr><th>Call</th><th class="num">Count</th><th class="num">Cache hit</th><th class="num">Avg input</th><th class="num">Avg latency</th><th class="num">Spend</th></tr></thead>
+        <tbody>
+          <tr><td>Before any compaction</td><td class="num">2,256</td><td class="num">87%</td><td class="num">97,401</td><td class="num">24.4 s</td><td class="num">$359.90</td></tr>
+          <tr><td><b>First call after a compaction</b></td><td class="num"><b>192</b></td><td class="num r-hi">32%</td><td class="num">226,897</td><td class="num">35.0 s</td><td class="num"><b>$205.05</b></td></tr>
+          <tr><td>Later in a compacted run</td><td class="num">270</td><td class="num">88%</td><td class="num">231,163</td><td class="num r-hi">52.2 s</td><td class="num">$104.08</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p><strong>192 calls &mdash; 7.1% of all traffic &mdash; are 30.6% of the bill.</strong> $1.07
+    each against $0.16 for an ordinary call. And notice the third row: after compacting, the context
+    is still averaging 231,000 tokens, which is why those calls take 52 seconds. Compaction is
+    firing and not winning back much room.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 940 260" role="img" aria-label="Long tool arguments are replayed every turn, so the retained context never shrinks, so compaction fires, and the first call after each compaction costs seven times normal. Capping the arguments breaks the chain at the first step.">
+      <defs><marker id="qa" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="8" markerHeight="7" orient="auto">
+        <polygon points="0,0 10,4 0,8" fill="var(--crit)"></polygon></marker>
+        <marker id="qg" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="8" markerHeight="7" orient="auto">
+        <polygon points="0,0 10,4 0,8" fill="var(--settled)"></polygon></marker></defs>
+
+      <rect class="dg-box-crit" x="8" y="76" width="168" height="66"></rect>
+      <text class="dg-t" x="92" y="98" text-anchor="middle">qs_stage_body writes</text>
+      <text class="dg-t" x="92" y="114" text-anchor="middle">11.8 KB of arguments</text>
+      <text class="dg-t-s" x="92" y="131" text-anchor="middle">max seen: 47.7 KB</text>
+
+      <line class="dg-line-crit" x1="176" y1="109" x2="212" y2="109" marker-end="url(#qa)"></line>
+      <text class="dg-t-s" x="194" y="100" text-anchor="middle">every</text>
+      <text class="dg-t-s" x="194" y="126" text-anchor="middle">turn</text>
+
+      <rect class="dg-box-crit" x="216" y="76" width="160" height="66"></rect>
+      <text class="dg-t" x="296" y="98" text-anchor="middle">replayed in full,</text>
+      <text class="dg-t" x="296" y="114" text-anchor="middle">turn after turn</text>
+      <text class="dg-t-s" x="296" y="131" text-anchor="middle">nothing shrinks them</text>
+
+      <line class="dg-line-crit" x1="376" y1="109" x2="412" y2="109" marker-end="url(#qa)"></line>
+
+      <rect class="dg-box-crit" x="416" y="76" width="150" height="66"></rect>
+      <text class="dg-t" x="491" y="98" text-anchor="middle">context fills</text>
+      <text class="dg-t" x="491" y="114" text-anchor="middle">compaction fires</text>
+      <text class="dg-t-s" x="491" y="131" text-anchor="middle">169 times, 31 runs</text>
+
+      <line class="dg-line-crit" x1="566" y1="109" x2="602" y2="109" marker-end="url(#qa)"></line>
+
+      <rect class="dg-box-crit" x="606" y="68" width="170" height="82"></rect>
+      <text class="dg-t" x="691" y="90" text-anchor="middle">the reload</text>
+      <text class="dg-t-c" x="691" y="108" text-anchor="middle">32% cache · 227k in</text>
+      <text class="dg-t-c" x="691" y="124" text-anchor="middle">$1.07 a call</text>
+      <text class="dg-t-s" x="691" y="141" text-anchor="middle">192 calls = $205</text>
+
+      <line class="dg-line" x1="776" y1="109" x2="812" y2="109" marker-end="url(#qa)"></line>
+      <rect class="dg-box" x="816" y="82" width="116" height="54"></rect>
+      <text class="dg-t" x="874" y="104" text-anchor="middle">30.6% of</text>
+      <text class="dg-t" x="874" y="120" text-anchor="middle">the bill</text>
+
+      <path class="dg-line" d="M 92 76 L 92 44 L 296 44" stroke="var(--settled)" stroke-width="1.6" marker-end="url(#qg)"></path>
+      <text class="dg-t" x="300" y="48" fill="var(--settled)">DELTA_TOOL_ARG_MAX_BYTES=4096 cuts the chain here — 41% of argument bytes on this lane</text>
+
+      <text class="dg-t-s" x="8" y="196">The intervention is at the first step, not the last. Compaction is not misbehaving; it is being fed.</text>
+      <text class="dg-t-s" x="8" y="216">Measured on this lane: 4.83 MB of stored arguments, 1.99 MB of it reclaimable at a 4 KB cap.</text>
+      <text class="dg-t-s" x="8" y="236">81% of that reclaim comes from one tool. This is a narrow, well-understood change.</text>
+    </svg>
+    <figcaption>Why the cheapest available setting attacks the most expensive line item.</figcaption>
+  </figure>
+</section>
+
+<section class="band">
+  <div class="col">
+    <span class="kicker">Ship today</span>
+    <h2>Three settings, no code, no release</h2>
+    <p class="sublede">All three already exist in 0.2.14, which the lane is already running. Each is
+    one environment variable and a restart.</p>
+  </div>
+
+  <div class="col">
+
+    <article class="item">
+      <div class="itemhead"><span class="fid">WIN 1</span><h3>Stop replaying long tool arguments on every turn</h3><span class="sev hi">biggest win</span></div>
+      <div class="reg reg-plain"><span class="rl">In plain terms</span>
+        <p>When the agent writes a long report body, it sends that text as an argument to a tool
+        &mdash; and that text then rides along in every single subsequent message for the rest of
+        the run. Nothing ever trims it. On this lane the model wrote arguments averaging 11.8 KB,
+        the largest 47.7 KB, and re-sent them again and again. There is a setting to cap that which
+        was built for Aperture, shipped in 0.2.12, and never switched on.</p></div>
+      <div class="reg reg-tech"><span class="rl">What is actually happening</span>
+        <p>Every large thing entering context passes a bounding rail &mdash; tool results get capped
+        and spilled to disk, retrieval blocks get capped, the self-file gets capped. Assistant
+        tool-call <em>arguments</em> had none, in either direction, because the shrinking pass opens
+        with <code>if (m.role !== "tool") return</code>. 0.2.12 added the rail and shipped it
+        <strong>opt-in for one cycle</strong>, deliberately, because its echo guard was new. That
+        cycle has passed and nobody turned it on.</p></div>
+      <div class="reg reg-spec"><span class="rl">The change, and what it is worth here</span>
+        <div class="mech"><b>DELTA_TOOL_ARG_MAX_BYTES=4096</b> &nbsp;<span>(config.ts:230, default 0 = OFF)</span>
+<br>
+<br><span>measured on this lane's journal, 4,899 calls:</span>
+<br>&nbsp;&nbsp;total stored argument bytes &nbsp;&nbsp;&nbsp;&nbsp;<b>4.83 MB</b>
+<br>&nbsp;&nbsp;reclaimable at a 4 KB cap &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>1.99 MB &nbsp;(41%)</b>
+<br>
+<br>&nbsp;&nbsp;aperture__qs_stage_body &nbsp;206 calls &nbsp;avg 11,831 B &nbsp;&rarr; <b>1.61 MB reclaimed</b>
+<br>&nbsp;&nbsp;remember &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;80 calls &nbsp;avg &nbsp;7,621 B &nbsp;&rarr; &nbsp;&nbsp;282 KB
+<br>&nbsp;&nbsp;aperture__qs_save_artifact &nbsp;82 calls &nbsp;&rarr; &nbsp;&nbsp;&nbsp;77 KB
+<br>
+<br><span>elision happens at the COMPACTION commit, not at write time — so it costs no</span>
+<br><span>extra cache churn, and the full arguments stay in `journal` for recall.</span></div></div>
+      <div class="reg reg-tech"><span class="rl">Risk, and how we would know</span>
+        <p><strong>Known cost:</strong> the guard that stops the model imitating the elision marker
+        adds roughly 8 extra model calls on a long filing session. That is the reason it shipped
+        opt-in. <strong>Watch:</strong> compaction count per run should fall, not rise; if the agent
+        starts re-writing work it already did, turn it off. The reference build measured 5
+        compactions going to 0, input tokens &minus;29.9%, and cost &minus;36.5% on the same job.</p></div>
+    </article>
+
+    <article class="item">
+      <div class="itemhead"><span class="fid">WIN 2</span><h3>Keep the cache warm for an hour instead of five minutes</h3><span class="sev mid">free, already proven on Ferni</span></div>
+      <div class="reg reg-plain"><span class="rl">In plain terms</span>
+        <p>The provider keeps a cached copy of the conversation so repeat work is cheap and fast.
+        By default it expires after five minutes. Ferni has been running the one-hour setting for
+        weeks; the Quick Search lanes never got it. The first call of every run currently lands at
+        21% cache hit &mdash; it is paying to re-read work it did minutes earlier.</p></div>
+      <div class="reg reg-tech"><span class="rl">What is actually happening</span>
+        <p><code>DELTA_CACHE_TTL=1h</code> attaches a one-hour retention to the stable cache
+        breakpoints. Cache writes bill at 1.25&times; input, so it costs a small premium on the
+        first turn and repays it on every read afterwards. On this lane reads dominate
+        overwhelmingly &mdash; 2,105 calls sit in the sub-one-minute band at 91% hit &mdash; so the
+        premium is easily covered.</p></div>
+      <div class="reg reg-spec"><span class="rl">The change</span>
+        <div class="mech"><b>DELTA_CACHE_TTL=1h</b> &nbsp;<span>(config.ts:197 — the literal string "1h" is the only accepted value)</span>
+<br>
+<br><span>what it targets on this lane:</span>
+<br>&nbsp;&nbsp;first call of a run &nbsp;&nbsp;&nbsp;&nbsp;140 calls &nbsp;<b>21% hit</b> &nbsp;$60.41
+<br>&nbsp;&nbsp;calls after a 1-5 min gap &nbsp;473 calls &nbsp;<b>66% hit</b> &nbsp;$299.48 &nbsp;avg <b>71.8 s</b>
+<br>&nbsp;&nbsp;calls after a &lt;1 min gap &nbsp;2,105 calls &nbsp;91% hit &nbsp;$309.14 &nbsp;avg 19.0 s</div></div>
+      <div class="reg reg-tech"><span class="rl">Risk</span>
+        <p>Low, and it is the one change already running in production elsewhere. The only downside
+        case is a lane that writes cache and never reads it back, which is the opposite of this
+        lane's profile.</p></div>
+    </article>
+
+    <article class="item">
+      <div class="itemhead"><span class="fid">WIN 3</span><h3>Let the agent finish writing down what it learns</h3><span class="sev mid">stops wasted turns</span></div>
+      <div class="reg reg-plain"><span class="rl">In plain terms</span>
+        <p>The agent keeps a small self-file of things it has learned. On this lane that file is
+        full, so writes to it are being refused &mdash; around a hundred times. Every refusal is a
+        turn the agent spent, paid for, and got nothing from, and it also means the lane has
+        silently stopped learning anything new.</p></div>
+      <div class="reg reg-tech"><span class="rl">What is actually happening</span>
+        <p><code>DELTA_SELF_MAX_TOKENS=2400</code> on this lane, against 4000 on the intake lanes
+        and 1600 on two others &mdash; three different values across one fleet, none of them chosen
+        for this workload. Self-file fullness turned out to be the single best predictor of degraded
+        self-learning across the fleet, which is why 0.2.12 put it on <code>/v1/status</code>.</p></div>
+      <div class="reg reg-spec"><span class="rl">The change</span>
+        <div class="mech"><b>DELTA_SELF_MAX_TOKENS=4000</b> &nbsp;<span>(matching the intake lanes)</span>
+<br>
+<br><span>on this lane, from the transcript:</span>
+<br>&nbsp;&nbsp;self-write refusals &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>~125</b> &nbsp;(42% of ALL tool errors)
+<br>&nbsp;&nbsp;write collisions between runs &nbsp;&nbsp;23
+<br>&nbsp;&nbsp;`remember` calls attempted &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;170
+<br>
+<br><span>check the current figure first: GET /v1/status → `self` reports live fullness.</span></div></div>
+      <div class="reg reg-tech"><span class="rl">Risk</span>
+        <p>A larger self-file means a slightly larger cached prefix. It sits in the stable part of
+        the prompt, so it is cache-read at the cheap rate rather than re-billed. Note this is a
+        different fix from the 23 collisions, which are two runs writing at once and are ours to
+        fix in 0.2.16.</p></div>
+    </article>
+
+  </div>
+</section>
+
+<section class="col">
+  <span class="kicker">Do not touch</span>
+  <h2>Two tempting changes to leave alone</h2>
+
+  <div class="gate">
+    <h3>Do not drop reasoning effort to <code>low</code> before this demo</h3>
+    <p>It is the most tempting dial on the board: our own effort lab measured <strong>&minus;56% p50
+    latency and half the cost</strong> at <code>low</code>, with blind quality inside the margin.
+    But that measurement was taken on <strong>chat-shaped</strong> work, and Quick Search is
+    research-shaped &mdash; multi-step, evidence-gathering, exactly the profile most likely to
+    degrade when you cut reasoning. Changing it a few days before the highest-stakes demo we have
+    had, on the axis we have not measured for this workload, trades a visible risk for an invisible
+    one. Test it after, properly, with their bench rig.</p>
+  </div>
+
+  <div class="gate">
+    <h3>Do not raise the compaction threshold</h3>
+    <p><code>DELTA_COMPACT_AT_TOKENS=200000</code> looks like an easy way to compact less often, and
+    compacting less often is exactly what we want. But the usable ceiling for
+    <code>claude-opus-5</code> is its window minus the output reserve &mdash; 249,000 &minus; 40,000
+    = <strong>209,000</strong>. There is about 9,000 tokens of headroom, which buys nothing, and
+    going past it trades a cache miss for a hard overflow. Win 1 reduces compaction the right way,
+    by putting less in.</p>
+  </div>
+</section>
+
+<section class="band">
+  <div class="col">
+    <span class="kicker">Then the release</span>
+    <h2>What 0.2.15 adds for this lane specifically</h2>
+    <p class="sublede">Not a general argument &mdash; these three were measured on
+    <code>aperture-qs-69598a208017</code> itself.</p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th style="width:5rem">Item</th><th>What it fixes here</th><th style="width:14rem">Measured on this lane</th></tr></thead>
+        <tbody>
+          <tr><td class="m">D-1</td><td>Runs that quietly answer an <em>earlier</em> question after compacting. On a demo this is the worst possible failure: confident, fluent, and about the wrong thing.</td><td class="r-hi">27 runs affected, 0 harmless</td></tr>
+          <tr><td class="m">D-9</td><td>Runs that hit the budget return only a line of counters, discarding finished work that is still on disk.</td><td class="r-hi">5 runs, $84.05, 98 min</td></tr>
+          <tr><td class="m">D-3</td><td>No way to see which tools actually registered. Relevant here because the lane depends on an MCP mount that can partly fail.</td><td>would have caught 3 incidents</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>If the demo lands before 0.2.15 ships, <strong>D-1 is the one to be aware of in the room</strong>:
+    it only fires after a compaction, so it is a risk on long runs and not on short ones. Keeping runs
+    short &mdash; which Win 1 also does &mdash; reduces the exposure.</p>
+  </div>
+</section>
+
+<section class="col">
+  <span class="kicker">Not ours</span>
+  <h2>Two Aperture-side error rates worth knowing before a demo</h2>
+  <p>These are Aperture's own MCP tools, not the harness, but they will be visible in the room:</p>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Tool</th><th class="num">Calls</th><th class="num">Errors</th><th class="num">Rate</th></tr></thead>
+      <tbody>
+        <tr><td><code>aperture__qs_save_artifact</code></td><td class="num">148</td><td class="num">26</td><td class="num r-hi">17.6%</td></tr>
+        <tr><td><code>aperture__qs_start</code></td><td class="num">153</td><td class="num">15</td><td class="num r-mid">9.8%</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Roughly one in six artifact saves failed. The agent recovers &mdash; that is why nobody noticed
+  &mdash; but each failure costs a turn, and a demo is exactly when the retry is visible. Worth a
+  look on their side even if nothing changes before the day.</p>
+</section>
+
+<section class="col">
+  <span class="kicker">Order of operations</span>
+  <h2>What I would do, in order</h2>
+
+  <ol class="battery">
+    <li><b>Check the live numbers first</b>
+      <span>Everything above is the 0.2.11 snapshot; the lane has been on 0.2.14 since 10 August,
+      and 0.2.13 already decoupled the retained tail from the trigger. Re-run the post-compaction
+      query against the live lane before assuming the $205 line is still that size. It will be
+      smaller. It will not be gone.</span></li>
+    <li><b>Set all three variables, restart, run one pinned job</b>
+      <span>They are independent, so they can go together. Compare against the same job on the
+      current settings.</span></li>
+    <li><b>Look at exactly four numbers</b>
+      <span>Compactions per run, post-compaction <code>input_tokens</code>, cost per run, and wall
+      clock. Win 1 should move all four down. If compactions go <em>up</em>, revert it &mdash; that
+      is the only signal that matters.</span></li>
+    <li><b>Then ship 0.2.15 behind it</b>
+      <span>D-1 removes the wrong-question failure, which is the one that would actually embarrass
+      us in front of a lab founder.</span></li>
+  </ol>
+
+  <p class="note" style="border-top:1px dotted var(--rule);padding-top:.85rem;color:var(--muted)">
+  All three settings are reversible by removing an environment variable and restarting. None of them
+  touches code, none is in the 0.2.15 diff, and none can regress a build that is already deployed
+  across twelve lanes.</p>
+</section>
+
+<footer>
+  Source: aperture-qs-69598a208017, 2026-08-10 pre-0.2.14 snapshot &mdash; 140 runs, 2,718 model
+  calls, 4,899 journal entries, $669.02 metered. Queried offline, aggregates only.<br>
+  Config knobs verified in src/config.ts at 2b54bc2. The live lane was suspended and deliberately
+  not woken to read it.
+</footer>
