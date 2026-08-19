@@ -1,0 +1,258 @@
+[
+ {
+  "effort": "low",
+  "rep": 0,
+  "ok": true,
+  "totalMs": 21233,
+  "calls": 5,
+  "perCall": [
+   {
+    "headersMs": 1361,
+    "firstEventMs": 1366,
+    "firstReasoningMs": 1702,
+    "firstActionMs": 3033,
+    "doneMs": 3082,
+    "reasoningTokens": 20,
+    "outputTokens": 114,
+    "firstAction": "function_call"
+   },
+   {
+    "headersMs": 692,
+    "firstEventMs": 692,
+    "firstReasoningMs": 1299,
+    "firstActionMs": 2759,
+    "doneMs": 2951,
+    "reasoningTokens": 13,
+    "outputTokens": 133,
+    "firstAction": "function_call"
+   },
+   {
+    "headersMs": 762,
+    "firstEventMs": 762,
+    "firstReasoningMs": 1980,
+    "firstActionMs": 3982,
+    "doneMs": 4094,
+    "reasoningTokens": 50,
+    "outputTokens": 168,
+    "firstAction": "function_call"
+   },
+   {
+    "headersMs": 404,
+    "firstEventMs": 406,
+    "firstReasoningMs": 1249,
+    "firstActionMs": 3570,
+    "doneMs": 7352,
+    "reasoningTokens": 127,
+    "outputTokens": 448,
+    "firstAction": "function_call"
+   },
+   {
+    "headersMs": 1081,
+    "firstEventMs": 1081,
+    "firstReasoningMs": null,
+    "firstActionMs": 2948,
+    "doneMs": 3609,
+    "reasoningTokens": 0,
+    "outputTokens": 49,
+    "firstAction": "message"
+   }
+  ]
+ },
+ {
+  "effort": "low",
+  "rep": 1,
+  "ok": true,
+  "totalMs": 20883,
+  "calls": 5,
+  "perCall": [
+   {
+    "headersMs": 535,
+    "firstEventMs": 541,
+    "firstReasoningMs": 1061,
+    "firstActionMs": 2194,
+    "doneMs": 2370,
+    "reasoningTokens": 15,
+    "outputTokens": 107,
+    "firstAction": "function_call"
+   },
+   {
+    "headersMs": 427,
+    "firstEventMs": 427,
+    "firstReasoningMs": 1173,
+    "firstActionMs": 2627,
+    "doneMs": 2723,
+    "reasoningTokens": 17,
+    "outputTokens": 136,
+    "firstAction": "function_call"
+   },
+   {
+    "headersMs": 412,
+    "firstEventMs": 412,
+    "firstReasoningMs": 1357,
+    "firstActionMs": 3297,
+    "doneMs": 3392,
+    "reasoningTokens": 42,
+    "outputTokens": 189,
+    "firstAction": "function_call"
+   },
+   {
+    "headersMs": 797,
+    "firstEventMs": 797,
+    "firstReasoningMs": 1318,
+    "firstActionMs": 3481,
+    "doneMs": 7323,
+    "reasoningTokens": 59,
+    "outputTokens": 367,
+    "firstAction": "function_call"
+   },
+   {
+    "headersMs": 621,
+    "firstEventMs": 623,
+    "firstReasoningMs": null,
+    "firstActionMs": 4273,
+    "doneMs": 4980,
+    "reasoningTokens": 0,
+    "outputTokens": 71,
+    "firstAction": "message"
+   }
+  ]
+ },
+ {
+  "effort": "medium",
+  "rep": 0,
+  "ok": true,
+  "totalMs": 29817,
+  "calls": 6,
+  "perCall": [
+   {
+    "headersMs": 431,
+    "firstEventMs": 431,
+    "firstReasoningMs": 2202,
+    "firstActionMs": 3363,
+    "doneMs": 3486,
+    "reasoningTokens": 17,
+    "outputTokens": 111,
+    "firstAction": "function_call"
+   },
+   {
+    "headersMs": 639,
+    "firstEventMs": 640,
+    "firstReasoningMs": 4045,
+    "firstActionMs": 6349,
+    "doneMs": 6444,
+    "reasoningTokens": 17,
+    "outputTokens": 164,
+    "firstAction": "function_call"
+   },
+   {
+    "headersMs": 404,
+    "firstEventMs": 404,
+    "firstReasoningMs": 1811,
+    "firstActionMs": 4791,
+    "doneMs": 4864,
+    "reasoningTokens": 41,
+    "outputTokens": 175,
+    "firstAction": "function_call"
+   },
+   {
+    "headersMs": 931,
+    "firstEventMs": 931,
+    "firstReasoningMs": 2072,
+    "firstActionMs": 4647,
+    "doneMs": 4771,
+    "reasoningTokens": 91,
+    "outputTokens": 206,
+    "firstAction": "function_call"
+   },
+   {
+    "headersMs": 454,
+    "firstEventMs": 454,
+    "firstReasoningMs": 1365,
+    "firstActionMs": 4917,
+    "doneMs": 7441,
+    "reasoningTokens": 72,
+    "outputTokens": 412,
+    "firstAction": "function_call"
+   },
+   {
+    "headersMs": 468,
+    "firstEventMs": 468,
+    "firstReasoningMs": null,
+    "firstActionMs": 1260,
+    "doneMs": 2734,
+    "reasoningTokens": 0,
+    "outputTokens": 56,
+    "firstAction": "message"
+   }
+  ]
+ },
+ {
+  "effort": "medium",
+  "rep": 1,
+  "ok": true,
+  "totalMs": 28273,
+  "calls": 6,
+  "perCall": [
+   {
+    "headersMs": 595,
+    "firstEventMs": 595,
+    "firstReasoningMs": 1681,
+    "firstActionMs": 3072,
+    "doneMs": 3077,
+    "reasoningTokens": 18,
+    "outputTokens": 111,
+    "firstAction": "function_call"
+   },
+   {
+    "headersMs": 354,
+    "firstEventMs": 354,
+    "firstReasoningMs": 2078,
+    "firstActionMs": 3928,
+    "doneMs": 4008,
+    "reasoningTokens": 19,
+    "outputTokens": 135,
+    "firstAction": "function_call"
+   },
+   {
+    "headersMs": 1073,
+    "firstEventMs": 1073,
+    "firstReasoningMs": 2023,
+    "firstActionMs": 5067,
+    "doneMs": 5101,
+    "reasoningTokens": 83,
+    "outputTokens": 205,
+    "firstAction": "function_call"
+   },
+   {
+    "headersMs": 550,
+    "firstEventMs": 550,
+    "firstReasoningMs": 1381,
+    "firstActionMs": 3601,
+    "doneMs": 3694,
+    "reasoningTokens": 43,
+    "outputTokens": 159,
+    "firstAction": "function_call"
+   },
+   {
+    "headersMs": 623,
+    "firstEventMs": 624,
+    "firstReasoningMs": 2009,
+    "firstActionMs": 7558,
+    "doneMs": 10114,
+    "reasoningTokens": 180,
+    "outputTokens": 527,
+    "firstAction": "function_call"
+   },
+   {
+    "headersMs": 344,
+    "firstEventMs": 344,
+    "firstReasoningMs": null,
+    "firstActionMs": 1359,
+    "doneMs": 2117,
+    "reasoningTokens": 0,
+    "outputTokens": 58,
+    "firstAction": "message"
+   }
+  ]
+ }
+]
