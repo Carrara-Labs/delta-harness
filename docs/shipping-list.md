@@ -1,4 +1,26 @@
-# Delta shipping list (as of 2026-08-10, 0.2.14 PUBLISHED)
+# Delta shipping list (as of 2026-08-19, 0.2.14 published; 0.2.15/0.2.16 cut and pipelined)
+
+## The version cut and the pipeline (2026-08-19)
+
+Two versions, cut by theme, **pipelined because Aperture lab testing is the bottleneck** - batching
+small releases would cost days of test time we do not have:
+
+- **0.2.15 - harness improvements from usage.** Plan: [`harness-0.2.15-plan.md`](./harness-0.2.15-plan.md),
+  five specs (`spec-session-ask-pin` / `spec-exhaustion-handoff` / `spec-tool-usability` /
+  `spec-codex-output-cap` / `spec-scratch-dir`). One input still open: the incoming Aperture request
+  list, which is the last data point before the final cut.
+- **0.2.16 - the OpenAI native path.** Audit: [`spec-responses-first-class.md`](./spec-responses-first-class.md).
+  Design: [`spec-provider-controls.md`](./spec-provider-controls.md) (CachePlan / ModelControls /
+  ReasoningCarry, MUST batch M1-M5). Driver: Quick Search demos to an OpenAI co-founder on
+  `gpt-5.6-sol`; the demo lane goes to **metered api.openai.com**, never the codex subscription
+  surface (the D-12 lesson: it 400s on undocumented parameters).
+
+The pipeline: spec tight -> full battery on Aperture QS + Ferni (tiers in
+[`harness-0.2.15-shipping.html`](./harness-0.2.15-shipping.html)) -> publish 0.2.15 -> the Aperture
+agent self-tests while we do Aperture-side config/memory work AND build 0.2.16 -> release 0.2.16 ->
+Aperture agent tests it specifically. Config-only QS wins
+([`aperture-qs-tuning-findings.md`](./aperture-qs-tuning-findings.md)) need no release and go first.
+
 
 **0.2.14 is out** (npm + ghcr + `v0.2.14`, site deployed, Ferni on the released package). It is a
 bounds-and-correctness release; its cache fix needs 10+ parallel tool calls and no lane in our fleet
