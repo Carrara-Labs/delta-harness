@@ -160,6 +160,13 @@ export function spillPathFor(workspace: string, runId: string, callId: string): 
   return `${workspace}/.delta/spill/${safe(runId)}.${safe(callId)}.txt`;
 }
 
+/** The sanitized `<runId>.` filename prefix spill files carry — one definition beside
+ *  spillPathFor, so the exhaustion handoff (run.ts) enumerates exactly what capAndSpill
+ *  wrote for this run and nothing else. */
+export function spillRunPrefix(runId: string): string {
+  return `${runId.replace(/[^\w-]/g, "_").slice(0, 80)}.`;
+}
+
 export async function capAndSpill(
   text: string,
   workspace: string,

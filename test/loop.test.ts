@@ -34,7 +34,10 @@ describe("budget guard", () => {
     expect(done.error).toContain("budget exhausted");
     expect(done.error).toContain(`${PROFILES.safe?.budget.maxSteps}`);
     const payload = JSON.parse(done.result ?? "{}");
-    expect(payload.output_text).toContain("budget exhausted");
+    // D-9: the counters are the operator diagnostic (runs.error, asserted above); the user
+    // gets the handoff — what happened and what to do differently, never the raw counters.
+    expect(payload.output_text).not.toContain("budget exhausted");
+    expect(payload.output_text).toContain("hit its budget");
   });
 
   test("cost budget triggers too", async () => {

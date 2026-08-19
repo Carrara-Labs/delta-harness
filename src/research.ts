@@ -137,6 +137,14 @@ function lastAssistantText(messages: ChatMsg[]): string {
   return "";
 }
 
+const safeSeg = (s: string): string => s.replace(/[^\w-]/g, "_").slice(0, 40) || "x";
+
+/** The sanitized `<runId>.` directory prefix research artifact dirs carry — one definition
+ *  beside the writer, so the exhaustion handoff (run.ts) enumerates exactly this run's trees. */
+export function researchRunPrefix(runId: string): string {
+  return `${safeSeg(runId)}.`;
+}
+
 async function researchOne(
   task: string,
   child: ChildConfig,
@@ -271,8 +279,7 @@ async function writeArtifact(
   task: string,
   text: string,
 ): Promise<string> {
-  const safe = (s: string) => s.replace(/[^\w-]/g, "_").slice(0, 40) || "x";
-  const dir = `${workspace}/research/${safe(runId)}.${safe(seq)}`;
+  const dir = `${workspace}/research/${researchRunPrefix(runId)}${safeSeg(seq)}`;
   mkdirSync(dir, { recursive: true });
   // Realpath BOTH sides (the workspace path itself may traverse symlinks, e.g. /tmp→/private/tmp)
   // so the check only fires on a genuine escape like `research -> /outside`.
@@ -280,7 +287,7 @@ async function writeArtifact(
   const real = realpathSync(dir);
   if (real !== realWs && !real.startsWith(`${realWs}/`))
     throw new Error("artifact dir escaped the workspace");
-  const path = `${dir}/${index}-${safe(task)}.md`;
+  const path = `${dir}/${index}-${safeSeg(task)}.md`;
   // Belt-and-braces: the child's own prose could quote a value it saw. Nothing a research
   // child produces reaches the workspace unredacted.
   const doc = redactSecretValues(`# ${task}\n\n${text}`);

@@ -8,6 +8,7 @@
 
 import type { Database } from "bun:sqlite";
 import { randomBytes } from "node:crypto";
+import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { SkillRegistryAdapter } from "./adapter-defaults";
 import type { CapabilityAdapter } from "./adapters";
@@ -36,7 +37,7 @@ import {
   outputCapped,
   providerErrorClass,
 } from "./provider";
-import { childTools, runResearch } from "./research";
+import { childTools, researchRunPrefix, runResearch } from "./research";
 import { retrieveSkills } from "./retrieval";
 import { redactSecretValues, scrubText } from "./scrub";
 import { type Charter, currentSelf, loadSelf, parseCharterMarkdown, writeSelf } from "./self";
@@ -45,6 +46,7 @@ import {
   capAndSpill,
   elide,
   elidedArgsRejection,
+  spillRunPrefix,
   type ToolCtx,
   type ToolDef,
   type Tools,
@@ -722,7 +724,7 @@ export async function executeRun(
 
   for (;;) {
     if (opts.signal?.aborted)
-      return finalize(deps, run, spine, "cancelled", "cancelled", model, usage);
+      return finalize(deps, run, spine, "cancelled", { user: "cancelled" }, model, usage);
 
     const tools = effectiveTools();
     const last = lastRunMessage(db, run.id);
@@ -766,7 +768,7 @@ export async function executeRun(
       }
       // all tool results in — fall through to the next model call
     } else if (assistant) {
-      return finalize(deps, run, spine, "done", assistant.content ?? "", model, usage);
+      return finalize(deps, run, spine, "done", { user: assistant.content ?? "" }, model, usage);
     }
 
     // Budget guard — the only thing that bounds the loop (spec §B: no wall-clock).
@@ -780,7 +782,15 @@ export async function executeRun(
     if (stepCount >= b.maxSteps || billed >= b.maxTokens || usage.costUsd >= b.maxCostUsd) {
       const why = `budget exhausted: ${stepCount}/${b.maxSteps} steps, ${billed}/${b.maxTokens} tokens, $${usage.costUsd.toFixed(4)}/$${b.maxCostUsd}`;
       events.emit("error", spine, { "error.type": "budget", message: why });
-      return finalize(deps, run, spine, "failed", selfWriteNote(why), model, usage);
+      return finalize(
+        deps,
+        run,
+        spine,
+        "failed",
+        { user: exhaustionHandoff(deps, run, committedSelfWrite), diagnostic: selfWriteNote(why) },
+        model,
+        usage,
+      );
     }
 
     // Build the turn's STABLE parts once — the spine, the ephemeral blocks, and the tool
@@ -936,7 +946,18 @@ export async function executeRun(
         if (stepCount >= b.maxSteps || billed2 >= b.maxTokens || usage.costUsd >= b.maxCostUsd) {
           const why = `budget exhausted (post-compaction): ${stepCount}/${b.maxSteps} steps, ${billed2}/${b.maxTokens} tokens, $${usage.costUsd.toFixed(4)}/$${b.maxCostUsd}`;
           events.emit("error", spine, { "error.type": "budget", message: why });
-          return finalize(deps, run, spine, "failed", selfWriteNote(why), model, usage);
+          return finalize(
+            deps,
+            run,
+            spine,
+            "failed",
+            {
+              user: exhaustionHandoff(deps, run, committedSelfWrite),
+              diagnostic: selfWriteNote(why),
+            },
+            model,
+            usage,
+          );
         }
         if (cu.shrank) {
           history = activeSessionMessages(db, run.session_id); // re-fetch the shrunken history
@@ -1045,7 +1066,8 @@ export async function executeRun(
     });
 
     if (!result.ok) {
-      if (result.aborted) return finalize(deps, run, spine, "cancelled", "cancelled", model, usage);
+      if (result.aborted)
+        return finalize(deps, run, spine, "cancelled", { user: "cancelled" }, model, usage);
       // Context overflow is recoverable, not fatal: a big tool result or a long history blew the
       // window. Force a compaction and retry the SAME turn ONCE rather than terminal-failing an
       // hours-long task. Only retry if compaction actually shed tokens (else we'd re-overflow).
@@ -1100,7 +1122,7 @@ export async function executeRun(
           message: result.error,
         },
       );
-      return finalize(deps, run, spine, "failed", result.error, result.model, usage);
+      return finalize(deps, run, spine, "failed", { user: result.error }, result.model, usage);
     }
 
     model = result.model;
@@ -1704,6 +1726,86 @@ async function execCall(
   })();
 }
 
+/** D-9-min: a budget-exhausted run hands back what it already has — the plan and the artifact
+ * paths already on disk — instead of one sentence of counters. Pointers, not prose: the cheap
+ * final "answer from context" call is 0.2.16 scope. Three properties hold by construction:
+ * (1) RUN-scoped — paths are enumerated from the filesystem under this run's sanitized-id
+ * prefix (the same one the writers used), never parsed out of model-visible rows, so nothing
+ * stale or forged can enter and no DB scan is needed; (2) fail-open — a block that throws is
+ * dropped, never the finalize; (3) bounded — 10 KiB by UTF-8 bytes, 20 paths per family.
+ * Ephemeral (store:false, non-idempotent-terminal) runs get no paths at all: queue.ts wipes
+ * this run's spill AND research right after settle, so a pointer would be dead on arrival.
+ * The model's scratchpad (`scratch/<runId>`) is never listed for the same reason — queue.ts
+ * wipes it for EVERY terminal run. */
+const HANDOFF_CAP_BYTES = 10_240;
+const HANDOFF_MAX_PER_FAMILY = 20;
+
+function exhaustionHandoff(deps: Deps, run: RunRow, committedSelfWrite: boolean): string {
+  const parts: string[] = ["This run hit its budget before finishing. Nothing below was lost."];
+  try {
+    const plan = readTodo(deps.db, run.session_id);
+    if (plan.length)
+      parts.push(
+        elide(
+          `Current plan (session working notes) at the point it stopped:\n${plan
+            .map((it) => `- [${it.status}] ${it.text}`)
+            .join("\n")}`,
+          4_000,
+        ),
+      );
+  } catch {}
+  let ephemeral = false;
+  try {
+    const req = JSON.parse(run.request) as RunRequest;
+    ephemeral = req.store === false && !req.idempotency_terminal;
+  } catch {}
+  if (ephemeral) {
+    parts.push("Intermediate results were not retained (this was an ephemeral turn).");
+  } else {
+    try {
+      const ws = resolve(deps.workspace);
+      const family = (dir: string, prefix: string): string[] => {
+        try {
+          return readdirSync(dir)
+            .filter((e) => e.startsWith(prefix))
+            .sort()
+            .map((e) => `${dir}/${e}`);
+        } catch {
+          return []; // most runs spill/research nothing — the dir may not exist
+        }
+      };
+      const spills = family(`${ws}/.delta/spill`, spillRunPrefix(run.id));
+      // Research artifacts are FILES inside per-call dirs — list the files, which is what
+      // read_file takes (the dirs alone would send the user somewhere read_file rejects).
+      const research = family(`${ws}/research`, researchRunPrefix(run.id)).flatMap((d) =>
+        family(d, ""),
+      );
+      const bounded = (paths: string[]): string[] => {
+        const head = paths.slice(0, HANDOFF_MAX_PER_FAMILY).map((p) => `- ${p}`);
+        if (paths.length > head.length) head.push(`- …and ${paths.length - head.length} more`);
+        return head;
+      };
+      const listed = [...bounded(spills), ...bounded(research)];
+      if (listed.length)
+        parts.push(
+          `Full results already on disk (read_file these, or recall a keyword):\n${listed.join("\n")}`,
+        );
+    } catch {}
+  }
+  if (committedSelfWrite)
+    parts.push(
+      "[note: a change to your self-file (DELTA.md) was saved during this turn and persists — it was not rolled back.]",
+    );
+  parts.push(
+    "The work was too large to finish in one run. Narrow the question rather than repeating it.",
+  );
+  let out = parts.join("\n\n");
+  // Byte-true cap: elide counts chars, so shrink until the UTF-8 measure agrees.
+  while (Buffer.byteLength(out, "utf8") > HANDOFF_CAP_BYTES)
+    out = elide(out, Math.floor(out.length * 0.8));
+  return out;
+}
+
 /** The driver-compatible Responses payload. Every terminal state gets one —
  * including cancellations that never started (queue.cancel uses this too). */
 export function responsePayload(
@@ -1737,17 +1839,24 @@ export function responsePayload(
   };
 }
 
+/** What a terminal run hands each audience: `user` becomes output_text (and, on failure, the
+ *  transcript row); `diagnostic` is the operator string for `runs.error` (defaults to `user`).
+ *  Split so a budget failure can carry the D-9 handoff to the user while the counters stay
+ *  where operators look. Mandatory at every call site — a bare string landing in the wrong
+ *  field is the exact confusion this shape exists to prevent. */
+type Outcome = { user: string; diagnostic?: string };
+
 function finalize(
   deps: Deps,
   run: RunRow,
   spine: Spine,
   status: "done" | "failed" | "cancelled",
-  text: string,
+  out: Outcome,
   model: string,
   usage: Usage,
 ): RunRow {
   const { db, events } = deps;
-  const payload = responsePayload(run, status, text, model, usage);
+  const payload = responsePayload(run, status, out.user, model, usage);
   const outputText = payload.output_text;
   db.transaction(() => {
     if (status !== "done") {
@@ -1763,7 +1872,7 @@ function finalize(
     ).run(
       status,
       JSON.stringify(payload),
-      status === "done" ? null : text,
+      status === "done" ? null : (out.diagnostic ?? out.user),
       JSON.stringify(usage),
       Date.now(),
       run.id,
