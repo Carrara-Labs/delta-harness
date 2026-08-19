@@ -6,6 +6,60 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.16] - 2026-08-19
+
+OpenAI as a first-class citizen. The Responses wire worked but was a ported integration: we
+dropped the model's own reasoning every turn, dropped the `phase` field that tells GPT-5.5+ apart
+an intermediate update from a final answer, used none of our three-release cache-placement
+discipline there, mispriced the 5.6 family ~4×, and told the operator none of it. Every change is
+gated per backend: `api.openai.com` gets the full surface (each field wire-proven live on
+2026-08-19), `chatgpt.com` receives byte-identical requests vs 0.2.15 until the Delos probe
+battery (`docs/probe-request-delos-0.2.16.md`) flips each predicate on evidence. The Anthropic
+and Chat wires emit byte-identical requests — pinned by test. Plan and review arbitration:
+`docs/harness-0.2.16-plan.md`.
+
+### Upgrade
+No schema migration; reversible from 0.2.13–0.2.15. No behavior change on Anthropic, Chat, or
+chatgpt.com lanes. On `api.openai.com` Responses lanes the upgrade is additive: requests gain
+`include: ["reasoning.encrypted_content"]`, replayed reasoning items, `phase`, and (gpt-5.6+)
+explicit cache breakpoints. One new boot line appears if a configured control is unmapped on the
+lane's wire (e.g. `DELTA_SPEED` on Responses).
+
+### Added
+- **Reasoning + phase carry (M1).** Reasoning items are captured from `response.output_item.done`
+  (with `include: ["reasoning.encrypted_content"]`), ride the assistant message, and replay
+  verbatim ahead of the turn's text and calls — OpenAI's own guidance for consecutive tool
+  chains, and the only option that keeps the prompt prefix byte-stable. `phase` round-trips so
+  intermediate updates are never re-read as final answers. Contained everywhere else: the chat
+  wire strips both fields (a strict endpoint would 400 a failover), `toAnthropic` rebuilds,
+  compaction strips reasoning from retained rows (it reasons about the history the rewrite just
+  replaced) while the archive keeps originals, and the identifier harvest reads stripped rows.
+- **Explicit prompt-cache breakpoints on Responses (M2).** The same placement brain
+  (`rollingMarks`), a third wire-specific renderer: one stable mark on the first user message
+  (caching instructions + tools + itself) plus two rolling, capped at 3 because implicit mode's
+  own breakpoint spends the fourth write slot. Additive under implicit mode; model-gated to
+  gpt-5.6+ (older models 400 on the field).
+- **`DELTA_TEXT_VERBOSITY`** → `text.verbosity` and **`DELTA_REASONING_SUMMARY=auto`** →
+  `reasoning.summary` on the Responses wire (M4). The summary request finally feeds the SSE
+  consumer that has been dead code since it was built.
+- **Unmapped-control reporting (M4).** A configured control the primary wire cannot render is
+  named on one boot stderr line and in a `controls` block on `/v1/status` — same computation,
+  they can never disagree.
+- **Failed utility calls are visible (C1).** A child/utility model failure now emits `model.call`
+  with `is_error` + the classified error enum and one stderr line. Previously the error became
+  tool-result text nobody greps — the Delos gate run measured 3 child 400s in tool results, 0 in
+  stdout, 0 in telemetry; 24/24 child failures hid that way for two weeks before D-12.
+- **Append-append self-file merges (C2).** Two runs both appending learned lines to the same
+  DELTA.md base now merge engine-side, losslessly (48 fleet collisions each billed a model turn
+  to concatenate two suffixes). Rewrites keep the conflict contract — auto-merge never guesses.
+
+### Fixed
+- **gpt-5.6 pricing (M3).** `gpt-5.6-sol/terra/luna` (+ the `gpt-5.6` alias) get real entries;
+  sol was prefix-matching `gpt-5` and under-billing the metered lane ~4×. Cache writes are read
+  from the nested `input_tokens_details.cache_write_tokens` (5.6+ bills them 1.25×; the existing
+  multiplier applies the moment the field is parsed).
+- `KNOWN_EFFORTS` learns `max` (docs-only list, not a gate).
+
 ## [0.2.15] - 2026-08-19
 
 Stop losing the task and the output. Twelve changes, every one motivated by a number measured on

@@ -110,14 +110,35 @@ describe("S3 utility-tier calls are visible", () => {
     expect(seen[0]?.before_turn).toBe(1);
   });
 
-  test("a failed call emits nothing — it carries no usage to report", () => {
+  test("a FAILED call emits too — error class on telemetry, one stderr line (C1, 0.2.16)", () => {
+    // The old contract ("no usage → emit nothing") is how 24/24 child provider failures hid
+    // for two weeks: a child's error becomes tool-result TEXT the parent model reads, and
+    // nothing an operator greps. Delos's D-12 gate run measured it — 3 failures in tool
+    // results, 0 in stdout, 0 in telemetry.
     const { events, seen } = newEvents();
-    emitUtilityCall(events, { turn: 1 }, "reflection", {
-      ok: false,
-      model: "m",
-      error: "boom",
-    } as never);
-    expect(seen).toHaveLength(0);
+    const errs: string[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => {
+      errs.push(a.join(" "));
+    };
+    try {
+      emitUtilityCall(events, { turn: 1 }, "research", {
+        ok: false,
+        model: "gpt-5.6",
+        error: "max_output_tokens is not supported",
+        status: 400,
+      } as never);
+    } finally {
+      console.error = orig;
+    }
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.tier).toBe("utility");
+    expect(seen[0]?.purpose).toBe("research");
+    expect(seen[0]?.is_error).toBe(true);
+    expect(seen[0]?.["error.class"]).toBe("request"); // the classified enum, never free text
+    expect(errs.length).toBe(1);
+    expect(errs[0]).toContain("research");
+    expect(errs[0]).toContain("400");
   });
 
   test("the emitter never returns or mutates usage — it cannot double-charge", () => {

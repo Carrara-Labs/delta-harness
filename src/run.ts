@@ -576,8 +576,12 @@ export async function executeRun(
             return (content: string) => {
               const r = writeSelf(db, resolve(deps.workspace), content, selfMaxBytes, selfBase);
               if (r.ok) {
-                deps.charter = parseCharterMarkdown(content);
-                selfBase = content;
+                // The LANDED content, not the attempted one — an append-append auto-merge (C2)
+                // writes `disk + our suffix`, and advancing to `content` would leave this run
+                // holding a stale charter and a base its own successful write now conflicts with.
+                const landed = r.landed ?? content;
+                deps.charter = parseCharterMarkdown(landed);
+                selfBase = landed;
                 committedSelfWrite = true; // durable side effect — finalize must acknowledge it
               } else if (r.conflict && typeof r.current === "string") {
                 selfBase = r.current; // the model will merge from this and retry

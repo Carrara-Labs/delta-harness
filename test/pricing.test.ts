@@ -58,3 +58,31 @@ describe("parsePrices override", () => {
     expect(parsePrices(undefined)).toEqual({ ...BAKED_PRICES });
   });
 });
+
+describe("gpt-5.6 family (M3, 0.2.16)", () => {
+  // Live pricing page 2026-08-19 (supersedes the July launch-blog numbers, which were cut).
+  // Without these entries gpt-5.6-sol prefix-matched "gpt-5" at $1.25/$10 — the metered demo
+  // lane under-billed ~4×. Long-context (>272K) tiers exist and are NOT modeled; the
+  // DELTA_MODEL_PRICES override is the correction path if a lane lives in that band.
+  test("sol/terra/luna and the bare alias resolve to their own prices, not gpt-5's", () => {
+    expect(resolvePrice("gpt-5.6-sol", BAKED_PRICES)).toEqual({ in: 5, out: 30, cacheRead: 0.5 });
+    expect(resolvePrice("gpt-5.6-terra", BAKED_PRICES)).toEqual({ in: 2, out: 12, cacheRead: 0.2 });
+    expect(resolvePrice("gpt-5.6-luna", BAKED_PRICES)).toEqual({
+      in: 0.2,
+      out: 1.2,
+      cacheRead: 0.02,
+    });
+    // The "gpt-5.6" alias routes to sol server-side; it must not fall back to gpt-5 pricing.
+    expect(resolvePrice("gpt-5.6", BAKED_PRICES)).toEqual({ in: 5, out: 30, cacheRead: 0.5 });
+    // …and gpt-5 itself keeps its own entry (prefix matching must not shadow it).
+    expect(resolvePrice("gpt-5", BAKED_PRICES)).toEqual({ in: 1.25, out: 10, cacheRead: 0.125 });
+  });
+  test("cache writes bill at 1.25× — the OpenAI 5.6 rate matches the existing multiplier", () => {
+    const sol = { in: 5, out: 30, cacheRead: 0.5 };
+    // Guide example shape: 2600 input = 2000 cached + 400 written + 200 fresh.
+    // 200*5 + 2000*0.5 + 400*6.25 + 0 = 1000 + 1000 + 2500 = 4500 / 1e6
+    expect(
+      computeCost(sol, { input: 2_600, output: 0, cacheRead: 2_000, cacheWrite: 400 }),
+    ).toBeCloseTo(0.0045, 8);
+  });
+});

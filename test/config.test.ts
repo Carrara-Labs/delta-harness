@@ -5,7 +5,7 @@
 // stdio branch on Bun.spawn(undefined). Exercised through the public loadConfig surface.
 
 import { describe, expect, test } from "bun:test";
-import { loadConfig } from "../src/config";
+import { loadConfig, unmappedControls } from "../src/config";
 
 describe("DELTA_MCP_SERVERS parsing", () => {
   test("valid http + stdio entries pass through in order", () => {
@@ -120,5 +120,79 @@ describe("scratch-root overlap guard (D-7 review fix)", () => {
       DELTA_SCRATCH_DIR: "/data/scratch",
     });
     expect(cfg.scratchDir).toBe("/data/scratch");
+  });
+});
+
+describe("Responses tuning knobs + unmapped-control reporting (M4, 0.2.16)", () => {
+  test("DELTA_TEXT_VERBOSITY and DELTA_REASONING_SUMMARY parse onto the provider", () => {
+    const cfg = loadConfig({
+      MODEL_API: "responses",
+      MODEL_BASE_URL: "https://api.openai.com/v1",
+      DELTA_TEXT_VERBOSITY: "low",
+      DELTA_REASONING_SUMMARY: "auto",
+    });
+    expect(cfg.provider.textVerbosity).toBe("low");
+    expect(cfg.provider.reasoningSummary).toBe("auto");
+  });
+  test("unrecognized values are ignored, not sent", () => {
+    const cfg = loadConfig({
+      MODEL_API: "responses",
+      DELTA_TEXT_VERBOSITY: "verbose", // not a level
+      DELTA_REASONING_SUMMARY: "always", // only "auto" exists
+    });
+    expect(cfg.provider.textVerbosity).toBeUndefined();
+    expect(cfg.provider.reasoningSummary).toBeUndefined();
+  });
+  test("a configured control the primary wire cannot render is REPORTED, not silent", () => {
+    // The D-2/D-3 principle: the engine knowing something the operator cannot see is the defect.
+    expect(
+      unmappedControls(
+        loadConfig({ MODEL_API: "responses", DELTA_SPEED: "fast", DELTA_CACHE_TTL: "1h" }).provider,
+      ).sort(),
+    ).toEqual(["DELTA_CACHE_TTL", "DELTA_SPEED"]);
+    // …and the same knobs on the wire that DOES render them are not listed.
+    expect(
+      unmappedControls(
+        loadConfig({ MODEL_API: "anthropic", DELTA_SPEED: "fast", DELTA_CACHE_TTL: "1h" }).provider,
+      ),
+    ).toEqual([]);
+    // The chat wire renders cacheTtl (withPromptCache) but has no fast mode.
+    expect(unmappedControls(loadConfig({ DELTA_SPEED: "fast", DELTA_CACHE_TTL: "1h" }).provider)).toEqual(
+      ["DELTA_SPEED"],
+    );
+    // Verbosity/summary are Responses-only.
+    expect(
+      unmappedControls(
+        loadConfig({
+          MODEL_API: "anthropic",
+          DELTA_TEXT_VERBOSITY: "low",
+          DELTA_REASONING_SUMMARY: "auto",
+        }).provider,
+      ).sort(),
+    ).toEqual(["DELTA_REASONING_SUMMARY", "DELTA_TEXT_VERBOSITY"]);
+    // …and HOST-suppressed knobs are unmapped too (codex #6): a chatgpt.com Responses lane
+    // never sends them, so reporting them as live would lie to exactly that lane.
+    expect(
+      unmappedControls(
+        loadConfig({
+          MODEL_API: "responses",
+          MODEL_BASE_URL: "https://chatgpt.com/backend-api/codex",
+          DELTA_TEXT_VERBOSITY: "low",
+          DELTA_REASONING_SUMMARY: "auto",
+        }).provider,
+      ).sort(),
+    ).toEqual(["DELTA_REASONING_SUMMARY", "DELTA_TEXT_VERBOSITY"]);
+    expect(
+      unmappedControls(
+        loadConfig({
+          MODEL_API: "responses",
+          MODEL_BASE_URL: "https://api.openai.com/v1",
+          DELTA_TEXT_VERBOSITY: "low",
+          DELTA_REASONING_SUMMARY: "auto",
+        }).provider,
+      ),
+    ).toEqual([]);
+    // Nothing configured → nothing reported.
+    expect(unmappedControls(loadConfig({}).provider)).toEqual([]);
   });
 });

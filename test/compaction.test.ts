@@ -7,7 +7,7 @@
 import { describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { maybeCompact } from "../src/compaction";
+import { maybeCompact, stripReasoningItems } from "../src/compaction";
 import { openDb } from "../src/db";
 import { Events } from "../src/events";
 import type { ChatMsg, ChatRequest } from "../src/provider";
@@ -864,5 +864,128 @@ describe("tail demotion — forged sentinel", () => {
     // no big body survives anywhere is wrong too — on the demotion-only path the prefix is not
     // summarized, so it legitimately keeps its content.
     expect(JSON.stringify(active(db))).toContain("earlier tool result, body dropped");
+  });
+});
+
+describe("reasoning carry across compaction (M1, 0.2.16)", () => {
+  test("stripReasoningItems: assistant rows lose the field; everything else is untouched", () => {
+    const withRs = JSON.stringify({
+      role: "assistant",
+      content: "checking",
+      tool_calls: [{ id: "c1", type: "function", function: { name: "f", arguments: "{}" } }],
+      reasoningItems: [{ type: "reasoning", id: "rs_1", encrypted_content: "blob123456789" }],
+      phase: "intermediate",
+    });
+    const out = JSON.parse(stripReasoningItems(withRs)) as Record<string, unknown>;
+    expect("reasoningItems" in out).toBe(false);
+    expect(out.phase).toBe("intermediate"); // phase describes the message, not the vanished prefix
+    expect(out.content).toBe("checking");
+    // Fast paths return the SAME string: no field, non-assistant, malformed.
+    const plain = JSON.stringify({ role: "assistant", content: "hi" });
+    expect(stripReasoningItems(plain)).toBe(plain);
+    const tool = JSON.stringify({ role: "tool", tool_call_id: "c", content: '"reasoningItems"' });
+    expect(stripReasoningItems(tool)).toBe(tool);
+    expect(stripReasoningItems("{not json reasoningItems\"")).toBe('{not json reasoningItems"');
+  });
+
+  test("retained assistant rows come out of a compaction without their reasoning items", async () => {
+    const db = openDb(":memory:");
+    const events = new Events(db);
+    const msgs: ChatMsg[] = [];
+    for (let i = 0; i < 12; i++) {
+      msgs.push({ role: "user", content: `question ${i} ${"q".repeat(300)}` });
+      msgs.push({
+        role: "assistant",
+        content: `answer ${i} ${"a".repeat(300)}`,
+        reasoningItems: [{ type: "reasoning", id: `rs_${i}`, encrypted_content: "x".repeat(64) }],
+        phase: "final_answer",
+      });
+    }
+    seedSession(db, msgs);
+    const did = await maybeCompact(
+      db,
+      events,
+      okSummary,
+      "s",
+      { sessionId: "s" },
+      { recentBudgetTokens: 20, anchorRunId: "r" },
+    );
+    expect(did).toBeTruthy();
+    const tail = active(db).filter((m) => m.role === "assistant" && !isSummary(m));
+    expect(tail.length).toBeGreaterThan(0);
+    for (const m of tail) {
+      expect("reasoningItems" in m).toBe(false);
+      // phase survives — it is a property of the message itself.
+      expect((m as { phase?: string }).phase).toBe("final_answer");
+    }
+    // The archive keeps the original rows verbatim (never mutate a stored row).
+    const archived = (
+      db
+        .query("SELECT msg FROM messages WHERE session_id='s' AND active=0 ORDER BY id")
+        .all() as { msg: string }[]
+    ).filter((r) => r.msg.includes('"reasoningItems"'));
+    expect(archived.length).toBeGreaterThan(0);
+    function isSummary(m: ChatMsg): boolean {
+      return typeof m.content === "string" && m.content.includes("earlier turns compacted");
+    }
+  });
+
+  test("opaque reasoning blobs never feed the identifier harvest", async () => {
+    const db = openDb(":memory:");
+    const events = new Events(db);
+    const msgs: ChatMsg[] = [];
+    // A digit-run that looks exactly like a harvestable identifier, living ONLY inside an
+    // encrypted payload. If the harvest reads raw rows it will demand the summary keep it.
+    const blobId = "9915550731";
+    for (let i = 0; i < 12; i++) {
+      msgs.push({ role: "user", content: `question ${i} ${"q".repeat(300)}` });
+      msgs.push({
+        role: "assistant",
+        content: `answer ${i} ${"a".repeat(300)}`,
+        reasoningItems: [{ type: "reasoning", id: `rs_${i}`, encrypted_content: `gAAA${blobId}==` }],
+      });
+    }
+    seedSession(db, msgs);
+    await maybeCompact(
+      db,
+      events,
+      okSummary, // the summary does NOT contain blobId → a raw-row harvest would appendix it
+      "s",
+      { sessionId: "s" },
+      { recentBudgetTokens: 20, anchorRunId: "r" },
+    );
+    const summaryRow = active(db).find(
+      (m) => typeof m.content === "string" && m.content.includes("earlier turns compacted"),
+    );
+    expect(summaryRow).toBeDefined();
+    expect((summaryRow as { content: string }).content).not.toContain(blobId);
+  });
+});
+
+describe("opaque carry cannot distort retention (codex #3, 0.2.16)", () => {
+  test("a session with huge reasoning blobs keeps the same visible tail as one without", async () => {
+    // Retained rows are stripped at commit, so blob bytes must not consume retained-tail
+    // budget and evict visible turns the model could actually use.
+    async function tailLen(blob: boolean): Promise<number> {
+      const db = openDb(":memory:");
+      const events = new Events(db);
+      const msgs: ChatMsg[] = [];
+      for (let i = 0; i < 12; i++) {
+        msgs.push({ role: "user", content: `question ${i} ${"q".repeat(300)}` });
+        msgs.push({
+          role: "assistant",
+          content: `answer ${i} ${"a".repeat(300)}`,
+          ...(blob
+            ? { reasoningItems: [{ type: "reasoning", id: `rs_${i}`, encrypted_content: "Z".repeat(8_000) }] }
+            : {}),
+        });
+      }
+      seedSession(db, msgs);
+      await maybeCompact(db, events, okSummary, "s", { sessionId: "s" }, { recentBudgetTokens: 400, anchorRunId: "r" });
+      const n = active(db).length;
+      db.close();
+      return n;
+    }
+    expect(await tailLen(true)).toBe(await tailLen(false));
   });
 });

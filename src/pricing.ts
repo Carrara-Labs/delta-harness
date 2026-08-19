@@ -49,6 +49,15 @@ export const BAKED_PRICES: Record<string, ModelPrice> = {
   "glm-5.2": { in: 0.84, out: 2.64, cacheRead: 0.156 },
   "glm-5": { in: 0.6, out: 1.92, cacheRead: 0.12 },
   "gpt-5": { in: 1.25, out: 10, cacheRead: 0.125 }, // codex #5: was inheriting 5.5's price via substring
+  // GPT-5.6 family — live pricing page 2026-08-19. Without these, sol prefix-matched "gpt-5"
+  // and the metered demo lane under-billed ~4×. Cache writes bill 1.25× (computeCost's existing
+  // multiplier — OpenAI's 5.6 rate happens to match Anthropic's 5-min rate exactly). The >272K
+  // long-context tier (2× in / 1.5× out) is NOT modeled; override via DELTA_MODEL_PRICES if a
+  // lane lives there. "gpt-5.6" is the server-side alias for sol.
+  "gpt-5.6": { in: 5, out: 30, cacheRead: 0.5 },
+  "gpt-5.6-sol": { in: 5, out: 30, cacheRead: 0.5 },
+  "gpt-5.6-terra": { in: 2, out: 12, cacheRead: 0.2 },
+  "gpt-5.6-luna": { in: 0.2, out: 1.2, cacheRead: 0.02 },
   // Anthropic NATIVE model ids use dashes ("claude-haiku-4-5"); alias them so the native
   // wire path never meters $0 (codex #2).
   "claude-haiku-4-5": { in: 1, out: 5, cacheRead: 0.1 },

@@ -6,6 +6,7 @@
 // feed SSE (M3). Field names follow OTel GenAI semantic conventions — no OTel SDK.
 
 import type { Database } from "bun:sqlite";
+import { providerErrorClass } from "./provider";
 
 export type Spine = {
   userId?: string;
@@ -110,14 +111,35 @@ export function emitUtilityCall(
   purpose: UtilityPurpose,
   r: {
     model: string;
-    /** Absent on the failure branch of `ModelResult` — a failed call reports no tokens, so there is
-     *  nothing to emit and the failure is already carried by the retry/error paths. */
+    /** Absent on the failure branch of `ModelResult`. */
     usage?: { input: number; output: number; cacheRead: number; costUsd: number };
     latencyMs?: number;
+    error?: string;
+    status?: number;
   },
   beforeTurn?: number,
 ): void {
-  if (!r.usage) return;
+  // C1 (0.2.16): a failed UTILITY call must be visible. The old "no usage → emit nothing"
+  // contract assumed the failure was carried by the retry/error paths — false for children,
+  // whose error becomes tool-result TEXT the parent model reads and no operator greps. The
+  // Delos D-12 gate run measured the blind spot: 3 child provider 400s in tool results, 0 in
+  // stdout, 0 in telemetry (and 24/24 failures hid that way for two weeks before it). One
+  // event with the classified enum (never free text — SAFE_ATTRS) plus one stderr line.
+  if (!r.usage) {
+    if (r.error === undefined) return; // not a ModelResult failure — nothing to say
+    events.emit("model.call", spine, {
+      "gen_ai.request.model": r.model,
+      tier: "utility",
+      purpose,
+      is_error: true,
+      "error.class": providerErrorClass(r.status, r.error),
+      ...(beforeTurn !== undefined ? { before_turn: beforeTurn } : {}),
+    });
+    console.error(
+      `delta: ${purpose} model call failed${r.status ? ` (${r.status})` : ""}: ${r.error.slice(0, 200)}`,
+    );
+    return;
+  }
   events.emit("model.call", spine, {
     "gen_ai.request.model": r.model,
     "gen_ai.usage.input_tokens": r.usage.input,

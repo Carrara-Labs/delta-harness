@@ -19,7 +19,22 @@ export type UserPart =
 export type ChatMsg =
   | { role: "system"; content: string }
   | { role: "user"; content: string | UserPart[] }
-  | { role: "assistant"; content: string | null; tool_calls?: WireToolCall[] }
+  | {
+      role: "assistant";
+      content: string | null;
+      tool_calls?: WireToolCall[];
+      /** M1 (0.2.16): the model's own reasoning output items (opaque, `encrypted_content`
+       * inside), captured VERBATIM from the Responses wire and replayed verbatim on it —
+       * OpenAI's guidance for consecutive tool calls, and the only option that keeps the
+       * prompt prefix byte-stable. Never rendered on any other wire (chat strips, Anthropic
+       * rebuilds); stripped from retained rows at compaction (the items reason about a
+       * history the rewrite just replaced). */
+      reasoningItems?: unknown[];
+      /** GPT-5.5+ marks assistant messages `intermediate`/`final_answer`; dropping it on
+       * replay makes the model treat intermediate updates as final answers (vendor docs).
+       * Replayed on the Responses wire only. */
+      phase?: string;
+    }
   | { role: "tool"; tool_call_id: string; content: string };
 
 export type WireToolCall = {
@@ -104,6 +119,13 @@ export type ProviderConfig = {
    * hard-gated per model: Opus 4.7 rejects the field outright (no standard fallback), and the
    * utility lane rides this same config. Unset → wire unchanged. Set via DELTA_SPEED=fast. */
   speed?: "fast";
+  /** Responses-wire output-length dial (`text.verbosity`, GPT-5.x). Rendered only where the
+   * backend is proven to accept it; declared unmapped elsewhere. DELTA_TEXT_VERBOSITY. */
+  textVerbosity?: "low" | "medium" | "high";
+  /** Ask the Responses backend for reasoning SUMMARIES (`reasoning.summary:"auto"`) — the SSE
+   * consumer for the deltas has existed since Sprint C and is dead code without this request
+   * field. DELTA_REASONING_SUMMARY=auto. */
+  reasoningSummary?: "auto";
   /** Label recorded on the served turn's event when this provider is used (G1c). */
   label?: string;
   /** Absolute wall-clock cap on a single model call (ms). A generous backstop for a
@@ -306,7 +328,7 @@ export type ReasoningEffort = string;
 
 /** The efforts we recognize today — for docs + the Anthropic thinking-budget map ONLY. This is NOT a
  * gate: an effort outside this list still reaches the model. Mirrors the canonical OpenAI set. */
-export const KNOWN_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"] as const;
+export const KNOWN_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 /** Effort → Anthropic thinking budget (tokens); the native wire has no effort enum. An effort not in
  * the map (a model-specific or future tier) falls back to the `high` budget; `none` → 0 = no thinking. */
@@ -773,6 +795,41 @@ export function acceptsMaxOutputTokens(baseUrl: string): boolean {
   return !hostMatches(baseUrl, ["chatgpt.com"]);
 }
 
+/** M1 (0.2.16): whether the Responses backend gets `include:["reasoning.encrypted_content"]`
+ * on requests and reasoning items + `phase` replayed on input. ALLOWLIST, not denylist — the
+ * acceptsPromptCacheKey precedent: these are NEW fields, an unknown top-level field is a
+ * legitimate 400 on a strict endpoint, and a plain 4xx is not failover-worthy, so an arbitrary
+ * Responses-compatible proxy that worked on 0.2.15 must keep receiving the 0.2.15 surface.
+ * openai.com is wire-proven (2026-08-19: capture, verbatim replay, and phase replay all 200);
+ * chatgpt.com joins when the Delos probe battery passes (docs/probe-request-delos-0.2.16.md).
+ * Note the direction difference vs acceptsMaxOutputTokens above: DROPPING the cap costs
+ * nothing, so deny-one-host is safe there; SENDING a new field can break, so prove-per-host. */
+export function acceptsReasoningReplay(baseUrl: string): boolean {
+  return hostMatches(baseUrl, ["openai.com"]);
+}
+
+/** M4 (0.2.16): whether the Responses backend gets the tuning knobs (`text.verbosity`,
+ * `reasoning.summary`). Same allowlist rationale as acceptsReasoningReplay; wire-proven on
+ * api.openai.com (2026-08-19, both 200). */
+export function acceptsResponsesTuning(baseUrl: string): boolean {
+  return hostMatches(baseUrl, ["openai.com"]);
+}
+
+/** M2 (0.2.16): whether the Responses backend gets explicit `prompt_cache_breakpoint` marks.
+ * Same allowlist rationale; wire-proven on api.openai.com (2026-08-19, 200 with store:false +
+ * prompt_cache_key). Kept separate from the tuning/replay predicates so a probe can flip each
+ * family independently. */
+export function acceptsCacheBreakpoints(baseUrl: string): boolean {
+  return hostMatches(baseUrl, ["openai.com"]);
+}
+
+/** Explicit breakpoints exist from GPT-5.6 up; older models 400 on the field (prompt-caching
+ * guide). Evidence-only gate — extend when a newer family ships and is verified, never by
+ * guessing version arithmetic. Leaf-based so provider prefixes ("openai/gpt-5.6-sol") match. */
+export function modelHasExplicitCache(model: string): boolean {
+  return (model.toLowerCase().split("/").pop() ?? "").startsWith("gpt-5.6");
+}
+
 /** Highest index a ROLLING cache breakpoint may land on: everything after it is a derived
  * per-turn block. Shared by BOTH wire serializers — they build different shapes but must agree
  * on eligibility, and the first version of this fix shipped it to only one of them (codex P1),
@@ -872,9 +929,17 @@ function withPromptCache(
   cacheTtl?: "1h",
   ephemeralCount = 0,
 ): unknown[] {
-  const framed = messages.map((m) =>
-    m.role === "tool" ? { ...m, content: untrustedToolResult(m.content) } : m,
-  );
+  const framed = messages.map((m) => {
+    if (m.role === "tool") return { ...m, content: untrustedToolResult(m.content) };
+    // M1: Responses-origin carry fields must never reach a Chat Completions endpoint — an
+    // unknown top-level message field can 400 a strict backend mid-failover, turning a
+    // recoverable provider transition into a terminal error (codex BLOCKER 4).
+    if (m.role === "assistant" && (m.reasoningItems || m.phase)) {
+      const { reasoningItems: _r, phase: _p, ...rest } = m;
+      return rest;
+    }
+    return m;
+  });
   if (!/anthropic|claude/i.test(model)) return framed;
   const cc = { cache_control: { type: "ephemeral" } };
   // Long-retention (1h) goes on the STABLE prefix only: an agent serving several runs
@@ -1540,12 +1605,69 @@ type AnthropicEvent = {
 type ResponsesInputItem =
   | {
       role: "user" | "assistant";
-      content: Array<{ type: string; text?: string; image_url?: string }>;
+      content: Array<{
+        type: string;
+        text?: string;
+        image_url?: string;
+        /** M2: marks the exact end of a reusable prompt prefix (GPT-5.6+ explicit caching). */
+        prompt_cache_breakpoint?: { mode: "explicit" };
+      }>;
+      /** GPT-5.5+ assistant-message phase, replayed as received (M1). */
+      phase?: string;
     }
   | { type: "function_call"; call_id: string; name: string; arguments: string }
   | { type: "function_call_output"; call_id: string; output: string };
 
-function toResponses(messages: ChatMsg[]): { instructions: string; input: ResponsesInputItem[] } {
+/** M2 (0.2.16): the Responses renderer for the cache-placement brain. Third instance of the
+ * established pattern — `rollingMarks` stays the single walker, each wire supplies eligibility
+ * over its OWN rendered shape (chat: ChatMsg[], Anthropic: block messages, here: input items).
+ * Carriers are INPUT content blocks only (API reference): user message items qualify;
+ * `function_call_output` (string output), assistant `output_text`, and the top-level
+ * `instructions` string cannot hold a mark — so the stable mark rides the FIRST user message,
+ * whose breakpoint caches instructions + tools + itself (prefix semantics include everything
+ * rendered before the block). Budget: implicit mode's own latest-message breakpoint consumes
+ * one of the four write slots (prompt-caching guide), so explicit marks cap at 3 — one stable
+ * + two rolling. Image-bearing and trailing derived (ephemeral) items are skipped for the same
+ * reason as on the other wires: rebuilt every turn, a prefix ending there never matches. */
+export function markResponsesCache(input: ResponsesInputItem[], ephemeralCount: number): void {
+  const eligible = (i: number): boolean => {
+    const it = input[i];
+    if (!it || !("role" in it) || it.role !== "user") return false;
+    // Array.isArray, not trust: replayed carry items land in `input` verbatim before marking
+    // runs, and corrupted persisted data claiming role:"user" without a content array must be
+    // a skipped candidate, never a synchronous throw past the error-as-value seam.
+    if (!Array.isArray(it.content)) return false;
+    if (it.content.some((b) => b.type === "input_image")) return false;
+    return it.content[it.content.length - 1]?.type === "input_text";
+  };
+  // BOTH scans respect the ephemeral boundary. The rolling scan always did; an unbounded
+  // stable scan could walk into the trailing derived block when every persisted user message
+  // is ineligible (image-bearing), marking content that is rebuilt every turn.
+  const limit = rollingScanFrom(input.length, ephemeralCount);
+  const marks = new Set<number>();
+  for (let i = 0; i <= limit; i++)
+    if (eligible(i)) {
+      marks.add(i); // the stable mark
+      break;
+    }
+  for (const i of rollingMarks(
+    limit,
+    eligible,
+    () => 1, // rendered items are the unit here; OpenAI reads back 50 breakpoints, no block window
+  ).slice(0, 2))
+    marks.add(i);
+  for (const i of marks) {
+    const it = input[i];
+    if (!it || !("role" in it)) continue;
+    const last = it.content[it.content.length - 1];
+    if (last) last.prompt_cache_breakpoint = { mode: "explicit" };
+  }
+}
+
+function toResponses(
+  messages: ChatMsg[],
+  replayReasoning = false,
+): { instructions: string; input: ResponsesInputItem[] } {
   const instructions = messages
     .filter((m) => m.role === "system")
     .map((m) => (typeof m.content === "string" ? m.content : ""))
@@ -1560,8 +1682,20 @@ function toResponses(messages: ChatMsg[]): { instructions: string; input: Respon
         output: untrustedToolResult(m.content),
       });
     } else if (m.role === "assistant") {
+      // M1: the turn's own reasoning items replay VERBATIM ahead of its text and calls —
+      // the order OpenAI's guidance prescribes ("pass back all reasoning items, function
+      // call items, and function call output items"). The payload is opaque; reshaping it
+      // would invalidate it. Gated per backend (acceptsReasoningReplay).
+      if (replayReasoning)
+        for (const it of m.reasoningItems ?? []) input.push(it as ResponsesInputItem);
       if (m.content)
-        input.push({ role: "assistant", content: [{ type: "output_text", text: m.content }] });
+        input.push({
+          role: "assistant",
+          content: [{ type: "output_text", text: m.content }],
+          // phase must survive the round-trip or the model re-reads its intermediate
+          // updates as final answers (vendor docs; wire-proven 200 on replay).
+          ...(replayReasoning && m.phase ? { phase: m.phase } : {}),
+        });
       for (const tc of m.tool_calls ?? []) {
         input.push({
           type: "function_call",
@@ -1601,7 +1735,14 @@ async function streamResponses(
   // before fetch (a hung broker must not escape the timeout; codex #6).
   const sig = withTimeout(req.signal, timeoutMs, idle);
   let emitted = false;
-  const { instructions, input } = toResponses(req.messages);
+  // M1: one predicate gates the whole reasoning carry — the `include` request field, item
+  // replay, and phase replay travel together (sending one without the others is incoherent).
+  const replay = acceptsReasoningReplay(cfg.baseUrl);
+  const { instructions, input } = toResponses(req.messages, replay);
+  // M2: explicit cache anchors, additive under the default implicit mode — the failure mode
+  // is "no better than today", never "worse". Host- and model-gated (both 400 otherwise).
+  if (acceptsCacheBreakpoints(cfg.baseUrl) && modelHasExplicitCache(model))
+    markResponsesCache(input, req.ephemeralCount ?? 0);
   // store:false is REQUIRED by the ChatGPT/Codex subscription backend ("Store must be set to
   // false") and is correct for us regardless: Delta sends the full transcript each turn and never
   // relies on server-side response storage, so there is nothing to store.
@@ -1614,8 +1755,20 @@ async function streamResponses(
   // 200KB research artifact cap bounding persistence. Callers keep computing maxTokens: the
   // value still feeds the budget claim and the reservation; only the wire field is dropped.
   if (req.maxTokens && acceptsMaxOutputTokens(cfg.baseUrl)) body.max_output_tokens = req.maxTokens;
+  // M1: ask for the encrypted reasoning payload explicitly — the API reference documents this
+  // opt-in for stateless (store:false) use; relying on the "included by default" reading of the
+  // migrate guide would make capture silently backend-dependent.
+  if (replay) body.include = ["reasoning.encrypted_content"];
   // The Responses API (ChatGPT/Codex subscription backend) takes reasoning effort natively.
-  if (req.reasoningEffort) body.reasoning = { effort: req.reasoningEffort };
+  // M4: the tuning knobs ride the same object where the backend is proven to accept them.
+  const tuning = acceptsResponsesTuning(cfg.baseUrl);
+  const summary = tuning && cfg.reasoningSummary ? { summary: cfg.reasoningSummary } : {};
+  if (req.reasoningEffort || summary.summary)
+    body.reasoning = {
+      ...(req.reasoningEffort ? { effort: req.reasoningEffort } : {}),
+      ...summary,
+    };
+  if (tuning && cfg.textVerbosity) body.text = { verbosity: cfg.textVerbosity };
   if (req.tools?.length) {
     // Responses tools are flat (no nested `function` wrapper).
     body.tools = req.tools.map((t) => ({
@@ -1687,6 +1840,8 @@ async function streamResponses(
   const usage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, costUsd: 0 };
   const calls: WireToolCall[] = [];
   const byItem = new Map<string, WireToolCall>(); // function_call item_id → call
+  const reasoning: unknown[] = []; // M1: finalized reasoning items, arrival order
+  let phase: string | undefined; // M1: the assistant message item's phase, if any
 
   try {
     for await (const data of sseLines(
@@ -1732,6 +1887,17 @@ async function streamResponses(
             if (call) call.function.arguments += ev.delta;
           }
           break;
+        // M1: capture from the FINALIZED item — `added` is in-progress and (live-verified)
+        // carries no encrypted_content. A reasoning item without the payload is a husk that
+        // cannot inform a later turn; skip it rather than replay it.
+        case "response.output_item.done": {
+          const item = ev.item as
+            | { type?: string; encrypted_content?: unknown; phase?: unknown }
+            | undefined;
+          if (item?.type === "reasoning" && item.encrypted_content) reasoning.push(ev.item);
+          else if (item?.type === "message" && typeof item.phase === "string") phase = item.phase;
+          break;
+        }
         case "response.completed":
         case "response.incomplete": {
           completed = true;
@@ -1742,6 +1908,10 @@ async function streamResponses(
             usage.input = u.input_tokens ?? 0;
             usage.output = u.output_tokens ?? 0;
             usage.cacheRead = u.input_tokens_details?.cached_tokens ?? 0;
+            // 5.6+ bills cache WRITES at 1.25× and reports them beside cached_tokens (nested —
+            // NOT top-level; openai-python ResponseUsage agrees). computeCost already applies
+            // the multiplier, so reading the field is the whole fix (M3).
+            usage.cacheWrite = u.input_tokens_details?.cache_write_tokens ?? 0;
             usage.total = u.total_tokens ?? usage.input + usage.output;
           }
           break;
@@ -1773,6 +1943,8 @@ async function streamResponses(
 
   const message: AssistantMsg = { role: "assistant", content: content || null };
   if (calls.length) message.tool_calls = calls;
+  if (reasoning.length) message.reasoningItems = reasoning;
+  if (phase) message.phase = phase;
   return {
     ok: true,
     model,
@@ -1796,7 +1968,7 @@ type ResponsesEvent = {
       input_tokens?: number;
       output_tokens?: number;
       total_tokens?: number;
-      input_tokens_details?: { cached_tokens?: number };
+      input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
     };
   };
 };

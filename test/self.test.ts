@@ -291,3 +291,71 @@ describe("buildSpine — the You + Policy layers", () => {
     expect(a).toBe(b);
   });
 });
+
+describe("append-append collision auto-merge (C2, 0.2.16)", () => {
+  test("two runs both appending to the same base merge losslessly, engine-side", () => {
+    // The measured fleet shape (48 collisions): concurrent runs each append a learned line.
+    // Both edits are pure appends of the SAME base → the merge is mechanical; billing a model
+    // turn to concatenate two suffixes was pure waste.
+    const dir = ws({ "DELTA.md": "base\n" });
+    const db = openDb(":memory:");
+    expect(writeSelf(db, dir, "base\n- lesson A\n", 10_000, "base\n").ok).toBe(true);
+    // Run B still holds the old base and appends its own line.
+    const r = writeSelf(db, dir, "base\n- lesson B\n", 10_000, "base\n");
+    expect(r.ok).toBe(true);
+    expect(r.conflict).toBeUndefined();
+    expect(currentSelf(dir)).toBe("base\n- lesson A\n- lesson B\n"); // BOTH lessons, no turn spent
+    db.close();
+  });
+  test("a rewrite (non-append) still conflicts — auto-merge never guesses", () => {
+    const dir = ws({ "DELTA.md": "base\n" });
+    const db = openDb(":memory:");
+    expect(writeSelf(db, dir, "rewritten entirely\n", 10_000, "base\n").ok).toBe(true);
+    const r = writeSelf(db, dir, "base\n- lesson B\n", 10_000, "base\n");
+    expect(r.ok).toBe(false);
+    expect(r.conflict).toBe(true);
+    db.close();
+  });
+  test("a merge that would blow the cap falls back to the conflict contract", () => {
+    const dir = ws({ "DELTA.md": "base\n" });
+    const db = openDb(":memory:");
+    expect(writeSelf(db, dir, `base\n${"A".repeat(60)}\n`, 100, "base\n").ok).toBe(true);
+    const r = writeSelf(db, dir, `base\n${"B".repeat(60)}\n`, 100, "base\n");
+    expect(r.ok).toBe(false);
+    expect(r.conflict).toBe(true); // the model must shrink-and-merge; silently dropping either side would be worse
+    db.close();
+  });
+});
+
+describe("C2 fix round (codex diff review, 0.2.16)", () => {
+  test("BLOCKER: a crash-replay of an already-merged append is a no-op, not a double append", () => {
+    // remember is idempotent:true — the journal may replay it after a crash that landed the
+    // filesystem write. base B, disk B+A (other run), attempt B+C → first execution merges to
+    // B+A+C. The replay runs with the SAME (base B, content B+C) against disk B+A+C: the
+    // suffix is already there, so the write must be acknowledged, not re-applied.
+    const dir = ws({ "DELTA.md": "B\n" });
+    const db = openDb(":memory:");
+    expect(writeSelf(db, dir, "B\n- A\n", 10_000, "B\n").ok).toBe(true);
+    const first = writeSelf(db, dir, "B\n- C\n", 10_000, "B\n");
+    expect(first.ok).toBe(true);
+    expect(currentSelf(dir)).toBe("B\n- A\n- C\n");
+    const revsAfterFirst = listRevisions(db).length;
+    const replay = writeSelf(db, dir, "B\n- C\n", 10_000, "B\n"); // the crash-replay
+    expect(replay.ok).toBe(true);
+    expect(currentSelf(dir)).toBe("B\n- A\n- C\n"); // NOT B\n- A\n- C\n- C\n
+    expect(listRevisions(db).length).toBe(revsAfterFirst); // no phantom revision either
+    db.close();
+  });
+  test("the result reports the LANDED content after an auto-merge, so the caller's base stays true", () => {
+    const dir = ws({ "DELTA.md": "B\n" });
+    const db = openDb(":memory:");
+    expect(writeSelf(db, dir, "B\n- A\n", 10_000, "B\n").ok).toBe(true);
+    const r = writeSelf(db, dir, "B\n- C\n", 10_000, "B\n");
+    expect(r.ok).toBe(true);
+    expect(r.landed).toBe("B\n- A\n- C\n"); // what is actually on disk — the run's next base
+    // A follow-up write from that landed base must not self-conflict.
+    const next = writeSelf(db, dir, "B\n- A\n- C\n- D\n", 10_000, r.landed);
+    expect(next.ok).toBe(true);
+    db.close();
+  });
+});

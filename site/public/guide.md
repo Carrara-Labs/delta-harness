@@ -530,8 +530,31 @@ For the Responses API:
 MODEL_BASE_URL=https://api.openai.com/v1
 MODEL_API=responses
 MODEL_API_KEY=your-openai-key
-DELTA_MODEL_PRIMARY=gpt-5
+DELTA_MODEL_PRIMARY=gpt-5.6-sol
 ```
+
+The GPT-5.6 family (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`) is fully supported and priced
+in the built-in table. Since 0.2.16, an `api.openai.com` Responses lane is a first-class
+integration, not a ported one:
+
+- **Reasoning carry.** The model's encrypted reasoning items are captured, persisted with the
+  message, and replayed verbatim on the next request — OpenAI's own guidance for consecutive tool
+  calls, and required for stateless (`store:false`) use of reasoning models. The assistant
+  `phase` field (GPT-5.5+) round-trips with them, so the model never re-reads an intermediate
+  update as a final answer. Both are stripped before any other wire and from compaction-retained
+  rows, so nothing outside this lane ever sees the sealed payload.
+- **Explicit prompt-cache breakpoints** (GPT-5.6+). The same placement engine that drives
+  Anthropic caching marks one stable point (caching instructions + tools + the first user
+  message) plus two rolling points, alongside the provider's implicit breakpoint. Cache writes
+  bill 1.25× on 5.6 and are metered from the nested `cache_write_tokens` usage field.
+- **`DELTA_TEXT_VERBOSITY`** (`low`/`medium`/`high` → `text.verbosity`) and
+  **`DELTA_REASONING_SUMMARY=auto`** (→ `reasoning.summary`, streams reasoning summaries to the
+  reasoning-delta consumer).
+
+These fields are **allowlisted to `openai.com` hosts**. Any other Responses-compatible endpoint —
+a proxy, the ChatGPT subscription backend — receives the same request surface as 0.2.15, because
+an unknown field is a legitimate `400` on a strict endpoint. A configured knob the lane cannot
+render is named at boot and in the `/v1/status` controls block rather than silently ignored.
 
 For an OpenAI-compatible Chat Completions endpoint, omit `MODEL_API`. Delta appends `/chat/completions` to `MODEL_BASE_URL`.
 
@@ -583,6 +606,11 @@ Delta sends a `GET` to the broker with the optional bearer and a 15-second timeo
 
 On this backend, `max_output_tokens` is never sent — the endpoint rejects it at any value, which would fail every sub-agent call with a billed 400 (fixed in 0.2.15; live-verified 3/3 children, with the pre-fix behavior reproducing 0/3 the same minute). One header note for a **static-key** Codex lane: `chatgpt-account-id` is a reserved header the subscription credential owns, so `MODEL_HEADERS` may not set it — the daemon refuses with `may not set the reserved header 'chatgpt-account-id'`. That refusal is correct and the backend does not require the header on the static-key path (verified both ways); if you hit it, remove the header rather than hunting for a config mistake that does not exist.
 
+The 0.2.16 Responses additions (reasoning carry, `phase`, explicit cache breakpoints, verbosity,
+reasoning summaries) are **not sent to this backend**: its parameter surface is undocumented and
+rejects fields it does not recognize, so each field joins only after a wire probe proves it —
+until then this backend receives requests byte-identical to 0.2.15.
+
 Subscription tokens are sent only to exact HTTPS hosts in `DELTA_BROKER_ALLOWED_HOSTS`, whose default is `chatgpt.com`. Add the real backend host explicitly when required. The broker URL must be HTTPS, except for loopback development. Configure a keyed provider in `DELTA_PROVIDERS` as a production fallback for broker exhaustion, authentication failure, or rate limiting. Subscription-route `cost_usd` is API-rate-equivalent consumption from Delta's price table, not the incremental subscription bill.
 
 ### Utility model and reasoning
@@ -595,7 +623,7 @@ Set a daemon default for extended reasoning:
 DELTA_REASONING_EFFORT=high
 ```
 
-Or override it for one run with `metadata.reasoning_effort`. Delta lowercases and trims the value. OpenRouter and Responses receive `reasoning.effort`; a directly compatible Chat Completions endpoint receives `reasoning_effort`. Native Anthropic picks the wire by model. Claude 4.6+ and every Claude 5 model use `thinking:{type:"adaptive"}` with `output_config.effort` — they reject the older `thinking:{type:"enabled"}` budget wire; on this path the OpenAI-only `none` and `minimal` map to `low` (an always-on reasoning model cannot disable thinking), and Delta raises the request's `max_tokens` by an effort-based headroom so adaptive thinking has room. Claude 4.5 and earlier keep the legacy budget wire, mapping `none`, `minimal`, `low`, `medium`, `high`, and `xhigh` to disabled, 1,024, 4,096, 8,192, 16,384, and 32,768 thinking tokens, with an unknown value using the 16,384-token mapping. Other providers validate their own accepted values and can return a clean `4xx`.
+Or override it for one run with `metadata.reasoning_effort`. Delta lowercases and trims the value. OpenRouter and Responses receive `reasoning.effort` (on an `openai.com` Responses lane, `DELTA_REASONING_SUMMARY=auto` rides the same object); a directly compatible Chat Completions endpoint receives `reasoning_effort`. Native Anthropic picks the wire by model. Claude 4.6+ and every Claude 5 model use `thinking:{type:"adaptive"}` with `output_config.effort` — they reject the older `thinking:{type:"enabled"}` budget wire; on this path the OpenAI-only `none` and `minimal` map to `low` (an always-on reasoning model cannot disable thinking), and Delta raises the request's `max_tokens` by an effort-based headroom so adaptive thinking has room. Claude 4.5 and earlier keep the legacy budget wire, mapping `none`, `minimal`, `low`, `medium`, `high`, and `xhigh` to disabled, 1,024, 4,096, 8,192, 16,384, and 32,768 thinking tokens, with an unknown value using the 16,384-token mapping. Other providers validate their own accepted values and can return a clean `4xx`.
 
 ## Run and call the agent
 
@@ -1969,7 +1997,7 @@ The daemon starts neutral and unwedgeable: the `safe` tool floor, no MCP servers
 
 Since 0.2.8, safe mode is observable and self-aware. `GET /v1/status` reports `safe_mode: true`, so an edge client (a channel gateway's `/safemode` or `/status`) can confirm it without reading the boot log. The agent is also told: in a safe-mode boot the system spine drops the configured agent name and states that the persona, policy, and learned self-file are not loaded, so the agent does not present as its configured identity or role-play one from earlier conversation history. To demonstrate this cleanly, pair a safe-mode restart with a fresh conversation so no prior identity carries over.
 
-**Read current model, provider, tier, and budget (`GET /v1/status`).** A secret-free, seam-token-gated endpoint returns the running agent's version, tier, `safe_mode`, model, provider, reasoning effort, budget ceilings, and MCP server names — no keys. Since 0.2.15 it also reports tool usability in three states, because the operator's next action differs for each: `tools.registered` (in the live registry, read per request), `tools.unusable` (registered, but a live precondition says a call fails right now — a missing `EXA_API_KEY`, for example; this heals the moment a credential lands in the environment or the vault, no restart), and `tools.omitted` (never registered this boot, each with a reason — no vault, an unresolvable code CLI, sub-agent depth, missing control-plane wiring, or an allowlist name that matches nothing; fix the configuration and restart). Names and engine-authored reasons only, never values. The daemon also prints one stderr line at boot when anything is omitted or unusable. The allowlist remains a ceiling, not a guarantee — but the gap between the two is no longer silent. Since 0.2.8 the model view also names the `provider` in human terms (`anthropic-native`, `openai-native`, `openrouter`, `codex-sign-in`) with a `provider_chain` for the failover cascade, and `reasoning_effort` always resolves (an unset effort reports `default` rather than being omitted). It backs edge tooling such as a channel gateway's `/model`, `/provider`, and `/status` commands.
+**Read current model, provider, tier, and budget (`GET /v1/status`).** A secret-free, seam-token-gated endpoint returns the running agent's version, tier, `safe_mode`, model, provider, reasoning effort, budget ceilings, and MCP server names — no keys. Since 0.2.15 it also reports tool usability in three states, because the operator's next action differs for each: `tools.registered` (in the live registry, read per request), `tools.unusable` (registered, but a live precondition says a call fails right now — a missing `EXA_API_KEY`, for example; this heals the moment a credential lands in the environment or the vault, no restart), and `tools.omitted` (never registered this boot, each with a reason — no vault, an unresolvable code CLI, sub-agent depth, missing control-plane wiring, or an allowlist name that matches nothing; fix the configuration and restart). Names and engine-authored reasons only, never values. The daemon also prints one stderr line at boot when anything is omitted or unusable. The allowlist remains a ceiling, not a guarantee — but the gap between the two is no longer silent. Since 0.2.8 the model view also names the `provider` in human terms (`anthropic-native`, `openai-native`, `openrouter`, `codex-sign-in`) with a `provider_chain` for the failover cascade, and `reasoning_effort` always resolves (an unset effort reports `default` rather than being omitted). It backs edge tooling such as a channel gateway's `/model`, `/provider`, and `/status` commands. Since 0.2.16 the model view also carries a `controls` block — `speed`, `cache_ttl`, `text_verbosity`, `reasoning_summary`, and `unmapped`, the list of configured knobs the primary lane's wire or host cannot render (the boot line and this field share one computation, so they can never disagree).
 
 ## Security model
 
@@ -2118,7 +2146,9 @@ The values below are the current public operating surface. Unless noted otherwis
 | `DELTA_FIRST_BYTE_MS` | `30000` | Deadline for connect + first response header on a model call - the phase a dead socket after a VM resume otherwise hangs in. `0` disables. |
 | `DELTA_CACHE_TTL` | unset | `1h` keeps the stable prefix (system spine + tools) in the Anthropic prompt cache for an hour instead of five minutes. Faster, cheaper turn 1 for an agent serving several runs an hour; 1h cache writes bill double, so it stays opt-in. |
 | `DELTA_PROMPT_CACHE_KEY` | auto | `1` forces the OpenAI `prompt_cache_key` routing field on the OpenAI-compatible wire, `0` suppresses it. Unset auto-detects from the host: it is sent to OpenRouter and OpenAI, and withheld from everything else, because an unknown top-level field is a legitimate `400` on a strict endpoint. Set `1` only for a proxy you have verified accepts it. |
-| `DELTA_SPEED` | unset | `fast` requests Anthropic fast mode (research preview) on the native wire, for Opus 5 / Opus 4.8 only — the request carries `speed: "fast"` and its beta header, and the server-reported served speed lands on `model.call` telemetry. Byte-identical to unset when off; any other model runs standard. **2× token pricing** — set a matching `DELTA_MODEL_PRICES` before enabling, or cost and the `maxCostUsd` budget guard undercount by half. |
+| `DELTA_SPEED` | unset | `fast` requests Anthropic fast mode (research preview) on the native wire, for Opus 5 / Opus 4.8 only — the request carries `speed: "fast"` and its beta header, and the server-reported served speed lands on `model.call` telemetry. Byte-identical to unset when off; any other model runs standard. **2× token pricing** — set a matching `DELTA_MODEL_PRICES` before enabling, or cost and the `maxCostUsd` budget guard undercount by half. On a non-Anthropic lane it is not mapped, and since 0.2.16 the boot line and `/v1/status` say so. |
+| `DELTA_TEXT_VERBOSITY` | unset | `low`, `medium`, or `high` → `text.verbosity` on an `openai.com` Responses lane (GPT-5.x output-length dial). Reported as unmapped anywhere it cannot render. |
+| `DELTA_REASONING_SUMMARY` | unset | `auto` → `reasoning.summary` on an `openai.com` Responses lane: the backend streams reasoning summaries, which land on the reasoning-delta consumer. Reported as unmapped anywhere it cannot render. |
 | `DELTA_VISION` | auto | `1` forces vision support; `0` disables it. |
 | `DELTA_VISION_MODELS` | built-in regex | Custom regular expression for automatic vision detection. |
 
