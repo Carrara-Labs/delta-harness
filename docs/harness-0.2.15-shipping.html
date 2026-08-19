@@ -1,0 +1,529 @@
+<title>Shipping 0.2.15</title>
+
+<style>
+  :root {
+    --paper:#f1f3f5; --surface:#fff; --sunk:#e8ebef; --ink:#14181f; --muted:#5f6877;
+    --faint:#8b95a4; --rule:#d5d9e0; --hair:#e3e7ec;
+    --accent:#2f5074; --crit:#9c3a2e; --watch:#856112; --settled:#3d6a45;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    --serif:Georgia,"Iowan Old Style","Times New Roman",serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --w:70ch; --wide:1080px;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --paper:#11141a; --surface:#181c23; --sunk:#1e232b; --ink:#e5e9ef; --muted:#98a2b1;
+    --faint:#6d7887; --rule:#2b313b; --hair:#23282f;
+    --accent:#82a9d8; --crit:#e2897a; --watch:#d4ad57; --settled:#83b78d;}}
+  :root[data-theme="dark"]{
+    --paper:#11141a; --surface:#181c23; --sunk:#1e232b; --ink:#e5e9ef; --muted:#98a2b1;
+    --faint:#6d7887; --rule:#2b313b; --hair:#23282f;
+    --accent:#82a9d8; --crit:#e2897a; --watch:#d4ad57; --settled:#83b78d;}
+
+  *{box-sizing:border-box}
+  body{background:var(--paper);color:var(--ink);font-family:var(--serif);font-size:17px;
+       line-height:1.62;margin:0;padding:0 1.5rem 6rem;-webkit-font-smoothing:antialiased}
+  .col{max-width:var(--w);margin-inline:auto}
+  .band{max-width:var(--wide);margin-inline:auto}
+  p{margin:0 0 1.05em}
+  strong{font-weight:700}
+  code,.m{font-family:var(--mono);font-size:.86em}
+  code{background:var(--sunk);padding:.1em .34em;border-radius:2px}
+
+  header.mast{max-width:var(--wide);margin:0 auto;padding:4.5rem 0 2.25rem}
+  .eyebrow{font-family:var(--mono);font-size:.6875rem;letter-spacing:.1em;text-transform:uppercase;
+           color:var(--muted);margin:0 0 1.4rem}
+  h1{font-family:var(--sans);font-size:clamp(2.1rem,5.2vw,3.4rem);line-height:1.02;
+     letter-spacing:-.028em;font-weight:700;margin:0 0 1.3rem;max-width:20ch;text-wrap:balance}
+  .standfirst{font-size:1.18rem;line-height:1.5;color:var(--muted);max-width:60ch;margin:0}
+
+  section{margin-top:4.25rem}
+  h2{font-family:var(--sans);font-size:1.55rem;line-height:1.16;letter-spacing:-.018em;
+     font-weight:700;margin:0 0 .35em;text-wrap:balance}
+  .sublede{color:var(--muted);font-size:1.0625rem;margin:0 0 2rem}
+  .kicker{font-family:var(--mono);font-size:.6875rem;letter-spacing:.1em;text-transform:uppercase;
+          color:var(--muted);border-top:1px solid var(--rule);padding-top:.7rem;margin:0 0 2rem;display:block}
+
+  .thesis{max-width:var(--w);margin:2.5rem auto 0;padding:1.7rem 0;
+          border-top:2px solid var(--ink);border-bottom:1px solid var(--rule)}
+  .thesis p{font-size:1.3rem;line-height:1.42;margin:0}
+  .thesis p+p{margin-top:.65em;color:var(--muted);font-size:1.0625rem}
+
+  /* ── the three registers ─────────────────────────────── */
+  .item{padding:2.25rem 0;border-top:1px solid var(--rule)}
+  .item:first-of-type{border-top:2px solid var(--ink)}
+  .itemhead{display:flex;align-items:baseline;gap:.7rem;flex-wrap:wrap;margin-bottom:1.1rem}
+  .fid{font-family:var(--mono);font-size:.75rem;font-weight:600;color:var(--crit);flex:none}
+  .itemhead h3{font-family:var(--sans);font-size:1.16rem;font-weight:700;letter-spacing:-.01em;
+               margin:0;flex:1 1 22ch;text-wrap:balance}
+  .sev{font-family:var(--mono);font-size:.6rem;letter-spacing:.09em;text-transform:uppercase;
+       border:1px solid var(--rule);color:var(--muted);padding:.16rem .42rem;white-space:nowrap}
+  .sev.hi{color:var(--crit);border-color:var(--crit)}
+  .sev.lo{color:var(--settled);border-color:var(--settled)}
+  .sev.mid{color:var(--watch);border-color:var(--watch)}
+
+  .reg{padding:.85rem 0;border-top:1px dotted var(--rule)}
+  .reg:first-of-type{border-top:none;padding-top:0}
+  .rl{font-family:var(--mono);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;
+      color:var(--faint);display:block;margin-bottom:.4rem}
+  .reg-plain p{font-size:1.12rem;line-height:1.5;margin:0}
+  .reg-tech p{font-size:1rem;color:var(--muted);margin:0}
+  .reg-spec .mech{margin:0}
+  .mech{font-family:var(--mono);font-size:.77rem;line-height:1.62;background:var(--sunk);
+        border-left:2px solid var(--accent);padding:.75rem .95rem;overflow-x:auto}
+  .mech b{color:var(--crit);font-weight:600}
+  .mech span{color:var(--muted)}
+
+  .tw{overflow-x:auto;margin:0 0 1.5rem}
+  table{border-collapse:collapse;width:100%;font-family:var(--sans);font-size:.89rem}
+  caption{text-align:left;font-family:var(--mono);font-size:.6875rem;letter-spacing:.09em;
+          text-transform:uppercase;color:var(--muted);padding-bottom:.6rem}
+  th{text-align:left;font-size:.6875rem;font-family:var(--mono);letter-spacing:.08em;
+     text-transform:uppercase;color:var(--faint);font-weight:500;padding:0 .85rem .5rem 0;
+     border-bottom:1px solid var(--ink);vertical-align:bottom;white-space:nowrap}
+  td{padding:.62rem .85rem .62rem 0;border-bottom:1px solid var(--hair);vertical-align:top;line-height:1.45}
+  td:last-child,th:last-child{padding-right:0}
+  tbody tr:last-child td{border-bottom:1px solid var(--rule)}
+  .num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+  td .m{font-size:.8rem;color:var(--muted)}
+  .grp td{font-family:var(--mono);font-size:.6875rem;letter-spacing:.09em;text-transform:uppercase;
+          color:var(--faint);padding-top:1.35rem;border-bottom:1px solid var(--rule)}
+  .r-hi{color:var(--crit);font-weight:600;font-family:var(--mono);font-size:.7rem}
+  .r-mid{color:var(--watch);font-family:var(--mono);font-size:.7rem}
+  .r-lo{color:var(--settled);font-family:var(--mono);font-size:.7rem}
+
+  figure{margin:2rem 0}
+  figure svg{max-width:100%;height:auto;display:block}
+  figcaption{font-size:.9rem;color:var(--muted);margin-top:.85rem;max-width:68ch}
+  .dg-box{fill:var(--surface);stroke:currentColor;stroke-width:1}
+  .dg-box-crit{fill:var(--surface);stroke:var(--crit);stroke-width:1.5}
+  .dg-t{font-family:var(--sans);font-size:12px;fill:currentColor}
+  .dg-t-s{font-family:var(--mono);font-size:10.5px;fill:var(--muted)}
+  .dg-t-c{font-family:var(--mono);font-size:10.5px;fill:var(--crit);font-weight:600}
+  .dg-line{stroke:currentColor;stroke-width:1.2;fill:none}
+  .dg-line-crit{stroke:var(--crit);stroke-width:1.6;fill:none}
+
+  .battery{list-style:none;padding:0;margin:0;counter-reset:b}
+  .battery>li{counter-increment:b;position:relative;padding:1.1rem 0 1.1rem 2.9rem;
+              border-top:1px solid var(--hair)}
+  .battery>li:first-child{border-top:none}
+  .battery>li::before{content:counter(b);position:absolute;left:0;top:1rem;font-family:var(--mono);
+    font-size:.7rem;font-weight:600;color:var(--paper);background:var(--accent);width:1.5rem;
+    height:1.5rem;border-radius:50%;display:grid;place-items:center}
+  .battery b{display:block;font-family:var(--sans);font-size:1.02rem;margin-bottom:.2em}
+  .battery span{color:var(--muted);font-size:.97rem}
+  .gate{background:var(--surface);border-top:3px solid var(--crit);border-bottom:1px solid var(--rule);
+        padding:1.75rem;margin:1.5rem 0}
+  .gate h3{font-family:var(--sans);font-size:1.08rem;margin:0 0 .6em}
+  .gate p:last-child{margin-bottom:0}
+  ul.tight{margin:0 0 1em;padding-left:1.15rem}
+  ul.tight li{margin-bottom:.42em}
+  footer{max-width:var(--w);margin:5rem auto 0;padding-top:1.4rem;border-top:1px solid var(--rule);
+         font-family:var(--mono);font-size:.72rem;line-height:1.7;color:var(--faint)}
+  @media (max-width:640px){body{font-size:16px;padding:0 1.1rem 4rem}header.mast{padding-top:3rem}
+    .gate{padding:1.4rem 1.1rem}}
+</style>
+
+<header class="mast">
+  <p class="eyebrow">Delta Harness &middot; 0.2.15 &middot; what ships and how we prove it</p>
+  <h1>Shipping 0.2.15</h1>
+  <p class="standfirst">Nine changes, read three ways &mdash; plain, technical, and exact. Then the
+  regression battery, because the point of this release is that unattended agents stop losing work,
+  not that they start losing it differently.</p>
+</header>
+
+<div class="thesis">
+  <p><strong>Two of these fix damage we have already measured on paying lanes. Four make an invisible
+  failure visible. Three are configuration and safety.</strong></p>
+  <p>Nothing in the release needs a design pass, and the highest regression risk is not in the two
+  big items &mdash; it is in the small one that moves files.</p>
+</div>
+
+<section class="col">
+  <span class="kicker">Read this first</span>
+  <h2>The release in one paragraph</h2>
+  <p>Right now a long-running agent has two silent ways to waste your money. If its context fills
+  up mid-conversation it can <strong>quietly go back to answering an older question</strong> and
+  never say so. And if it runs out of budget it <strong>throws away everything it already
+  finished</strong> and returns a line of counters. We have measured both on Aperture's client
+  lanes: 42 runs did the wrong work, and 11 runs binned $141 of finished work.</p>
+  <p>0.2.15 fixes both, then closes the gaps that let them hide for weeks &mdash; chiefly that
+  nothing anywhere told an operator which tools were actually working. The rest is a provider fix
+  that unblocks Ferni's migration, a safety default, and three small knobs.</p>
+</section>
+
+<section class="band">
+  <div class="col">
+    <span class="kicker">The nine</span>
+    <h2>What we are shipping</h2>
+    <p class="sublede">Each one three times: what it means, what is happening, and the exact
+    change.</p>
+  </div>
+
+  <div class="col">
+
+    <article class="item">
+      <div class="itemhead"><span class="fid">D-1</span><h3>The agent stops answering the wrong question</h3><span class="sev hi">measured damage</span></div>
+      <div class="reg reg-plain"><span class="rl">In plain terms</span>
+        <p>When a conversation gets long, the agent summarises the old parts to make room. While
+        doing that it re-reads "the original request" &mdash; and it fetches the <em>first thing
+        ever said in that conversation</em> instead of what you just asked. It then answers that
+        instead, confidently, with no error. On Aperture this happened to 42 runs of paid client
+        work.</p></div>
+      <div class="reg reg-tech"><span class="rl">What is actually happening</span>
+        <p>Compaction pins a trusted task block into the summary so the agent does not lose its
+        goal. The query that builds it selects the session's <em>first</em> run. That is right for
+        a one-shot task run, where run one is the task, and wrong for every session holding more
+        than one request &mdash; which includes every Telegram thread and 23 of 71 sessions on our
+        busiest lane.</p></div>
+      <div class="reg reg-spec"><span class="rl">The change</span>
+        <div class="mech"><span>compaction.ts:167</span> &nbsp;SELECT request FROM runs WHERE session_id = ? ORDER BY <b>seq LIMIT 1</b>
+<br>&rarr; &nbsp;SELECT request FROM runs WHERE <b>id = ?</b> &nbsp;<span>// opts.anchorRunId, already threaded</span>
+<br>
+<br><span>and delete the fallback: 42 of 42 pins under the old query were the wrong task,</span>
+<br><span>so no pin is safer than a stale one. Single-request sessions stay byte-identical.</span></div></div>
+    </article>
+
+    <article class="item">
+      <div class="itemhead"><span class="fid">D-9</span><h3>Running out of budget stops destroying the work</h3><span class="sev hi">measured damage</span></div>
+      <div class="reg reg-plain"><span class="rl">In plain terms</span>
+        <p>When an agent hits its spending limit it currently replies with nothing but a line of
+        numbers &mdash; even though everything it produced is sitting on disk. Eleven Aperture runs
+        died this way: 771 tool calls, $141, and two hours forty minutes of finished client work,
+        thrown away silently.</p></div>
+      <div class="reg reg-tech"><span class="rl">What is actually happening</span>
+        <p>The budget guard builds a diagnostic string and finalises the run with that string as
+        the entire output. The spill files, the artifact ledger compaction maintains precisely so
+        pointers survive, the plan, and any child summaries are all still on disk &mdash; nothing
+        offers them. Then the same internal string is delivered to the human wrapped in "try again
+        in a moment", which reproduces the failure exactly.</p></div>
+      <div class="reg reg-spec"><span class="rl">The change</span>
+        <div class="mech"><span>run.ts:780-783, 936-939</span>
+<br>finalize(…, "failed", <b>selfWriteNote(why)</b>, …) &nbsp;<span>// the counters ARE the answer</span>
+<br>&rarr; finalize(…, "failed", <b>{ user, diagnostic }</b>, …)
+<br>
+<br>user &nbsp;&nbsp;&rarr; the plan + the artifact ledger + what to do instead
+<br>diagnostic &rarr; the counters, into runs.error and the error event as today
+<br>
+<br><span>ledger covers BOTH families: .delta/spill/ and research/ &mdash; the exhausted run</span>
+<br><span>orphaned 26 files AND 13 research dirs. It must NOT list scratch/, which is</span>
+<br><span>wiped at run termination and would be gone before anyone read the path.</span></div></div>
+    </article>
+
+    <article class="item">
+      <div class="itemhead"><span class="fid">D-3 + D-2</span><h3>You can finally see which tools actually work</h3><span class="sev mid">makes failure visible</span></div>
+      <div class="reg reg-plain"><span class="rl">In plain terms</span>
+        <p>You tell an agent which tools it may use. Some of those quietly never switch on &mdash;
+        a missing key, a missing setting &mdash; and nothing tells anyone. Delos configured 16
+        tools and was running 13. One of the missing ones cost 724,804 tokens in a single message,
+        because when a tool errors the model does not stop, it improvises around it.</p></div>
+      <div class="reg reg-tech"><span class="rl">What is actually happening</span>
+        <p>The allowlist is a ceiling, not a guarantee: scheduling tools need a control-plane URL,
+        <code>code</code> needs a resolvable binary, <code>web_search</code> checks its credential
+        only at call time. <code>/v1/status</code> reports version, model, budget, MCP servers,
+        vault and self-file fullness &mdash; and no tool list at all.</p></div>
+      <div class="reg reg-spec"><span class="rl">The change</span>
+        <div class="mech"><span>server.ts:443</span> &nbsp;/v1/status gains three lists, read LIVE like vault and self:
+<br>&nbsp;&nbsp;<b>registered</b> &nbsp;offered to the model this run
+<br>&nbsp;&nbsp;<b>unusable</b> &nbsp;&nbsp;registered but a call would fail now &mdash; may fix itself, no restart
+<br>&nbsp;&nbsp;<b>omitted</b> &nbsp;&nbsp;&nbsp;never registered; only a restart changes it
+<br>
+<br><span>plus ONE stderr line at boot when anything is omitted or unusable.</span>
+<br><span>NEVER de-registration: credentialFor reads env OR the vault per call, so a key</span>
+<br><span>handed to a running agent works immediately. Removing the tool breaks that.</span></div></div>
+    </article>
+
+    <article class="item">
+      <div class="itemhead"><span class="fid">D-12</span><h3>Delegation works on the Codex subscription</h3><span class="sev mid">unblocks Ferni</span></div>
+      <div class="reg reg-plain"><span class="rl">In plain terms</span>
+        <p>An agent on a ChatGPT/Codex subscription cannot hand work to helper agents at all
+        &mdash; every single one fails instantly, while the main agent works fine, so it looks like
+        it is fanning out when it is doing nothing. One run started 24 helpers, got 24 failures,
+        and paid for all of them.</p></div>
+      <div class="reg reg-tech"><span class="rl">What is actually happening</span>
+        <p>Child calls attach an output-size cap. That backend rejects the parameter outright at
+        any value, returning a 400 which classifies as a bad request rather than a temporary one,
+        so the Anthropic fallback in the chain is never tried. Parent turns never send the cap,
+        which is why the same connection works for one and not the other.</p></div>
+      <div class="reg reg-spec"><span class="rl">The change</span>
+        <div class="mech"><span>provider.ts:1600</span> &nbsp;if (req.maxTokens) body.max_output_tokens = req.maxTokens
+<br>&rarr; if (req.maxTokens <b>&amp;&amp; acceptsMaxOutputTokens(cfg.baseUrl)</b>) …
+<br>
+<br><span>a fourth sibling beside hostMatches / acceptsPromptCacheKey /</span>
+<br><span>usesMaxCompletionTokens at provider.ts:748-761. DENYLIST chatgpt.com, not an</span>
+<br><span>allowlist of openai.com &mdash; OpenAI proper accepts the field. Children then run</span>
+<br><span>uncapped; the parent budget already bounds them.</span></div></div>
+    </article>
+
+    <article class="item">
+      <div class="itemhead"><span class="fid">D-7</span><h3>Agent scratch files stop landing in your documents</h3><span class="sev hi">highest regression risk</span></div>
+      <div class="reg reg-plain"><span class="rl">In plain terms</span>
+        <p>The engine writes big temporary files &mdash; raw web pages, research output, the
+        model's own notes &mdash; into the agent's working folder. When that folder is a synced
+        document vault, untrusted web content gets committed to git and pushed to your phone, and
+        machine output lands next to human notes. This adds a setting to put scratch somewhere
+        else.</p></div>
+      <div class="reg reg-tech"><span class="rl">What is actually happening</span>
+        <p>Three artifact families are rooted at the workspace, each with its own cleanup site, and
+        one of them is a directory the model is explicitly told to write into. Moving the root is
+        the easy half. The hard half is that compaction <em>derives</em> spill paths from the run's
+        identity to shrink old messages safely &mdash; change the root and every pre-existing
+        message stops matching, so the context stops shrinking with no error at all.</p></div>
+      <div class="reg reg-spec"><span class="rl">The change</span>
+        <div class="mech"><b>DELTA_SCRATCH_DIR</b>, defaulting to the workspace &rarr; existing deploys unchanged.
+<br>
+<br><span>family</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span>write</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span>wipe</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span>wiped when</span>
+<br>spill &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;tools.ts:158 &nbsp;&nbsp;&nbsp;queue.ts:437 &nbsp;&nbsp;&nbsp;ephemeral only
+<br>research &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;research.ts:275 &nbsp;queue.ts:443 &nbsp;&nbsp;&nbsp;ephemeral only
+<br><b>model scratchpad</b> &nbsp;the model &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;queue.ts:403 &nbsp;&nbsp;&nbsp;<b>every run</b>
+<br>
+<br><span>Each family moves its write AND wipe site in the same commit, or not at all.</span>
+<br><span>demoteSpilled tries the new root, then the legacy one, once. research/ becomes</span>
+<br><span>.delta/research/ so no operator has to write an ignore rule that can misfire.</span></div></div>
+    </article>
+
+    <article class="item">
+      <div class="itemhead"><span class="fid">D-8</span><h3>A delegated coding CLI stops inheriting your inbox</h3><span class="sev mid">safety default</span></div>
+      <div class="reg reg-plain"><span class="rl">In plain terms</span>
+        <p>When the agent hands a coding task to the Codex CLI, that CLI is signed in to a personal
+        ChatGPT account &mdash; and inherits every connector on it. Asked to prove its Gmail access
+        was off, a delegated session listed 6,913 real messages with write scope. Nothing on the
+        machine granted that.</p></div>
+      <div class="reg reg-tech"><span class="rl">What is actually happening</span>
+        <p>The connection lives server-side on the auth token, so no credential on disk and no MCP
+        server is involved. An agent deliberately given no send-capable tool could send mail as its
+        owner in one hop. This matters now because Quarry Brain agents will have
+        <code>code</code>.</p></div>
+      <div class="reg reg-spec"><span class="rl">The change</span>
+        <div class="mech"><span>config.ts:306</span> &nbsp;codeCli default gains <b>--disable apps --disable plugins</b>
+<br>
+<br><span>A behaviour-changing default: the release brief must name the consumer who WILL</span>
+<br><span>see a change, inverting our usual rule. Verify the flags exist on the pinned</span>
+<br><span>codex version first &mdash; a bad flag makes codeCliResolves fail and silently</span>
+<br><span>disables the `code` tool entirely, which is worse than the hole.</span></div></div>
+    </article>
+
+    <article class="item">
+      <div class="itemhead"><span class="fid">D-11 · D-4 · D-5</span><h3>Three small knobs</h3><span class="sev lo">low risk</span></div>
+      <div class="reg reg-plain"><span class="rl">In plain terms</span>
+        <p><strong>D-11:</strong> you can finally raise the step limit, which today is the one
+        budget dial nobody can turn. <strong>D-4:</strong> a skill written with perfectly valid
+        formatting becomes findable again &mdash; two were invisible for months.
+        <strong>D-5:</strong> a newly added skill is found without restarting the daemon.</p></div>
+      <div class="reg reg-tech"><span class="rl">What is actually happening</span>
+        <p>Steps is the only budget axis the profile does not let an environment variable override.
+        Skill descriptions are matched with a regex that captures the literal <code>&gt;</code>
+        from a YAML block scalar, leaving a description too short to ever match a search. And the
+        skill index is built once in the constructor and never refreshed.</p></div>
+      <div class="reg reg-spec"><span class="rl">The change</span>
+        <div class="mech"><span>profiles.ts:129</span> &nbsp;read <b>DELTA_MAX_STEPS</b> beside DELTA_MAX_TOKENS / _COST_USD
+<br>&nbsp;&nbsp;<span>floor at 1, not 0 &mdash; maxSteps:0 fails every run before step 1</span>
+<br><span>local-skills.ts:37</span> &nbsp;accept <b>&gt;</b> and <b>|</b> block scalars; warn under 10 chars
+<br><span>local-skills.ts:46</span> &nbsp;re-scan in search() behind an <b>mtime</b> check, never a watcher
+<br>
+<br><span>Fleet scope check: max steps ever reached across 204 Aperture runs is 62 of</span>
+<br><span>100, and 0 of 12 lanes ship a skills/ directory. These help Delos, not the fleet.</span></div></div>
+    </article>
+
+  </div>
+</section>
+
+<section class="band">
+  <div class="col">
+    <span class="kicker">Regressions</span>
+    <h2>What could break, and how we would know</h2>
+    <p class="sublede">Ranked by risk, not by size. The two headline fixes are low-risk; the
+    file-moving one is where this release could hurt.</p>
+  </div>
+
+  <div class="tw">
+    <table>
+      <caption>Regression map &middot; 0.2.15</caption>
+      <thead><tr>
+        <th style="width:5.5rem">Item</th><th style="width:9rem">Risk</th><th>What could break</th>
+        <th style="width:24rem">The signal that says it did</th>
+      </tr></thead>
+      <tbody>
+        <tr><td class="m">D-7</td><td class="r-hi">HIGH</td>
+          <td>Demotion stops matching historical messages, so the retained context stops shrinking. Or research writes move but the cleanup does not, so nothing is ever collected.</td>
+          <td>Aperture compaction count per run <b>rises</b>; post-compaction <code>input_tokens</code> rises; cost per equivalent job rises. No error is emitted &mdash; this presents purely as a performance regression.</td></tr>
+        <tr><td class="m">D-3 + D-2</td><td class="r-hi">HIGH</td>
+          <td>The <code>builtinTools</code> return-shape change mis-wires its one caller and tools silently go missing &mdash; which is precisely the defect class we are fixing.</td>
+          <td>Registered tool count on any lane differs from the pre-upgrade count without an explanation in <code>omitted</code>.</td></tr>
+        <tr><td class="m">D-9</td><td class="r-mid">MEDIUM</td>
+          <td><code>finalize</code>'s signature changes and a string lands in the wrong field, so <code>runs.error</code> gets user prose or the user gets counters. Separately, the handoff enters the next turn's context on a session that just proved it was over budget.</td>
+          <td>Any failed run where <code>output_text</code> contains <code>"budget exhausted:"</code>, or <code>runs.error</code> does not. Context growth on the turn after a failure.</td></tr>
+        <tr><td class="m">D-8</td><td class="r-mid">MEDIUM</td>
+          <td>The new flags do not exist on the pinned <code>codex</code> build, so <code>codeCliResolves</code> fails and the <code>code</code> tool is disabled entirely rather than restricted.</td>
+          <td><code>code</code> appears in <code>omitted</code> on <code>/v1/status</code> after upgrade. The D-3 work is what makes this visible in one glance.</td></tr>
+        <tr><td class="m">D-1</td><td class="r-lo">LOW</td>
+          <td>Task-mode runs lose their pinned goal, or the summary changes shape for single-request sessions.</td>
+          <td>Aperture summary bytes differ from the pre-upgrade golden on a one-request session. Asserted directly in the unit test.</td></tr>
+        <tr><td class="m">D-12</td><td class="r-lo">LOW</td>
+          <td>The cap is stripped from a backend that needs it, uncapping children that were previously bounded.</td>
+          <td>Any change at all on Aperture or Ferni &mdash; both are Anthropic-path and must see <b>nothing</b>. That is the whole test.</td></tr>
+        <tr><td class="m">D-4 · D-5</td><td class="r-lo">LOW</td>
+          <td>The block-scalar branch mangles an ordinary description; the mtime re-scan changes the skill set under a running agent.</td>
+          <td>Ferni's two skills stop being retrievable by search.</td></tr>
+        <tr><td class="m">D-11</td><td class="r-lo">LOW</td>
+          <td><code>DELTA_MAX_STEPS=0</code> makes the guard fire before step 1 and every run fails undiagnosably.</td>
+          <td>Guarded by a floor of 1 and asserted in the unit test.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 940 250" role="img" aria-label="If the scratch root moves without the fallback, compaction stops recognising old spill paths, so the retained context never shrinks, so compaction fires repeatedly and cost rises — with no error anywhere.">
+      <defs><marker id="sh" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="8" markerHeight="7" orient="auto">
+        <polygon points="0,0 10,4 0,8" fill="var(--crit)"></polygon></marker></defs>
+
+      <rect class="dg-box-crit" x="8" y="70" width="150" height="58"></rect>
+      <text class="dg-t" x="83" y="93" text-anchor="middle">scratch root</text>
+      <text class="dg-t" x="83" y="109" text-anchor="middle">moves</text>
+
+      <line class="dg-line-crit" x1="158" y1="99" x2="196" y2="99" marker-end="url(#sh)"></line>
+
+      <rect class="dg-box-crit" x="200" y="62" width="166" height="74"></rect>
+      <text class="dg-t" x="283" y="85" text-anchor="middle">derived path no longer</text>
+      <text class="dg-t" x="283" y="101" text-anchor="middle">matches stored message</text>
+      <text class="dg-t-s" x="283" y="120" text-anchor="middle">demoteSpilled returns early</text>
+
+      <line class="dg-line-crit" x1="366" y1="99" x2="404" y2="99" marker-end="url(#sh)"></line>
+
+      <rect class="dg-box-crit" x="408" y="62" width="160" height="74"></rect>
+      <text class="dg-t" x="488" y="85" text-anchor="middle">retained tail</text>
+      <text class="dg-t" x="488" y="101" text-anchor="middle">stops shrinking</text>
+      <text class="dg-t-s" x="488" y="120" text-anchor="middle">the 0.2.11 defect, again</text>
+
+      <line class="dg-line-crit" x1="568" y1="99" x2="606" y2="99" marker-end="url(#sh)"></line>
+
+      <rect class="dg-box-crit" x="610" y="62" width="150" height="74"></rect>
+      <text class="dg-t" x="685" y="85" text-anchor="middle">compaction fires</text>
+      <text class="dg-t" x="685" y="101" text-anchor="middle">again and again</text>
+      <text class="dg-t-s" x="685" y="120" text-anchor="middle">each one costs a call</text>
+
+      <line class="dg-line-crit" x1="760" y1="99" x2="798" y2="99" marker-end="url(#sh)"></line>
+
+      <rect class="dg-box-crit" x="802" y="70" width="130" height="58"></rect>
+      <text class="dg-t" x="867" y="93" text-anchor="middle">cost rises</text>
+      <text class="dg-t-c" x="867" y="109" text-anchor="middle">no error</text>
+
+      <text class="dg-t-c" x="8" y="180">Nothing on this chain throws. wipeByPrefix swallows a missing directory by design.</text>
+      <text class="dg-t-s" x="8" y="200">This is why the D-7 acceptance test is a LEGACY-path row, not a new-path row: the new path always works.</text>
+      <text class="dg-t-s" x="8" y="220">And why the Aperture measure is compaction count and post-compaction input tokens, not "did it error".</text>
+    </svg>
+    <figcaption>The one failure mode in this release that produces no error message. Everything else
+    announces itself.</figcaption>
+  </figure>
+</section>
+
+<section class="band">
+  <div class="col">
+    <span class="kicker">Proving it</span>
+    <h2>The test battery, in the order it runs</h2>
+    <p class="sublede">Each tier gates the next. Nothing reaches npm until tier 4 is green.</p>
+  </div>
+
+  <div class="col">
+    <ol class="battery">
+      <li>
+        <b>Tier 0 &mdash; unit, one per item, each verified to FAIL without its fix</b>
+        <span>This is not ceremony: 0.2.12 kept two regression tests specifically because they were
+        checked against the un-fixed code, and an earlier test had passed without its fix, which is
+        how a defect shipped behind a green suite. Write the test, watch it fail, then write the
+        fix. Then <code>bun test</code> whole-suite plus typecheck and lint.</span>
+      </li>
+      <li>
+        <b>Tier 1 &mdash; smoke against a running server</b>
+        <span><code>bash scripts/smoke.sh</code>. Adds one new assertion this release:
+        <code>/v1/status</code> returns the three tool lists and the counts reconcile against the
+        configured allowlist.</span>
+      </li>
+      <li>
+        <b>Tier 2 &mdash; Aperture lab lane, quick-search</b>
+        <span>The regression tier. Run the same pinned job on 0.2.14 and 0.2.15 and compare, because
+        every high-risk failure here is silent and only shows up as a number moving the wrong way.</span>
+      </li>
+      <li>
+        <b>Tier 3 &mdash; Ferni on Telegram</b>
+        <span>The only lane that exercises D-1 the way a human meets it, because Connect threads a
+        whole conversation into one session. Also the only lane with local skills, so D-4 and D-5
+        are provable nowhere else.</span>
+      </li>
+      <li>
+        <b>Tier 4 &mdash; Delos, D-12 only</b>
+        <span>Delos owns the only lane on the Codex subscription, so it is the only place the
+        headline provider fix can be confirmed at all. Require 3 of 3 children succeeding on a
+        <code>--from-source</code> deploy.</span>
+      </li>
+    </ol>
+  </div>
+
+  <div class="tw">
+    <table>
+      <caption>Tier 2 &middot; Aperture lab, quick-search &middot; same job on both builds</caption>
+      <thead><tr><th>Measure</th><th style="width:12rem">Expected on 0.2.15</th><th style="width:9rem">Fails if</th><th style="width:16rem">Catches</th></tr></thead>
+      <tbody>
+        <tr><td>Compactions per run</td><td>same or lower</td><td class="r-hi">rises</td><td>D-7 demotion break</td></tr>
+        <tr><td>Post-compaction <code>input_tokens</code></td><td>same or lower</td><td class="r-hi">rises</td><td>D-7 demotion break</td></tr>
+        <tr><td>Cache hit % steady-state</td><td>unchanged</td><td class="r-mid">drops</td><td>prefix churn from any item</td></tr>
+        <tr><td>Registered tool count</td><td>identical, or explained in <code>omitted</code></td><td class="r-hi">differs silently</td><td>D-3 mis-wiring</td></tr>
+        <tr><td>Cost for the equivalent job</td><td>same or lower</td><td class="r-mid">rises &gt;5%</td><td>D-7, prefix churn</td></tr>
+        <tr><td>Steps to completion</td><td>unchanged</td><td class="r-mid">rises</td><td>context loss from D-1 mis-pin</td></tr>
+        <tr><td>New <code>[tool error]</code> categories</td><td>none</td><td class="r-hi">any</td><td>D-8 flags, D-12 wire change</td></tr>
+        <tr><td>Spill files still demoted</td><td>yes, both roots</td><td class="r-hi">no</td><td>D-7, directly</td></tr>
+        <tr><td>Summary bytes, one-request session</td><td>byte-identical</td><td class="r-lo">differs</td><td>D-1 over-reach</td></tr>
+        <tr><td>Anything at all changing from D-12</td><td><b>nothing</b></td><td class="r-lo">anything</td><td>denylist written as an allowlist</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="tw">
+    <table>
+      <caption>Tier 3 &middot; Ferni on Telegram &middot; manual, in one session</caption>
+      <thead><tr><th style="width:5rem">Item</th><th>What to do</th><th style="width:22rem">Pass looks like</th></tr></thead>
+      <tbody>
+        <tr><td class="m">D-1</td><td>Ask a long first question, chat until compaction fires, then ask something completely different. <b>Do not use <code>/new</code>.</b></td><td>It answers the new question. Today it answers the first one, twice in a row, with no error.</td></tr>
+        <tr><td class="m">D-9</td><td>Set a low token budget and give it a job that will overrun.</td><td>You get the plan, the file paths of what it finished, and "narrow the question" &mdash; not a line of counters and not "try again in a moment".</td></tr>
+        <tr><td class="m">D-3</td><td><code>/status</code>, and check the tool lists.</td><td>Every configured tool is in exactly one of registered / unusable / omitted, each with a reason.</td></tr>
+        <tr><td class="m">D-2</td><td>Remove the Exa key from the vault, restart, ask a search question, then re-add it <b>without restarting</b>.</td><td>Boot warns; status says unusable with a reason; the tool still works the moment the key returns. This is the assertion that proves we did not de-register.</td></tr>
+        <tr><td class="m">D-4 · D-5</td><td>Add a skill with a folded <code>description: &gt;</code> while the daemon runs, then ask something it should match.</td><td>It is found without a restart. Both existing skills still retrievable.</td></tr>
+        <tr><td class="m">D-7</td><td>Point <code>DELTA_SCRATCH_DIR</code> off the workspace and run a job that spills.</td><td>New spill lands outside the workspace; <b>and messages written before the move still demote</b> &mdash; the legacy case, which is the one that matters.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="col">
+  <span class="kicker">Go / no-go</span>
+  <h2>What must be green before npm</h2>
+
+  <div class="gate">
+    <h3>Four gates, and the release gate is not the test suite</h3>
+    <ul class="tight">
+      <li><strong>Every tier-0 test verified to fail without its fix</strong> &mdash; not merely
+      passing.</li>
+      <li><strong>Aperture tier-2 shows no measure moving the wrong way</strong>, especially
+      compaction count and post-compaction input tokens. A silent performance regression is the
+      failure mode this release is most likely to produce.</li>
+      <li><strong>Ferni tier-3 D-1 and D-2 pass by hand.</strong> The D-2 case &mdash; key returns
+      without a restart &mdash; is the one that proves we did not break the vault flow.</li>
+      <li><strong>Delos reports 3 of 3 children.</strong> We cannot run this ourselves; nobody else
+      has the provider.</li>
+    </ul>
+    <p>Then publish, redeploy <em>without</em> <code>--from-source</code>, and run the battery again
+    against the published package. An agent left on a worktree build is running something nobody
+    else can reproduce, and a release nobody has installed is untested.</p>
+  </div>
+
+  <p>Two things deliberately not in this release, so nobody looks for them: the partial-answer call
+  on exhaustion (0.2.16, the only genuine behaviour change in the backlog) and the prompt-cache
+  history digest (0.2.16, and it now starts with a targeted capture session because no lane has one
+  recorded).</p>
+</section>
+
+<footer>
+  Plan: docs/harness-0.2.15-plan.md &middot; Specs: spec-session-ask-pin, spec-exhaustion-handoff,
+  spec-tool-usability, spec-codex-output-cap, spec-scratch-dir &middot; pushed at 2b54bc2<br>
+  Damage figures from 12 Aperture lane databases (2026-08-10 snapshot, queried offline) and Ferni
+  live, read-only. Every code claim read at the cited line.
+</footer>
