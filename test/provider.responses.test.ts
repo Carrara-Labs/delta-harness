@@ -330,3 +330,128 @@ describe("Responses tuning knobs (M4, 0.2.16)", () => {
     expect(cap.body().reasoning).toEqual({ effort: "low" });
   });
 });
+
+describe("explicit cache breakpoints on the Responses wire (M2, 0.2.16)", () => {
+  // Wire-proven 2026-08-19 (probe C: breakpoint on a user input_text block, 200 with
+  // store:false + prompt_cache_key). Carriers are INPUT blocks only (API reference):
+  // function_call_output (string output) and assistant output_text cannot hold a mark, so
+  // eligibility is user message items — the same walker as the other two wires, this wire's
+  // own shape. Implicit mode is kept (its latest-message breakpoint consumes one of the four
+  // write slots), so explicit marks cap at 3: one stable + two rolling.
+  const done = [
+    { type: "response.output_text.delta", delta: "ok" },
+    { type: "response.completed", response: { usage: {} } },
+  ];
+  const mk = (baseUrl: string, model: string): ProviderConfig => ({
+    baseUrl,
+    apiKey: "x",
+    models: [model],
+    api: "responses",
+    maxRetries: 0,
+  });
+  function transcript(turns: number): import("../src/provider").ChatMsg[] {
+    const msgs: import("../src/provider").ChatMsg[] = [
+      { role: "system", content: "spine" },
+      { role: "user", content: "the original ask" },
+    ];
+    for (let i = 0; i < turns; i++) {
+      msgs.push({
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: `c${i}`, type: "function", function: { name: "f", arguments: "{}" } },
+        ],
+      });
+      msgs.push({ role: "tool", tool_call_id: `c${i}`, content: `result ${i}` });
+      msgs.push({ role: "user", content: `follow-up ${i}` });
+    }
+    return msgs;
+  }
+  type Marked = { role?: string; content?: Array<Record<string, unknown>> };
+  function marked(body: Record<string, unknown>): Marked[] {
+    return (body.input as Marked[]).filter((i) =>
+      i.content?.some((b) => b.prompt_cache_breakpoint !== undefined),
+    );
+  }
+
+  test("gpt-5.6 on api.openai.com: ≤3 marks, user input_text blocks only, stable mark on the first user message", async () => {
+    const cap = mockCapture(done);
+    const r = await chat(mk("https://api.openai.com/v1", "gpt-5.6-sol"), {
+      messages: transcript(30),
+      cacheKey: "session-1",
+    });
+    expect(r.ok).toBe(true);
+    const hits = marked(cap.body());
+    expect(hits.length).toBeGreaterThanOrEqual(2);
+    expect(hits.length).toBeLessThanOrEqual(3);
+    for (const h of hits) {
+      expect(h.role).toBe("user");
+      const last = h.content?.[h.content.length - 1];
+      expect(last?.type).toBe("input_text");
+      expect(last?.prompt_cache_breakpoint).toEqual({ mode: "explicit" });
+    }
+    expect(hits.some((h) => h.content?.[0]?.text === "the original ask")).toBe(true);
+    // Implicit mode stays the default — the request-wide options field is NOT sent.
+    expect("prompt_cache_options" in cap.body()).toBe(false);
+  });
+
+  test("older models get no marks (they 400 on the field)", async () => {
+    const cap = mockCapture(done);
+    const r = await chat(mk("https://api.openai.com/v1", "gpt-5"), {
+      messages: transcript(30),
+      cacheKey: "session-1",
+    });
+    expect(r.ok).toBe(true);
+    expect(marked(cap.body()).length).toBe(0);
+  });
+
+  test("chatgpt.com gets no marks (unprobed surface)", async () => {
+    const cap = mockCapture(done);
+    const r = await chat(mk("https://chatgpt.com/backend-api/codex", "gpt-5.6"), {
+      messages: transcript(30),
+      cacheKey: "session-1",
+    });
+    expect(r.ok).toBe(true);
+    expect(marked(cap.body()).length).toBe(0);
+  });
+
+  test("trailing derived (ephemeral) user messages are never rolling-marked", async () => {
+    const cap = mockCapture(done);
+    const msgs = transcript(30);
+    msgs.push({ role: "user", content: "EPHEMERAL context block, rebuilt every turn" });
+    const r = await chat(mk("https://api.openai.com/v1", "gpt-5.6-sol"), {
+      messages: msgs,
+      cacheKey: "session-1",
+      ephemeralCount: 1,
+    });
+    expect(r.ok).toBe(true);
+    const hits = marked(cap.body());
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.some((h) => String(h.content?.[0]?.text).startsWith("EPHEMERAL"))).toBe(false);
+  });
+
+  test("marks are prefix-stable as the transcript grows (the whole point)", async () => {
+    const cap1 = mockCapture(done);
+    await chat(mk("https://api.openai.com/v1", "gpt-5.6-sol"), {
+      messages: transcript(30),
+      cacheKey: "session-1",
+    });
+    const texts1 = marked(cap1.body()).map((h) => h.content?.[0]?.text);
+    const cap2 = mockCapture(done);
+    await chat(mk("https://api.openai.com/v1", "gpt-5.6-sol"), {
+      messages: transcript(33),
+      cacheKey: "session-1",
+    });
+    const texts2 = marked(cap2.body()).map((h) => h.content?.[0]?.text);
+    // The STABLE mark persists verbatim; rolling marks ROLL — forward only. Each forward roll
+    // reads the longest matching cached prefix and writes just the increment (the server keeps
+    // reading against the conversation's last 50 breakpoints), so forward motion is incremental
+    // extension while a BACKWARD move would re-anchor onto a prefix that can never grow.
+    expect(texts1[0]).toBe("the original ask");
+    expect(texts2[0]).toBe("the original ask");
+    const turn = (t: unknown): number => Number(String(t).replace("follow-up ", ""));
+    const oldestRolling1 = Math.min(...texts1.slice(1).map(turn));
+    const oldestRolling2 = Math.min(...texts2.slice(1).map(turn));
+    expect(oldestRolling2).toBeGreaterThanOrEqual(oldestRolling1);
+  });
+});

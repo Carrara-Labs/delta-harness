@@ -811,6 +811,22 @@ export function acceptsResponsesTuning(baseUrl: string): boolean {
   return !hostMatches(baseUrl, ["chatgpt.com"]);
 }
 
+/** M2 (0.2.16): whether the Responses backend gets explicit `prompt_cache_breakpoint` marks.
+ * Wire-proven on api.openai.com (2026-08-19, 200 with store:false + prompt_cache_key); the
+ * subscription host auto-caches and is denied until probed — this is exactly a D-12-shaped
+ * parameter. Kept separate from the tuning/replay predicates so a probe can flip each family
+ * independently. */
+export function acceptsCacheBreakpoints(baseUrl: string): boolean {
+  return !hostMatches(baseUrl, ["chatgpt.com"]);
+}
+
+/** Explicit breakpoints exist from GPT-5.6 up; older models 400 on the field (prompt-caching
+ * guide). Evidence-only gate — extend when a newer family ships and is verified, never by
+ * guessing version arithmetic. Leaf-based so provider prefixes ("openai/gpt-5.6-sol") match. */
+export function modelHasExplicitCache(model: string): boolean {
+  return (model.toLowerCase().split("/").pop() ?? "").startsWith("gpt-5.6");
+}
+
 /** Highest index a ROLLING cache breakpoint may land on: everything after it is a derived
  * per-turn block. Shared by BOTH wire serializers — they build different shapes but must agree
  * on eligibility, and the first version of this fix shipped it to only one of them (codex P1),
@@ -1586,12 +1602,56 @@ type AnthropicEvent = {
 type ResponsesInputItem =
   | {
       role: "user" | "assistant";
-      content: Array<{ type: string; text?: string; image_url?: string }>;
+      content: Array<{
+        type: string;
+        text?: string;
+        image_url?: string;
+        /** M2: marks the exact end of a reusable prompt prefix (GPT-5.6+ explicit caching). */
+        prompt_cache_breakpoint?: { mode: "explicit" };
+      }>;
       /** GPT-5.5+ assistant-message phase, replayed as received (M1). */
       phase?: string;
     }
   | { type: "function_call"; call_id: string; name: string; arguments: string }
   | { type: "function_call_output"; call_id: string; output: string };
+
+/** M2 (0.2.16): the Responses renderer for the cache-placement brain. Third instance of the
+ * established pattern — `rollingMarks` stays the single walker, each wire supplies eligibility
+ * over its OWN rendered shape (chat: ChatMsg[], Anthropic: block messages, here: input items).
+ * Carriers are INPUT content blocks only (API reference): user message items qualify;
+ * `function_call_output` (string output), assistant `output_text`, and the top-level
+ * `instructions` string cannot hold a mark — so the stable mark rides the FIRST user message,
+ * whose breakpoint caches instructions + tools + itself (prefix semantics include everything
+ * rendered before the block). Budget: implicit mode's own latest-message breakpoint consumes
+ * one of the four write slots (prompt-caching guide), so explicit marks cap at 3 — one stable
+ * + two rolling. Image-bearing and trailing derived (ephemeral) items are skipped for the same
+ * reason as on the other wires: rebuilt every turn, a prefix ending there never matches. */
+export function markResponsesCache(input: ResponsesInputItem[], ephemeralCount: number): void {
+  const eligible = (i: number): boolean => {
+    const it = input[i];
+    if (!it || !("role" in it) || it.role !== "user") return false;
+    if (it.content.some((b) => b.type === "input_image")) return false;
+    return it.content[it.content.length - 1]?.type === "input_text";
+  };
+  const marks = new Set<number>();
+  for (let i = 0; i < input.length; i++)
+    if (eligible(i)) {
+      marks.add(i); // the stable mark
+      break;
+    }
+  for (const i of rollingMarks(
+    rollingScanFrom(input.length, ephemeralCount),
+    eligible,
+    () => 1, // rendered items are the unit here; OpenAI reads back 50 breakpoints, no block window
+  ).slice(0, 2))
+    marks.add(i);
+  for (const i of marks) {
+    const it = input[i];
+    if (!it || !("role" in it)) continue;
+    const last = it.content[it.content.length - 1];
+    if (last) last.prompt_cache_breakpoint = { mode: "explicit" };
+  }
+}
 
 function toResponses(
   messages: ChatMsg[],
@@ -1668,6 +1728,10 @@ async function streamResponses(
   // replay, and phase replay travel together (sending one without the others is incoherent).
   const replay = acceptsReasoningReplay(cfg.baseUrl);
   const { instructions, input } = toResponses(req.messages, replay);
+  // M2: explicit cache anchors, additive under the default implicit mode — the failure mode
+  // is "no better than today", never "worse". Host- and model-gated (both 400 otherwise).
+  if (acceptsCacheBreakpoints(cfg.baseUrl) && modelHasExplicitCache(model))
+    markResponsesCache(input, req.ephemeralCount ?? 0);
   // store:false is REQUIRED by the ChatGPT/Codex subscription backend ("Store must be set to
   // false") and is correct for us regardless: Delta sends the full transcript each turn and never
   // relies on server-side response storage, so there is nothing to store.
