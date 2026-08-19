@@ -19,7 +19,22 @@ export type UserPart =
 export type ChatMsg =
   | { role: "system"; content: string }
   | { role: "user"; content: string | UserPart[] }
-  | { role: "assistant"; content: string | null; tool_calls?: WireToolCall[] }
+  | {
+      role: "assistant";
+      content: string | null;
+      tool_calls?: WireToolCall[];
+      /** M1 (0.2.16): the model's own reasoning output items (opaque, `encrypted_content`
+       * inside), captured VERBATIM from the Responses wire and replayed verbatim on it —
+       * OpenAI's guidance for consecutive tool calls, and the only option that keeps the
+       * prompt prefix byte-stable. Never rendered on any other wire (chat strips, Anthropic
+       * rebuilds); stripped from retained rows at compaction (the items reason about a
+       * history the rewrite just replaced). */
+      reasoningItems?: unknown[];
+      /** GPT-5.5+ marks assistant messages `intermediate`/`final_answer`; dropping it on
+       * replay makes the model treat intermediate updates as final answers (vendor docs).
+       * Replayed on the Responses wire only. */
+      phase?: string;
+    }
   | { role: "tool"; tool_call_id: string; content: string };
 
 export type WireToolCall = {
@@ -773,6 +788,15 @@ export function acceptsMaxOutputTokens(baseUrl: string): boolean {
   return !hostMatches(baseUrl, ["chatgpt.com"]);
 }
 
+/** M1 (0.2.16): whether the Responses backend gets `include:["reasoning.encrypted_content"]`
+ * on requests and reasoning items + `phase` replayed on input. Wire-proven on api.openai.com
+ * (2026-08-19: capture, verbatim replay, and phase replay all 200). The subscription host is
+ * DENIED until Delos probes it — same D-12 rule as the cap above: its parameter surface is
+ * undocumented and 400s on fields it does not recognize. */
+export function acceptsReasoningReplay(baseUrl: string): boolean {
+  return !hostMatches(baseUrl, ["chatgpt.com"]);
+}
+
 /** Highest index a ROLLING cache breakpoint may land on: everything after it is a derived
  * per-turn block. Shared by BOTH wire serializers — they build different shapes but must agree
  * on eligibility, and the first version of this fix shipped it to only one of them (codex P1),
@@ -872,9 +896,17 @@ function withPromptCache(
   cacheTtl?: "1h",
   ephemeralCount = 0,
 ): unknown[] {
-  const framed = messages.map((m) =>
-    m.role === "tool" ? { ...m, content: untrustedToolResult(m.content) } : m,
-  );
+  const framed = messages.map((m) => {
+    if (m.role === "tool") return { ...m, content: untrustedToolResult(m.content) };
+    // M1: Responses-origin carry fields must never reach a Chat Completions endpoint — an
+    // unknown top-level message field can 400 a strict backend mid-failover, turning a
+    // recoverable provider transition into a terminal error (codex BLOCKER 4).
+    if (m.role === "assistant" && (m.reasoningItems || m.phase)) {
+      const { reasoningItems: _r, phase: _p, ...rest } = m;
+      return rest;
+    }
+    return m;
+  });
   if (!/anthropic|claude/i.test(model)) return framed;
   const cc = { cache_control: { type: "ephemeral" } };
   // Long-retention (1h) goes on the STABLE prefix only: an agent serving several runs
@@ -1541,11 +1573,16 @@ type ResponsesInputItem =
   | {
       role: "user" | "assistant";
       content: Array<{ type: string; text?: string; image_url?: string }>;
+      /** GPT-5.5+ assistant-message phase, replayed as received (M1). */
+      phase?: string;
     }
   | { type: "function_call"; call_id: string; name: string; arguments: string }
   | { type: "function_call_output"; call_id: string; output: string };
 
-function toResponses(messages: ChatMsg[]): { instructions: string; input: ResponsesInputItem[] } {
+function toResponses(
+  messages: ChatMsg[],
+  replayReasoning = false,
+): { instructions: string; input: ResponsesInputItem[] } {
   const instructions = messages
     .filter((m) => m.role === "system")
     .map((m) => (typeof m.content === "string" ? m.content : ""))
@@ -1560,8 +1597,20 @@ function toResponses(messages: ChatMsg[]): { instructions: string; input: Respon
         output: untrustedToolResult(m.content),
       });
     } else if (m.role === "assistant") {
+      // M1: the turn's own reasoning items replay VERBATIM ahead of its text and calls —
+      // the order OpenAI's guidance prescribes ("pass back all reasoning items, function
+      // call items, and function call output items"). The payload is opaque; reshaping it
+      // would invalidate it. Gated per backend (acceptsReasoningReplay).
+      if (replayReasoning)
+        for (const it of m.reasoningItems ?? []) input.push(it as ResponsesInputItem);
       if (m.content)
-        input.push({ role: "assistant", content: [{ type: "output_text", text: m.content }] });
+        input.push({
+          role: "assistant",
+          content: [{ type: "output_text", text: m.content }],
+          // phase must survive the round-trip or the model re-reads its intermediate
+          // updates as final answers (vendor docs; wire-proven 200 on replay).
+          ...(replayReasoning && m.phase ? { phase: m.phase } : {}),
+        });
       for (const tc of m.tool_calls ?? []) {
         input.push({
           type: "function_call",
@@ -1601,7 +1650,10 @@ async function streamResponses(
   // before fetch (a hung broker must not escape the timeout; codex #6).
   const sig = withTimeout(req.signal, timeoutMs, idle);
   let emitted = false;
-  const { instructions, input } = toResponses(req.messages);
+  // M1: one predicate gates the whole reasoning carry — the `include` request field, item
+  // replay, and phase replay travel together (sending one without the others is incoherent).
+  const replay = acceptsReasoningReplay(cfg.baseUrl);
+  const { instructions, input } = toResponses(req.messages, replay);
   // store:false is REQUIRED by the ChatGPT/Codex subscription backend ("Store must be set to
   // false") and is correct for us regardless: Delta sends the full transcript each turn and never
   // relies on server-side response storage, so there is nothing to store.
@@ -1614,6 +1666,10 @@ async function streamResponses(
   // 200KB research artifact cap bounding persistence. Callers keep computing maxTokens: the
   // value still feeds the budget claim and the reservation; only the wire field is dropped.
   if (req.maxTokens && acceptsMaxOutputTokens(cfg.baseUrl)) body.max_output_tokens = req.maxTokens;
+  // M1: ask for the encrypted reasoning payload explicitly — the API reference documents this
+  // opt-in for stateless (store:false) use; relying on the "included by default" reading of the
+  // migrate guide would make capture silently backend-dependent.
+  if (replay) body.include = ["reasoning.encrypted_content"];
   // The Responses API (ChatGPT/Codex subscription backend) takes reasoning effort natively.
   if (req.reasoningEffort) body.reasoning = { effort: req.reasoningEffort };
   if (req.tools?.length) {
@@ -1687,6 +1743,8 @@ async function streamResponses(
   const usage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, costUsd: 0 };
   const calls: WireToolCall[] = [];
   const byItem = new Map<string, WireToolCall>(); // function_call item_id → call
+  const reasoning: unknown[] = []; // M1: finalized reasoning items, arrival order
+  let phase: string | undefined; // M1: the assistant message item's phase, if any
 
   try {
     for await (const data of sseLines(
@@ -1732,6 +1790,17 @@ async function streamResponses(
             if (call) call.function.arguments += ev.delta;
           }
           break;
+        // M1: capture from the FINALIZED item — `added` is in-progress and (live-verified)
+        // carries no encrypted_content. A reasoning item without the payload is a husk that
+        // cannot inform a later turn; skip it rather than replay it.
+        case "response.output_item.done": {
+          const item = ev.item as
+            | { type?: string; encrypted_content?: unknown; phase?: unknown }
+            | undefined;
+          if (item?.type === "reasoning" && item.encrypted_content) reasoning.push(ev.item);
+          else if (item?.type === "message" && typeof item.phase === "string") phase = item.phase;
+          break;
+        }
         case "response.completed":
         case "response.incomplete": {
           completed = true;
@@ -1777,6 +1846,8 @@ async function streamResponses(
 
   const message: AssistantMsg = { role: "assistant", content: content || null };
   if (calls.length) message.tool_calls = calls;
+  if (reasoning.length) message.reasoningItems = reasoning;
+  if (phase) message.phase = phase;
   return {
     ok: true,
     model,

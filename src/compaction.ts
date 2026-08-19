@@ -201,6 +201,27 @@ const LEDGER_MAX_CHARS = 4000; // hard byte bound so the ledger can't itself bec
  *  Done at the compaction COMMIT on purpose: that already rewrites the active set, so the prompt
  *  prefix is invalidated at that instant anyway and demotion costs zero extra cache churn. Doing
  *  it per-turn instead would rewrite the prefix every turn and destroy the cache. */
+/** M1 (0.2.16): a retained assistant row's replayed reasoning items were generated against
+ * the history this compaction is rewriting — replaying them over the rewritten transcript is
+ * vendor-undefined (the encrypted payload references turns that no longer exist as sent).
+ * Stripping happens at the compaction commit, which already rewrites these rows, so it costs
+ * zero extra prefix-cache churn; the next model response starts a fresh reasoning epoch.
+ * `phase` stays: it describes the message itself, not the vanished prefix. Also used to keep
+ * opaque blobs out of the identifier harvest (their base64 is full of digit runs the A-1
+ * appendix would faithfully preserve). */
+export function stripReasoningItems(msg: string): string {
+  if (!msg.includes('"reasoningItems"')) return msg;
+  let m: ChatMsg;
+  try {
+    m = JSON.parse(msg) as ChatMsg;
+  } catch {
+    return msg;
+  }
+  if (m.role !== "assistant" || !("reasoningItems" in m)) return msg;
+  (m as { reasoningItems?: unknown }).reasoningItems = undefined;
+  return JSON.stringify(m);
+}
+
 function demoteSpilled(row: Row, roots: { scratch: string; workspace: string }): string {
   const msg = row.msg;
   let m: ChatMsg;
@@ -425,7 +446,9 @@ export async function maybeCompact(
 
   // Demote oldest-first until the retained tail fits its budget. Oldest-first keeps the freshest
   // results verbatim when there is room, while still letting the budget win when there is not.
-  const kept = tail.map((r) => ({ ...r }));
+  // M1: every retained row is a COPY about to be re-inserted (both commit paths below), so the
+  // reasoning strip lands here once and covers demotion-only and summarize alike.
+  const kept = tail.map((r) => ({ ...r, msg: stripReasoningItems(r.msg) }));
   let tailTokens = kept.reduce((n, r) => n + tokEst(r.msg), 0);
   let demotedAny = false;
   for (const r of kept) {
@@ -506,7 +529,10 @@ export async function maybeCompact(
   const ids = extractIdentifiers(
     prefix
       .slice(-14)
-      .map((r) => r.msg)
+      // M1: raw rows can carry opaque reasoning payloads whose base64 is dense with
+      // digit runs — harvested "identifiers" from those would crowd real ones out of
+      // the bounded appendix with noise no reader can use.
+      .map((r) => stripReasoningItems(r.msg))
       .join("\n"),
     priorSummaries.map((r) => r.msg).join("\n"),
   );
