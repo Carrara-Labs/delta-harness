@@ -996,7 +996,7 @@ export async function executeRun(
     // persisted; done on the FINAL (post-compaction) history, once. Markers past the window stay
     // text: that's the prune (an image re-billed every turn is where the token money goes).
     const withImages = deps.vision
-      ? await expandImageMarkers([...history], resolve(deps.workspace))
+      ? await expandImageMarkers([...history], resolve(deps.workspace), scratchRoot)
       : history;
     const messages: ChatMsg[] = [{ role: "system", content: system }, ...withImages, ...ephemeral];
     // S1: prefix identity, measured on the EXACT values about to be sent. Only the two segments
@@ -1792,7 +1792,12 @@ function exhaustionHandoff(deps: Deps, run: RunRow, committedSelfWrite: boolean)
     parts.push("Intermediate results were not retained (this was an ephemeral turn).");
   } else {
     try {
-      const root = resolve(deps.scratchDir ?? deps.workspace);
+      // BOTH roots when they differ, like the queue's wipes: a crash-resume across a root
+      // change may hold pre-change spill under the workspace and post-change spill under
+      // the scratch root — the handoff must name them all.
+      const scratch = resolve(deps.scratchDir ?? deps.workspace);
+      const ws = resolve(deps.workspace);
+      const roots = scratch === ws ? [scratch] : [scratch, ws];
       const family = (dir: string, prefix: string): string[] => {
         try {
           return readdirSync(dir)
@@ -1803,12 +1808,12 @@ function exhaustionHandoff(deps: Deps, run: RunRow, committedSelfWrite: boolean)
           return []; // most runs spill/research nothing — the dir may not exist
         }
       };
-      const spills = family(`${root}/.delta/spill`, spillRunPrefix(run.id));
+      const spills = roots.flatMap((r) => family(`${r}/.delta/spill`, spillRunPrefix(run.id)));
       // Research artifacts are FILES inside per-call dirs — list the files, which is what
       // read_file takes (the dirs alone would send the user somewhere read_file rejects).
-      const research = family(`${root}/.delta/research`, researchRunPrefix(run.id)).flatMap((d) =>
-        family(d, ""),
-      );
+      const research = roots
+        .flatMap((r) => family(`${r}/.delta/research`, researchRunPrefix(run.id)))
+        .flatMap((d) => family(d, ""));
       const bounded = (paths: string[]): string[] => {
         const head = paths.slice(0, HANDOFF_MAX_PER_FAMILY).map((p) => `- ${p}`);
         if (paths.length > head.length) head.push(`- …and ${paths.length - head.length} more`);

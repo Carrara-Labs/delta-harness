@@ -358,6 +358,7 @@ export async function runResearch(
   // set, never the parent's.
   const baseCtx: ToolCtx = {
     workspace: ctx.workspace,
+    ...(ctx.scratchDir ? { scratchDir: ctx.scratchDir } : {}),
     activate: () => {},
     // S3: the child context is built field-by-field, so an omitted callback silently disables
     // research telemetry entirely while every unit test still passes (codex P1 — it was omitted).

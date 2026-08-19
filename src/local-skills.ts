@@ -41,13 +41,14 @@ function metadata(text: string): { name: string; description: string } | null {
   // parses real YAML, so the identical file works on a laptop and was invisible here.
   if (description === "" || /^[>|][+\-0-9]*$/.test(description)) {
     const after = block.slice(block.indexOf("description:"));
-    description = after
-      .split(/\r?\n/)
-      .slice(1)
-      .filter((l) => /^\s+\S/.test(l))
-      .map((l) => l.trim())
-      .join(" ")
-      .trim();
+    const kept: string[] = [];
+    // Stop at the first non-indented, non-blank line — that is the NEXT top-level YAML key,
+    // and collecting past it would fold unrelated nested metadata into the searchable text.
+    for (const l of after.split(/\r?\n/).slice(1)) {
+      if (/^\s+\S/.test(l)) kept.push(l.trim());
+      else if (l.trim() !== "") break;
+    }
+    description = kept.join(" ").trim();
   }
   if (NAME.test(name) && description.length > 0 && description.length < 10)
     // The warning matters more than the parse: a real description is never under ten
@@ -80,7 +81,10 @@ export class LocalSkillsAdapter implements CapabilityAdapter {
         .filter((e) => e.isDirectory() && !e.isSymbolicLink())
         .map((e) => {
           try {
-            return `${e.name}:${lstatSync(resolve(this.root, e.name, "SKILL.md")).mtimeMs}`;
+            const st = lstatSync(resolve(this.root, e.name, "SKILL.md"));
+            // mtime AND size: a same-timestamp rewrite (metadata-preserving deploys) would
+            // otherwise stay stale forever.
+            return `${e.name}:${st.mtimeMs}:${st.size}`;
           } catch {
             return `${e.name}:-`;
           }

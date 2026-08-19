@@ -281,3 +281,36 @@ describe("skill index re-scan (D-5)", () => {
     expect(hits.find((h) => h.name === "doomed")).toBeUndefined();
   });
 });
+
+describe("review fixes (D-4/D-5 follow-up)", () => {
+  test("block-scalar collection stops at the next top-level key", async () => {
+    const ws = workspace();
+    mkdirSync(join(ws, "skills", "scoped"));
+    writeFileSync(
+      join(ws, "skills", "scoped", "SKILL.md"),
+      "---\nname: scoped\ndescription: >\n  Handles vintro requests only.\nmetadata:\n  internal_note: NEVERSEARCHTHIS\n---\nbody",
+    );
+    const a = new LocalSkillsAdapter(ws);
+    const hits = await a.search("vintro", ctx);
+    expect(hits[0]?.name).toBe("scoped");
+    expect(hits[0]?.description).not.toContain("NEVERSEARCHTHIS");
+  });
+
+  test("a same-mtime rewrite with a different size is still re-indexed", async () => {
+    const ws = workspace();
+    writeSkill(ws, "pinned", "short one", "body");
+    const { lstatSync, utimesSync } = await import("node:fs");
+    const file = join(ws, "skills", "pinned", "SKILL.md");
+    const before = lstatSync(file).mtime;
+    const a = new LocalSkillsAdapter(ws);
+    expect((await a.search("short one", ctx))[0]?.name).toBe("pinned");
+    // Metadata-preserving deploys can rewrite content and restore the timestamp.
+    writeFileSync(
+      file,
+      "---\nname: pinned\ndescription: a considerably longer replacement wording\n---\nbody",
+    );
+    utimesSync(file, before, before);
+    const hits = await a.search("considerably longer replacement", ctx);
+    expect(hits[0]?.description).toContain("considerably longer");
+  });
+});

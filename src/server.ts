@@ -493,7 +493,10 @@ export function createServer(
                       return []; // a throwing predicate must not fail the status read
                     }
                   }),
-                  omitted: opts?.toolsOmitted ?? [],
+                  // Filtered against the LIVE registry: an MCP reconnect after credential intake
+                  // can register a tool whose boot-time omission would otherwise contradict
+                  // `registered` forever.
+                  omitted: (opts?.toolsOmitted ?? []).filter((o) => !opts.tools?.has(o.name)),
                 },
               }
             : {}),

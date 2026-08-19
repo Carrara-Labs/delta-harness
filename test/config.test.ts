@@ -94,3 +94,31 @@ describe("code CLI default (D-8)", () => {
     expect(cli).not.toContain("--disable");
   });
 });
+
+describe("scratch-root overlap guard (D-7 review fix)", () => {
+  test("a scratch root that contains the daemon DB is refused back to the workspace", () => {
+    const errs: string[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => errs.push(a.join(" "));
+    try {
+      const cfg = loadConfig({
+        DELTA_WORKSPACE: "/data/bundle",
+        DELTA_DB: "/data/delta.db",
+        DELTA_SCRATCH_DIR: "/data",
+      });
+      expect(cfg.scratchDir).toBe(cfg.workspace); // the model must never gain file-tool reach over the DB
+      expect(errs.join("\n")).toContain("DELTA_SCRATCH_DIR");
+    } finally {
+      console.error = orig;
+    }
+  });
+
+  test("a dedicated sibling directory passes", () => {
+    const cfg = loadConfig({
+      DELTA_WORKSPACE: "/data/bundle",
+      DELTA_DB: "/data/delta.db",
+      DELTA_SCRATCH_DIR: "/data/scratch",
+    });
+    expect(cfg.scratchDir).toBe("/data/scratch");
+  });
+});

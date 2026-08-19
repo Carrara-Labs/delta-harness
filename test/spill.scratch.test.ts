@@ -203,3 +203,102 @@ describe("relocatable scratch (D-7)", () => {
     );
   });
 });
+
+describe("review fixes: second-root file operations (D-7 follow-up)", () => {
+  test("list_dir under the scratch root returns ABSOLUTE paths read_file can take back", async () => {
+    const ws = tmp("ws5");
+    const scratch = tmp("scratch5");
+    const { builtinTools } = await import("../src/builtins");
+    const tools = builtinTools({
+      workspace: ws,
+      codeCli: ["echo"],
+      selfCmd: ["true"],
+      subagentDepth: 0,
+    });
+    const ctx = { workspace: ws, scratchDir: scratch, activate: () => {} };
+    mkdirSync(join(scratch, "scratch", "r9"), { recursive: true });
+    writeFileSync(join(scratch, "scratch", "r9", "notes.md"), "n");
+    const listing = String(await tools.get("list_dir")?.execute({ path: scratch }, ctx));
+    expect(listing).toContain(join(scratch, "scratch", "r9", "notes.md")); // absolute
+    expect(listing).not.toContain("\n/.delta"); // never a workspace-sliced fragment
+    const read = await tools.get("read_file")?.execute({ path: listing.split("\n")[0] ?? "" }, ctx);
+    expect(String(read)).not.toContain("[tool error]");
+  });
+
+  test("delete_file trashes a scratch-root file under the SCRATCH root, not the workspace", async () => {
+    const ws = tmp("ws6");
+    const scratch = tmp("scratch6");
+    const { builtinTools } = await import("../src/builtins");
+    const tools = builtinTools({
+      workspace: ws,
+      codeCli: ["echo"],
+      selfCmd: ["true"],
+      subagentDepth: 0,
+    });
+    const ctx = { workspace: ws, scratchDir: scratch, activate: () => {} };
+    mkdirSync(join(scratch, "scratch", "r7"), { recursive: true });
+    writeFileSync(join(scratch, "scratch", "r7", "old.md"), "x");
+    const out = await tools
+      .get("delete_file")
+      ?.execute({ path: join(scratch, "scratch", "r7", "old.md") }, ctx);
+    expect(String(out)).toContain("trashed");
+    expect(existsSync(join(scratch, ".delta", "trash"))).toBe(true);
+    expect(existsSync(join(ws, ".delta"))).toBe(false); // nothing dragged back into the workspace
+  });
+
+  test("an image read under the scratch root actually attaches (never claimed-but-withheld)", async () => {
+    const ws = tmp("ws7");
+    const scratch = tmp("scratch7");
+    const { registerImage, expandImageMarkers } = await import("../src/files");
+    // 1x1 PNG
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const p = join(scratch, "scratch", "r8", "shot.png");
+    mkdirSync(join(scratch, "scratch", "r8"), { recursive: true });
+    writeFileSync(p, png);
+    registerImage(ws, p, scratch);
+    const msgs = await expandImageMarkers(
+      [{ role: "user", content: `look at [delta:image ${p}]` }],
+      ws,
+      scratch,
+    );
+    // Expansion appends ONE trailing user message carrying the wire parts.
+    expect(msgs.length).toBe(2);
+    expect(Array.isArray(msgs[1]?.content)).toBe(true);
+  });
+
+  test("exhaustion handoff names artifacts under BOTH roots after a root change", async () => {
+    callN = 0;
+    const ws = tmp("ws8");
+    const scratch = tmp("scratch8");
+    const { PROFILES } = await import("../src/profiles");
+    PROFILES.exhaustTiny = {
+      name: "exhaustTiny",
+      allowed: "*",
+      pinned: "*",
+      budget: { maxSteps: 40, maxTokens: 25, maxCostUsd: 1 },
+    };
+    const tools: Tools = new Map([["big", bigTool()]]);
+    const deps = makeDeps(
+      async () => {
+        callN++;
+        return toolCallResult("big", {}, `call_${callN}`);
+      },
+      tools,
+      { workspace: ws, scratchDir: scratch },
+    );
+    const queue = new Queue(deps);
+    const run = queue.enqueue({ input: "go", metadata: { profile: "exhaustTiny" } });
+    // A pre-root-change spill under the WORKSPACE root, carrying this run's prefix — the
+    // crash-resume-across-a-root-change shape. Written before the run's first turn lands.
+    mkdirSync(join(ws, ".delta", "spill"), { recursive: true });
+    writeFileSync(join(ws, ".delta", "spill", `${run.id}.legacy.txt`), "old");
+    const done = await queue.wait(run.id);
+    expect(done.status).toBe("failed");
+    const out = (JSON.parse(done.result ?? "{}") as { output_text?: string }).output_text ?? "";
+    expect(out).toContain(join(scratch, ".delta", "spill")); // current root
+    expect(out).toContain(`${run.id}.legacy.txt`); // legacy root
+  });
+});

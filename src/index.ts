@@ -474,6 +474,7 @@ if (cfg.telemetryUrl) {
   }).start();
 }
 sweepTrash(cfg.workspace); // Sprint 8: trashed files past 7 days are gone for good
+if (cfg.scratchDir !== cfg.workspace) sweepTrash(cfg.scratchDir); // scratch-root trash ages out too (D-7)
 // NOTE: `.delta/spill` is deliberately NOT swept here — see the note in `files.ts`.
 // Local diagnostic-state retention (events + journal + calls): runs regardless of telemetry —
 // the Exporter only bounds `events` when telemetry is wired, and nothing bounded `journal` or

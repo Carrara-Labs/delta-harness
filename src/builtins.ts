@@ -7,10 +7,12 @@
 import {
   accessSync,
   constants,
+  cpSync,
   existsSync,
   mkdirSync,
   readdirSync,
   renameSync,
+  rmSync,
   statSync,
 } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
@@ -420,7 +422,7 @@ export function builtinTools(
       if (isImageMime(mime)) {
         if (size > MAX_IMAGE_BYTES)
           return `[tool error] ${rel} is an image too large to attach (${kb}KB > ~3.3MB wire cap) — downscale it via the code tool, then read the smaller file`;
-        registerImage(ctx.workspace, rel); // provenance: this marker may expand
+        registerImage(ctx.workspace, rel, ctx.scratchDir); // provenance: this marker may expand
         return cfg.vision
           ? `[delta:image ${rel}]\n(image ${mime}, ${kb}KB — attached to your context while recent; re-read this file to re-attach it)`
           : `[delta:image ${rel}]\n(image ${mime}, ${kb}KB. Your current model CANNOT view images — you know only this file's name and size. Never guess or describe its contents; delegate visual analysis or say you can't see it.)`;
@@ -490,7 +492,15 @@ export function builtinTools(
       if (existsSync(to) && args.overwrite !== true)
         return `[tool error] ${args.to} exists — pass overwrite=true to replace it`;
       mkdirSync(dirname(to), { recursive: true });
-      renameSync(from, to);
+      try {
+        renameSync(from, to);
+      } catch (e) {
+        // Cross-root moves may cross FILESYSTEMS (workspace on a volume, scratch on another):
+        // rename EXDEVs there, so fall back to copy+delete. Same visible semantics.
+        if ((e as { code?: string }).code !== "EXDEV") throw e;
+        cpSync(from, to, { recursive: true });
+        rmSync(from, { recursive: true, force: true });
+      }
       return `moved ${args.from} → ${args.to}`;
     },
   });
@@ -513,7 +523,13 @@ export function builtinTools(
       if (!existsSync(abs)) return `[tool error] no such file: ${rel}`;
       if (statSync(abs).isDirectory() && args.recursive !== true)
         return `[tool error] ${rel} is a directory — pass recursive=true to trash it`;
-      trashFile(ctx.workspace, rel, abs);
+      // Trash under the root that OWNS the path: workspace trash for a scratch file would drag
+      // engine state back into the workspace and EXDEV across filesystems.
+      const owner =
+        abs === ctx.workspace || abs.startsWith(`${ctx.workspace}/`)
+          ? ctx.workspace
+          : (ctx.scratchDir ?? ctx.workspace);
+      trashFile(owner, rel, abs);
       return `trashed ${rel} (recoverable ~7 days in .delta/trash)`;
     },
   });
@@ -823,9 +839,15 @@ export function builtinTools(
     idempotent: true,
     execute: async (args, ctx) => {
       const abs = inside(ctx, String(args.path ?? "."));
+      // Under the scratch root, return ABSOLUTE paths: a workspace-relative slice of a foreign
+      // root produces paths like "/.delta/…" that read_file (workspace-relative) can't resolve.
+      const inWs = abs === ctx.workspace || abs.startsWith(`${ctx.workspace}/`);
       const entries = readdirSync(abs, { recursive: true, withFileTypes: true })
         .filter((e) => e.isFile())
-        .map((e) => resolve(e.parentPath, e.name).slice(ctx.workspace.length + 1));
+        .map((e) => {
+          const full = resolve(e.parentPath, e.name);
+          return inWs ? full.slice(ctx.workspace.length + 1) : full;
+        });
       return entries.length ? entries.sort().join("\n") : "(empty)";
     },
   });
@@ -839,7 +861,9 @@ export function builtinTools(
     console.error(
       `delta: code CLI '${codeBin ?? "(unset)"}' not found — 'code' tool disabled this run (set DELTA_CODE_CLI or install it).`,
     );
-    omit("code", `CLI '${cfg.codeCli.join(" ")}' not found or not executable on this host`);
+    // Binary NAME only — the full argv is operator config and may carry private paths or
+    // inline tokens; the reason rides /v1/status and stderr.
+    omit("code", `CLI '${codeBin ?? "(unset)"}' not found or not executable on this host`);
   }
   if (codeAvailable)
     add({

@@ -93,3 +93,37 @@ describe("GET /v1/status tools report (D-3)", () => {
       expect(childOmitted.find((x) => x.name === name)).toBeDefined();
   });
 });
+
+describe("review fixes (D-3 follow-up)", () => {
+  test("an omission is dropped from status once the tool lands in the LIVE registry", async () => {
+    // MCP reconnect after credential intake registers a tool whose boot-time omission would
+    // otherwise contradict `registered` forever.
+    omitted.push({ name: "late_mcp_tool", reason: "server was down at boot" });
+    deps.tools.set("late_mcp_tool", {
+      name: "late_mcp_tool",
+      description: "arrived late",
+      parameters: { type: "object" },
+      idempotent: true,
+      execute: async () => "ok",
+    });
+    const body = (await (await fetch(`${base}/v1/status`)).json()) as { tools: ToolsReport };
+    expect(body.tools.registered).toContain("late_mcp_tool");
+    expect(body.tools.omitted.find((o) => o.name === "late_mcp_tool")).toBeUndefined();
+  });
+
+  test("the code omission reason names the BINARY only, never the full operator argv", () => {
+    const leaky: Array<{ name: string; reason: string }> = [];
+    builtinTools(
+      {
+        workspace: ws,
+        codeCli: ["not-a-binary-zzz", "--api-key", "sk-SECRET-inline"],
+        selfCmd: ["true"],
+        subagentDepth: 0,
+      },
+      (name, reason) => leaky.push({ name, reason }),
+    );
+    const code = leaky.find((o) => o.name === "code");
+    expect(code?.reason).toContain("not-a-binary-zzz");
+    expect(code?.reason).not.toContain("sk-SECRET-inline");
+  });
+});
