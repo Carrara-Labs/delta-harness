@@ -38,7 +38,10 @@ type EventRow = {
   data: string;
 };
 
-const PAYLOAD_EVENTS = new Set(["model.call", "tool.call", "tool.result"]);
+// tool.rejected carries the model's raw requested name (`requested_tool`) — free text under a
+// hallucination or an injection, so the event is payload-bearing; its `reason` enum rides the
+// safe subset. (A-2)
+const PAYLOAD_EVENTS = new Set(["model.call", "tool.call", "tool.result", "tool.rejected"]);
 
 /** Attributes on payload-bearing events that are safe to export WITHOUT payload consent:
  * closed enums, counters, and identifiers only — never prompt text, tool arguments, or tool
@@ -92,6 +95,9 @@ const SAFE_ATTRS = new Set([
   "is_error",
   "error.class",
   "interrupted",
+  // tool.rejected's closed enum (unknown / not_allowed / breaker_disabled) — engine-authored,
+  // never free text. The requested name itself is deliberately NOT here (A-2).
+  "reason",
 ]);
 
 export class Exporter {

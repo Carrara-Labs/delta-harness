@@ -1619,6 +1619,17 @@ async function execCall(
     result = `[interrupted] The daemon restarted while '${name}' was executing; it may or may not have taken effect. Verify the outcome before firing it again.`;
     events.emit("tool.result", spine, { "gen_ai.tool.name": name, interrupted: true });
   } else if (!tool) {
+    // A-2: the last silent rejection in the loop. A CLOSED reason enum (safe to export bare);
+    // the raw requested name is model-controlled free text under injection, so it rides as
+    // payload — local unless DELTA_CAPTURE_PAYLOADS is on. Telemetry only: the model-facing
+    // error string is unchanged, and no execution semantics move (that is A-3, which waits
+    // for this event's data).
+    const reason = breaker.disabled.has(name)
+      ? "breaker_disabled"
+      : deps.tools.has(name)
+        ? "not_allowed"
+        : "unknown";
+    events.emit("tool.rejected", spine, { requested_tool: name, reason });
     result = `[tool error] unknown tool '${name}'`;
   } else {
     events.emit("tool.call", spine, { "gen_ai.tool.name": name, "gen_ai.tool.call.id": call.id });
