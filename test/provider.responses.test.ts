@@ -6,7 +6,7 @@
 // a 400 costs the call.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { acceptsMaxOutputTokens, chat, toAnthropic, type ProviderConfig } from "../src/provider";
+import { acceptsMaxOutputTokens, chat, type ProviderConfig, toAnthropic } from "../src/provider";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
@@ -160,18 +160,38 @@ describe("ReasoningCarry capture (M1)", () => {
 
   test("reasoning item + phase ride the assistant message, captured from output_item.done", async () => {
     const cap = mockCapture([
-      { type: "response.output_item.added", output_index: 0, item: { id: "rs_1", type: "reasoning" } },
+      {
+        type: "response.output_item.added",
+        output_index: 0,
+        item: { id: "rs_1", type: "reasoning" },
+      },
       { type: "response.output_item.done", output_index: 0, item: RS },
       {
         type: "response.output_item.added",
         output_index: 1,
-        item: { id: "fc_1", type: "function_call", call_id: "call_1", name: "get_weather", arguments: "" },
+        item: {
+          id: "fc_1",
+          type: "function_call",
+          call_id: "call_1",
+          name: "get_weather",
+          arguments: "",
+        },
       },
-      { type: "response.function_call_arguments.delta", item_id: "fc_1", delta: '{"city":"Paris"}' },
+      {
+        type: "response.function_call_arguments.delta",
+        item_id: "fc_1",
+        delta: '{"city":"Paris"}',
+      },
       {
         type: "response.output_item.done",
         output_index: 2,
-        item: { id: "msg_1", type: "message", role: "assistant", phase: "intermediate", content: [] },
+        item: {
+          id: "msg_1",
+          type: "message",
+          role: "assistant",
+          phase: "intermediate",
+          content: [],
+        },
       },
       { type: "response.completed", response: { usage: {} } },
     ]);
@@ -189,7 +209,11 @@ describe("ReasoningCarry capture (M1)", () => {
 
   test("a reasoning item without encrypted_content is a husk — not captured", async () => {
     mockCapture([
-      { type: "response.output_item.done", output_index: 0, item: { id: "rs_1", type: "reasoning", summary: [] } },
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: { id: "rs_1", type: "reasoning", summary: [] },
+      },
       { type: "response.output_text.delta", delta: "ok" },
       { type: "response.completed", response: { usage: {} } },
     ]);
@@ -220,7 +244,13 @@ describe("ReasoningCarry replay (M1)", () => {
     {
       role: "assistant",
       content: "checking",
-      tool_calls: [{ id: "call_1", type: "function", function: { name: "get_weather", arguments: '{"city":"Paris"}' } }],
+      tool_calls: [
+        {
+          id: "call_1",
+          type: "function",
+          function: { name: "get_weather", arguments: '{"city":"Paris"}' },
+        },
+      ],
       reasoningItems: [RS],
       phase: "intermediate",
     },
@@ -234,13 +264,25 @@ describe("ReasoningCarry replay (M1)", () => {
   test("api.openai.com: reasoning replays verbatim BEFORE the turn's text and calls; phase rides the message item", async () => {
     const cap = mockCapture(done);
     const r = await chat(
-      { baseUrl: "https://api.openai.com/v1", apiKey: "x", models: ["gpt-5.6-sol"], api: "responses", maxRetries: 0 },
+      {
+        baseUrl: "https://api.openai.com/v1",
+        apiKey: "x",
+        models: ["gpt-5.6-sol"],
+        api: "responses",
+        maxRetries: 0,
+      },
       { messages: history },
     );
     expect(r.ok).toBe(true);
     const input = cap.body().input as Array<Record<string, unknown>>;
     const types = input.map((i) => (i.type as string) ?? `msg:${i.role}`);
-    expect(types).toEqual(["msg:user", "reasoning", "msg:assistant", "function_call", "function_call_output"]);
+    expect(types).toEqual([
+      "msg:user",
+      "reasoning",
+      "msg:assistant",
+      "function_call",
+      "function_call_output",
+    ]);
     expect(input[1]).toEqual(RS); // verbatim — the payload is opaque and must not be reshaped
     expect(input[2]?.phase).toBe("intermediate");
   });
@@ -248,7 +290,13 @@ describe("ReasoningCarry replay (M1)", () => {
   test("chatgpt.com: no reasoning items, no phase on the wire (default-denied until probed)", async () => {
     const cap = mockCapture(done);
     const r = await chat(
-      { baseUrl: "https://chatgpt.com/backend-api/codex", apiKey: "x", models: ["gpt-5.6"], api: "responses", maxRetries: 0 },
+      {
+        baseUrl: "https://chatgpt.com/backend-api/codex",
+        apiKey: "x",
+        models: ["gpt-5.6"],
+        api: "responses",
+        maxRetries: 0,
+      },
       { messages: history },
     );
     expect(r.ok).toBe(true);
@@ -263,7 +311,12 @@ describe("ReasoningCarry replay (M1)", () => {
       "[DONE]",
     ]);
     const r = await chat(
-      { baseUrl: "https://openrouter.ai/api/v1", apiKey: "x", models: ["anthropic/claude-sonnet-5"], maxRetries: 0 },
+      {
+        baseUrl: "https://openrouter.ai/api/v1",
+        apiKey: "x",
+        models: ["anthropic/claude-sonnet-5"],
+        maxRetries: 0,
+      },
       { messages: history },
     );
     expect(r.ok).toBe(true);
@@ -358,9 +411,7 @@ describe("explicit cache breakpoints on the Responses wire (M2, 0.2.16)", () => 
       msgs.push({
         role: "assistant",
         content: null,
-        tool_calls: [
-          { id: `c${i}`, type: "function", function: { name: "f", arguments: "{}" } },
-        ],
+        tool_calls: [{ id: `c${i}`, type: "function", function: { name: "f", arguments: "{}" } }],
       });
       msgs.push({ role: "tool", tool_call_id: `c${i}`, content: `result ${i}` });
       msgs.push({ role: "user", content: `follow-up ${i}` });
@@ -505,7 +556,13 @@ describe("codex diff-review fixes (0.2.16)", () => {
     // turn can never match again.
     const cap = mockCapture(done);
     const r = await chat(
-      { baseUrl: "https://api.openai.com/v1", apiKey: "x", models: ["gpt-5.6-sol"], api: "responses", maxRetries: 0 },
+      {
+        baseUrl: "https://api.openai.com/v1",
+        apiKey: "x",
+        models: ["gpt-5.6-sol"],
+        api: "responses",
+        maxRetries: 0,
+      },
       {
         messages: [
           {
@@ -529,7 +586,13 @@ describe("codex diff-review fixes (0.2.16)", () => {
   test("malformed persisted carry cannot throw the marker off the error-as-value path", async () => {
     const cap = mockCapture(done);
     const r = await chat(
-      { baseUrl: "https://api.openai.com/v1", apiKey: "x", models: ["gpt-5.6-sol"], api: "responses", maxRetries: 0 },
+      {
+        baseUrl: "https://api.openai.com/v1",
+        apiKey: "x",
+        models: ["gpt-5.6-sol"],
+        api: "responses",
+        maxRetries: 0,
+      },
       {
         messages: [
           { role: "user", content: "hi" },
@@ -586,11 +649,14 @@ describe("codex diff-review fixes (0.2.16)", () => {
       maxRetries: 0,
     };
     const cap1 = mockCapture(done);
-    await chat({ ...base, textVerbosity: "low", reasoningSummary: "auto" }, {
-      messages,
-      reasoningEffort: "low",
-      cacheKey: "s",
-    });
+    await chat(
+      { ...base, textVerbosity: "low", reasoningSummary: "auto" },
+      {
+        messages,
+        reasoningEffort: "low",
+        cacheKey: "s",
+      },
+    );
     const withEverything = JSON.stringify(cap1.body());
     const cap2 = mockCapture(done);
     await chat(base, { messages: bare, reasoningEffort: "low", cacheKey: "s" });

@@ -885,7 +885,7 @@ describe("reasoning carry across compaction (M1, 0.2.16)", () => {
     expect(stripReasoningItems(plain)).toBe(plain);
     const tool = JSON.stringify({ role: "tool", tool_call_id: "c", content: '"reasoningItems"' });
     expect(stripReasoningItems(tool)).toBe(tool);
-    expect(stripReasoningItems("{not json reasoningItems\"")).toBe('{not json reasoningItems"');
+    expect(stripReasoningItems('{not json reasoningItems"')).toBe('{not json reasoningItems"');
   });
 
   test("retained assistant rows come out of a compaction without their reasoning items", async () => {
@@ -920,9 +920,9 @@ describe("reasoning carry across compaction (M1, 0.2.16)", () => {
     }
     // The archive keeps the original rows verbatim (never mutate a stored row).
     const archived = (
-      db
-        .query("SELECT msg FROM messages WHERE session_id='s' AND active=0 ORDER BY id")
-        .all() as { msg: string }[]
+      db.query("SELECT msg FROM messages WHERE session_id='s' AND active=0 ORDER BY id").all() as {
+        msg: string;
+      }[]
     ).filter((r) => r.msg.includes('"reasoningItems"'));
     expect(archived.length).toBeGreaterThan(0);
     function isSummary(m: ChatMsg): boolean {
@@ -942,7 +942,9 @@ describe("reasoning carry across compaction (M1, 0.2.16)", () => {
       msgs.push({
         role: "assistant",
         content: `answer ${i} ${"a".repeat(300)}`,
-        reasoningItems: [{ type: "reasoning", id: `rs_${i}`, encrypted_content: `gAAA${blobId}==` }],
+        reasoningItems: [
+          { type: "reasoning", id: `rs_${i}`, encrypted_content: `gAAA${blobId}==` },
+        ],
       });
     }
     seedSession(db, msgs);
@@ -976,12 +978,23 @@ describe("opaque carry cannot distort retention (codex #3, 0.2.16)", () => {
           role: "assistant",
           content: `answer ${i} ${"a".repeat(300)}`,
           ...(blob
-            ? { reasoningItems: [{ type: "reasoning", id: `rs_${i}`, encrypted_content: "Z".repeat(8_000) }] }
+            ? {
+                reasoningItems: [
+                  { type: "reasoning", id: `rs_${i}`, encrypted_content: "Z".repeat(8_000) },
+                ],
+              }
             : {}),
         });
       }
       seedSession(db, msgs);
-      await maybeCompact(db, events, okSummary, "s", { sessionId: "s" }, { recentBudgetTokens: 400, anchorRunId: "r" });
+      await maybeCompact(
+        db,
+        events,
+        okSummary,
+        "s",
+        { sessionId: "s" },
+        { recentBudgetTokens: 400, anchorRunId: "r" },
+      );
       const n = active(db).length;
       db.close();
       return n;

@@ -157,9 +157,9 @@ describe("Responses tuning knobs + unmapped-control reporting (M4, 0.2.16)", () 
       ),
     ).toEqual([]);
     // The chat wire renders cacheTtl (withPromptCache) but has no fast mode.
-    expect(unmappedControls(loadConfig({ DELTA_SPEED: "fast", DELTA_CACHE_TTL: "1h" }).provider)).toEqual(
-      ["DELTA_SPEED"],
-    );
+    expect(
+      unmappedControls(loadConfig({ DELTA_SPEED: "fast", DELTA_CACHE_TTL: "1h" }).provider),
+    ).toEqual(["DELTA_SPEED"]);
     // Verbosity/summary are Responses-only.
     expect(
       unmappedControls(
