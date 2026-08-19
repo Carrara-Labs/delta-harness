@@ -130,6 +130,50 @@ describe("writeSelf — the remember tool's hands", () => {
     expect(currentSelf(dir)).toBe(""); // not written
     db.close();
   });
+
+  test("A-4a: a cap refusal carries the numbers AND the current file, structurally", () => {
+    const dir = ws({ "DELTA.md": "# Persona\nthe existing self-file body" });
+    const db = openDb(":memory:");
+    const r = writeSelf(db, dir, "y".repeat(5_000), 1_000);
+    expect(r.ok).toBe(false);
+    // The short operator string is UNCHANGED (the Cockpit renders r.error; the breaker's
+    // self_cap classifier matches this exact shape).
+    expect(r.error).toMatch(/DELTA\.md would be \d+ bytes \(cap /);
+    expect(r.error).not.toContain("existing self-file body");
+    // The structured half: only the remember tool renders these into the model's message.
+    expect(r.overCap).toEqual({
+      attempted: 5_000,
+      cap: 1_000,
+      overBy: 4_000,
+      current: "# Persona\nthe existing self-file body",
+    });
+    db.close();
+  });
+
+  test("A-4a: remember renders headroom + merge base; classification stays self_cap", async () => {
+    const dir = ws({ "DELTA.md": "# Persona\nkeep me as merge base" });
+    const db = openDb(":memory:");
+    const tools = builtinTools({
+      workspace: dir,
+      codeCli: ["echo"],
+      selfCmd: ["true"],
+      subagentDepth: 0,
+    });
+    const ctx: ToolCtx = {
+      workspace: dir,
+      activate: () => {},
+      writeSelf: (content: string) => writeSelf(db, dir, content, 1_000),
+    };
+    const out = await tools.get("remember")?.execute({ content: "z".repeat(5_000) }, ctx);
+    const msg = String(out);
+    // The blind-loop killer: 86 of 240 remembers were refused with no headroom number and no
+    // file, so the model shrank by guesswork and re-fired — three times, then the breaker.
+    expect(msg).toContain("4000 bytes over");
+    expect(msg).toContain("keep me as merge base");
+    const { toolErrorClass } = await import("../src/run");
+    expect(toolErrorClass(msg)).toBe("self_cap");
+    db.close();
+  });
   test("revision retention is bounded", () => {
     const dir = ws({ "DELTA.md": "v0" });
     const db = openDb(":memory:");

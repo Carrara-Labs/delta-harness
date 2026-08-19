@@ -112,7 +112,12 @@ export type ToolCtx = {
   };
   /** Persist the agent's own DELTA.md self-file (the `remember` tool): atomic replace,
    * prior version snapshotted, oversized rejected. Absent in bare/oneshot contexts. */
-  writeSelf?: (content: string) => { ok: boolean; error?: string; bytes?: number };
+  writeSelf?: (content: string) => {
+    ok: boolean;
+    error?: string;
+    bytes?: number;
+    overCap?: { attempted: number; cap: number; overBy: number; current: string };
+  };
 };
 
 export type ToolDef = {

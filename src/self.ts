@@ -92,6 +92,11 @@ export type WriteSelfResult = {
   conflict?: boolean;
   /** On a conflict, the CURRENT on-disk content, so the caller can merge and retry. */
   current?: string;
+  /** Set when the write was refused for SIZE (A-4a): the exact numbers plus the current on-disk
+   * file. Structured so each surface renders what its audience needs — the `remember` tool
+   * builds an actionable model-facing message from these; the Cockpit keeps the short `error`.
+   * Precedent: `self_conflict` above already hands back the current file. */
+  overCap?: { attempted: number; cap: number; overBy: number; current: string };
 };
 
 /** Atomically replace DELTA.md with `content`, after snapshotting the current version.
@@ -113,13 +118,14 @@ export function writeSelf(
   base?: string,
 ): WriteSelfResult {
   const bytes = Buffer.byteLength(content, "utf8");
+  const abs = selfPath(workspace);
+  const before = existsSync(abs) ? safeRead(abs) : "";
   if (bytes > maxBytes)
     return {
       ok: false,
       error: `DELTA.md would be ${bytes} bytes (cap ${maxBytes}) — compact your notes and rewrite the whole file smaller. It rides in every prompt, so it must stay lean.`,
+      overCap: { attempted: bytes, cap: maxBytes, overBy: bytes - maxBytes, current: before },
     };
-  const abs = selfPath(workspace);
-  const before = existsSync(abs) ? safeRead(abs) : "";
   // Idempotent (codex #2): a same-content re-fire (e.g. crash-resume of the `remember`
   // tool) is a no-op — no rewrite, no duplicate revision.
   if (before === content) return { ok: true, bytes };

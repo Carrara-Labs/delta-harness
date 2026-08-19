@@ -770,6 +770,16 @@ export function builtinTools(
       if (looksLikeSpineEcho(content))
         return `[tool error] That looks like your whole system prompt, not your DELTA.md. Pass ONLY the DELTA.md body — its # Persona / # Mission / # Success / # Learned sections. Drop the # Norms, # Context, # You, # Policy, and # Tools sections; the engine adds those. Your current DELTA.md is:\n\n${currentSelf(ctx.workspace)}`;
       const r = ctx.writeSelf(content);
+      // A-4a: a size refusal names the exact headroom and hands back the merge base — 86 of 240
+      // fleet remembers were refused with neither, so the model shrank by guesswork, re-fired,
+      // and hit the breaker. The lead sentence keeps the exact self_cap classifier shape
+      // ("DELTA.md would be N bytes (cap M)"), like self_conflict keeps its own.
+      if (!r.ok && r.overCap)
+        return (
+          `[tool error] DELTA.md would be ${r.overCap.attempted} bytes (cap ${r.overCap.cap}) — that is ${r.overCap.overBy} bytes over. ` +
+          `Cut at least that much and send the FULL file again (it rides in every prompt, so it must stay lean). ` +
+          `Your merge base — the current DELTA.md on disk — is:\n\n${r.overCap.current}`
+        );
       return r.ok
         ? `updated DELTA.md (${r.bytes} bytes) — takes effect on your next run`
         : `[tool error] ${r.error}`;
