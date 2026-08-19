@@ -130,7 +130,7 @@ describe("thread_state todo (W3 unit)", () => {
       chat,
       "s",
       { sessionId: "s" },
-      { recentBudgetTokens: 20 },
+      { recentBudgetTokens: 20, anchorRunId: "r" },
     );
     expect(readTodo(db, "s")).toEqual(plan); // untouched by compaction
   });

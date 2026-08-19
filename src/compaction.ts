@@ -59,8 +59,9 @@ const bytes = (s: string): number => Buffer.byteLength(s, "utf8");
  * `runs.last_input` measured the PRE-compaction prompt; once history is rewritten it is a lie that
  * survives a crash, and `run.ts` reading it on resume would project over budget and re-compact
  * immediately. Committing it with the rewrite makes the two states impossible to separate. */
-const clearAnchor = (db: Database, runId?: string): void => {
-  if (runId) db.query("UPDATE runs SET last_input = 0 WHERE id = ?").run(runId);
+const clearAnchor = (db: Database, runId: string, sessionId: string): void => {
+  // Both keys: a mismatched (sessionId, anchorRunId) pair must reset nothing, not a foreign run.
+  db.query("UPDATE runs SET last_input = 0 WHERE id = ? AND session_id = ?").run(runId, sessionId);
 };
 
 const zeroUsage = (): Usage => ({
@@ -155,14 +156,16 @@ function defang(s: string): string {
   return s.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-/** The session's immutable original ask (first run's request.input), bounded. Read FRESH from
+/** The ask this compaction is serving: the CURRENT run's request.input, bounded. Read FRESH from
  * `runs` — never from a prior model summary — so an injected instruction can't rewrite the task.
- * Only `input` is read; the full request is never placed in context (metadata can carry creds). */
-function originalAsk(db: Database, sessionId: string): string {
+ * Only `input` is read; the full request is never placed in context (metadata can carry creds).
+ * Both keys are bound: 42 of 42 measured first-run pins were a DIFFERENT task than the run that
+ * compacted (D-1), so a mismatched (session, run) pair pins nothing rather than guessing. */
+function currentAsk(db: Database, runId: string, sessionId: string): string {
   try {
     const row = db
-      .query("SELECT request FROM runs WHERE session_id = ? ORDER BY seq LIMIT 1")
-      .get(sessionId) as { request: string } | null;
+      .query("SELECT request FROM runs WHERE id = ? AND session_id = ?")
+      .get(runId, sessionId) as { request: string } | null;
     const input = row ? (JSON.parse(row.request) as { input?: unknown }).input : "";
     return typeof input === "string" ? elide(input, ASK_CAP) : "";
   } catch {
@@ -346,9 +349,11 @@ export async function maybeCompact(
      * message rewrite (S5). The caller used to reset `runs.last_input` after this returned, so a
      * crash in that window resumed with a COMPACTED history and a STALE pre-compaction anchor —
      * which re-triggers compaction on the first turn back, i.e. exactly the per-turn compaction
-     * this batch exists to remove, reachable by crash instead of by config (codex). */
-    anchorRunId?: string;
-  } = {},
+     * this batch exists to remove, reachable by crash instead of by config (codex).
+     * REQUIRED, and also names the run whose request is pinned as the trusted ask — the optional
+     * first-run-fallback path was the D-1 defect itself (42/42 wrong-task pins). */
+    anchorRunId: string;
+  },
 ): Promise<CompactResult | null> {
   const rows = db
     .query("SELECT id, run_id, msg FROM messages WHERE session_id = ? AND active = 1 ORDER BY id")
@@ -441,7 +446,7 @@ export async function maybeCompact(
         db.query(
           "INSERT INTO messages (run_id, session_id, msg, created_at) VALUES (?, ?, ?, ?)",
         ).run(r.run_id, sessionId, r.msg, Date.now());
-      clearAnchor(db, opts.anchorRunId);
+      clearAnchor(db, opts.anchorRunId, sessionId);
     })();
     events.emit("compaction", spine, {
       compacted_turns: 0,
@@ -574,9 +579,9 @@ export async function maybeCompact(
   // from UNTRUSTED historical data (a model-written summary over tool output that may carry an
   // injected instruction). The delimiters are defanged so embedded content can't break out.
   // Prompt-level hardening, not a true trust boundary — but materially better than a heading.
-  const ask = originalAsk(db, sessionId);
+  const ask = currentAsk(db, opts.anchorRunId, sessionId);
   const askBlock = ask
-    ? `Continue following the original session request:\n<original_request>\n${defang(ask)}\n</original_request>\n\n`
+    ? `Continue following the request you are working on:\n<original_request>\n${defang(ask)}\n</original_request>\n\n`
     : "";
   const summaryContent =
     `${askBlock}The following is ${HISTORICAL_FRAMING}:\n` +
@@ -641,7 +646,7 @@ export async function maybeCompact(
         "INSERT INTO messages (run_id, session_id, msg, created_at) VALUES (?, ?, ?, ?)",
       ).run(r.run_id, sessionId, r.msg, Date.now());
     }
-    clearAnchor(db, opts.anchorRunId);
+    clearAnchor(db, opts.anchorRunId, sessionId);
   })();
 
   events.emit("compaction", spine, {
