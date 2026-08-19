@@ -1,0 +1,740 @@
+<title>What 0.2.15 Should Be</title>
+
+<style>
+  :root {
+    --paper:   #f1f3f5;
+    --surface: #ffffff;
+    --sunk:    #e8ebef;
+    --ink:     #14181f;
+    --muted:   #5f6877;
+    --faint:   #8b95a4;
+    --rule:    #d5d9e0;
+    --hair:    #e3e7ec;
+    --accent:  #2f5074;
+    --crit:    #9c3a2e;
+    --watch:   #856112;
+    --settled: #3d6a45;
+
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+    --w: 70ch;
+    --wide: 1080px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:   #11141a;
+      --surface: #181c23;
+      --sunk:    #1e232b;
+      --ink:     #e5e9ef;
+      --muted:   #98a2b1;
+      --faint:   #6d7887;
+      --rule:    #2b313b;
+      --hair:    #23282f;
+      --accent:  #82a9d8;
+      --crit:    #e2897a;
+      --watch:   #d4ad57;
+      --settled: #83b78d;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:   #11141a;
+    --surface: #181c23;
+    --sunk:    #1e232b;
+    --ink:     #e5e9ef;
+    --muted:   #98a2b1;
+    --faint:   #6d7887;
+    --rule:    #2b313b;
+    --hair:    #23282f;
+    --accent:  #82a9d8;
+    --crit:    #e2897a;
+    --watch:   #d4ad57;
+    --settled: #83b78d;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 17px;
+    line-height: 1.62;
+    margin: 0;
+    padding: 0 1.5rem 6rem;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .col { max-width: var(--w); margin-inline: auto; }
+  .band { max-width: var(--wide); margin-inline: auto; }
+
+  p { margin: 0 0 1.1em; }
+  p + p { margin-top: -0.15em; }
+  strong { font-weight: 700; }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  code, .m { font-family: var(--mono); font-size: 0.86em; }
+  code { background: var(--sunk); padding: 0.1em 0.34em; border-radius: 2px; }
+
+  /* ── masthead ─────────────────────────────────────────── */
+
+  header.mast {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 5rem 0 2.5rem;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 1.5rem;
+  }
+  h1 {
+    font-family: var(--sans);
+    font-size: clamp(2.1rem, 5.2vw, 3.4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    font-weight: 700;
+    margin: 0 0 1.5rem;
+    max-width: 22ch;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--muted);
+    max-width: 60ch;
+    margin: 0;
+  }
+
+  /* ── section furniture ────────────────────────────────── */
+
+  section { margin-top: 4.5rem; }
+  h2 {
+    font-family: var(--sans);
+    font-size: 1.55rem;
+    line-height: 1.16;
+    letter-spacing: -0.018em;
+    font-weight: 700;
+    margin: 0 0 0.35em;
+    text-wrap: balance;
+  }
+  .sublede {
+    color: var(--muted);
+    font-size: 1.0625rem;
+    margin: 0 0 2rem;
+  }
+  h3 {
+    font-family: var(--sans);
+    font-size: 1.09rem;
+    letter-spacing: -0.008em;
+    font-weight: 700;
+    margin: 0 0 0.5em;
+    text-wrap: balance;
+  }
+  .kicker {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-top: 1px solid var(--rule);
+    padding-top: 0.7rem;
+    margin: 0 0 2rem;
+    display: block;
+  }
+
+  /* ── the one-sentence version ─────────────────────────── */
+
+  .thesis {
+    max-width: var(--w);
+    margin: 3rem auto 0;
+    padding: 1.75rem 0;
+    border-top: 2px solid var(--ink);
+    border-bottom: 1px solid var(--rule);
+  }
+  .thesis p {
+    font-size: 1.32rem;
+    line-height: 1.42;
+    margin: 0;
+  }
+  .thesis p + p { margin-top: 0.7em; color: var(--muted); font-size: 1.0625rem; }
+
+  /* ── fingerprint strip ────────────────────────────────── */
+
+  .fp {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1px;
+    background: var(--hair);
+    border: 1px solid var(--hair);
+    margin: 0 0 1.75rem;
+  }
+  .fp div { background: var(--surface); padding: 0.85rem 1rem; }
+  .fp dt {
+    font-family: var(--mono);
+    font-size: 0.625rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin: 0 0 0.3rem;
+  }
+  .fp dd {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.4;
+    margin: 0;
+    color: var(--ink);
+  }
+
+  /* ── findings ─────────────────────────────────────────── */
+
+  .find { padding: 2rem 0; border-top: 1px solid var(--rule); }
+  .find:first-of-type { border-top: 2px solid var(--ink); }
+
+  .findhead {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.6rem;
+  }
+  .fid {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--crit);
+    flex: none;
+  }
+  .find h3 { margin: 0; flex: 1 1 20ch; }
+
+  .tags { display: flex; gap: 0.4rem; flex-wrap: wrap; margin: 0.75rem 0 0; }
+  .tag {
+    font-family: var(--mono);
+    font-size: 0.625rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.2rem 0.45rem;
+    border: 1px solid var(--rule);
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .tag.silent { color: var(--crit); border-color: var(--crit); }
+  .tag.ok { color: var(--settled); border-color: var(--settled); }
+  .tag.unk { color: var(--watch); border-color: var(--watch); }
+
+  .mech {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    line-height: 1.65;
+    background: var(--sunk);
+    border-left: 2px solid var(--accent);
+    padding: 0.8rem 1rem;
+    margin: 1.1rem 0;
+    overflow-x: auto;
+  }
+  .mech b { color: var(--crit); font-weight: 600; }
+  .mech span { color: var(--muted); }
+
+  .quote {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    line-height: 1.6;
+    color: var(--muted);
+    border-left: 2px solid var(--rule);
+    padding: 0.15rem 0 0.15rem 1rem;
+    margin: 1.1rem 0;
+    overflow-x: auto;
+  }
+
+  .note {
+    font-size: 0.96rem;
+    color: var(--muted);
+    border-top: 1px dotted var(--rule);
+    padding-top: 0.85rem;
+    margin: 1.2rem 0 0;
+  }
+  .note b { color: var(--ink); }
+
+  /* ── tables ───────────────────────────────────────────── */
+
+  .tw { overflow-x: auto; margin: 0 0 1.5rem; }
+  table { border-collapse: collapse; width: 100%; font-family: var(--sans); font-size: 0.9rem; }
+  caption {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-bottom: 0.6rem;
+  }
+  th {
+    text-align: left;
+    font-size: 0.6875rem;
+    font-family: var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-weight: 500;
+    padding: 0 0.9rem 0.5rem 0;
+    border-bottom: 1px solid var(--ink);
+    vertical-align: bottom;
+    white-space: nowrap;
+  }
+  td {
+    padding: 0.65rem 0.9rem 0.65rem 0;
+    border-bottom: 1px solid var(--hair);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+  td:last-child, th:last-child { padding-right: 0; }
+  tbody tr:last-child td { border-bottom: 1px solid var(--rule); }
+  .num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  td .m { font-size: 0.8rem; color: var(--muted); }
+  .grp td {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--faint);
+    padding-top: 1.4rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .v { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.05em; white-space: nowrap; }
+  .v-ship { color: var(--settled); font-weight: 600; }
+  .v-next { color: var(--accent); }
+  .v-data { color: var(--watch); font-weight: 600; }
+  .v-later { color: var(--faint); }
+  .v-drop { color: var(--muted); text-decoration: line-through; }
+
+  /* ── diagrams ─────────────────────────────────────────── */
+
+  figure { margin: 2rem 0; }
+  figure svg { max-width: 100%; height: auto; display: block; }
+  figcaption {
+    font-size: 0.9rem;
+    color: var(--muted);
+    margin-top: 0.9rem;
+    max-width: 68ch;
+  }
+  .dg-box { fill: var(--surface); stroke: currentColor; stroke-width: 1; }
+  .dg-box-crit { fill: var(--surface); stroke: var(--crit); stroke-width: 1.5; }
+  .dg-box-dead { fill: none; stroke: currentColor; stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.45; }
+  .dg-t { font-family: var(--sans); font-size: 12px; fill: currentColor; }
+  .dg-t-s { font-family: var(--mono); font-size: 10.5px; fill: var(--muted); }
+  .dg-t-c { font-family: var(--mono); font-size: 10.5px; fill: var(--crit); font-weight: 600; }
+  .dg-line { stroke: currentColor; stroke-width: 1.2; fill: none; }
+  .dg-line-crit { stroke: var(--crit); stroke-width: 1.6; fill: none; }
+  .dg-line-dead { stroke: currentColor; stroke-width: 1; fill: none; stroke-dasharray: 4 3; opacity: 0.45; }
+
+  /* ── recommendation ───────────────────────────────────── */
+
+  .rec {
+    background: var(--surface);
+    border-top: 3px solid var(--accent);
+    border-bottom: 1px solid var(--rule);
+    padding: 2rem 1.75rem;
+    margin: 0 0 1.75rem;
+  }
+  .rec h3 { margin-top: 0; }
+  .rec p:last-child { margin-bottom: 0; }
+
+  ul.tight { margin: 0 0 1.1em; padding-left: 1.2rem; }
+  ul.tight li { margin-bottom: 0.5em; }
+
+  .decide { counter-reset: d; list-style: none; padding: 0; margin: 0; }
+  .decide li {
+    counter-increment: d;
+    border-top: 1px solid var(--rule);
+    padding: 1.15rem 0 1.15rem 2.6rem;
+    position: relative;
+  }
+  .decide li:last-child { border-bottom: 1px solid var(--rule); }
+  .decide li::before {
+    content: counter(d);
+    position: absolute;
+    left: 0;
+    top: 1.15rem;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .decide b { display: block; font-family: var(--sans); font-size: 1rem; margin-bottom: 0.15em; }
+  .decide span { color: var(--muted); font-size: 0.97rem; }
+
+  footer {
+    max-width: var(--w);
+    margin: 5rem auto 0;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    line-height: 1.7;
+    color: var(--faint);
+    letter-spacing: 0.02em;
+  }
+
+  @media (max-width: 640px) {
+    body { font-size: 16px; padding: 0 1.1rem 4rem; }
+    header.mast { padding-top: 3rem; }
+    .rec { padding: 1.5rem 1.1rem; }
+  }
+</style>
+
+<style>
+  /* ── runbook additions ──────────────────────────────── */
+  .now { border-top: 3px solid var(--crit); border-bottom: 1px solid var(--rule); padding: 1.75rem 0 0.5rem; margin: 0 0 1rem; }
+  .steps { list-style: none; padding: 0; margin: 0; counter-reset: s; }
+  .steps > li {
+    counter-increment: s; position: relative; padding: 1.15rem 0 1.15rem 3rem;
+    border-top: 1px solid var(--hair);
+  }
+  .steps > li:first-child { border-top: none; }
+  .steps > li::before {
+    content: counter(s); position: absolute; left: 0; top: 1.05rem;
+    font-family: var(--mono); font-size: 0.7rem; font-weight: 600; color: var(--paper);
+    background: var(--accent); width: 1.55rem; height: 1.55rem; border-radius: 50%;
+    display: grid; place-items: center;
+  }
+  .steps.crit > li::before { background: var(--crit); }
+  .steps b { display: block; font-family: var(--sans); font-size: 1.02rem; margin-bottom: 0.2em; }
+  .steps span { color: var(--muted); font-size: 0.97rem; }
+  .steps .m { color: var(--faint); }
+  .who {
+    font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.09em; text-transform: uppercase;
+    border: 1px solid var(--rule); color: var(--muted); padding: 0.15rem 0.4rem; margin-left: 0.5rem;
+    white-space: nowrap; vertical-align: 0.15em;
+  }
+  .who.you { color: var(--crit); border-color: var(--crit); }
+  .who.me { color: var(--accent); border-color: var(--accent); }
+  .gate {
+    background: var(--sunk); border-left: 2px solid var(--crit);
+    padding: 1rem 1.15rem; margin: 1.25rem 0; font-size: 0.97rem;
+  }
+  .gate b { font-family: var(--sans); }
+  .gate p:last-child { margin-bottom: 0; }
+  .lede-num { display: flex; gap: 2.5rem; flex-wrap: wrap; margin: 0 0 2rem; }
+  .lede-num div { flex: 0 1 auto; }
+  .lede-num dt { font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.09em;
+                 text-transform: uppercase; color: var(--faint); margin: 0 0 0.25rem; }
+  .lede-num dd { font-family: var(--sans); font-size: 1.5rem; font-weight: 700; margin: 0;
+                 font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .lede-num dd small { font-family: var(--serif); font-size: 0.85rem; font-weight: 400;
+                       color: var(--muted); letter-spacing: 0; }
+</style>
+<header class="mast">
+  <p class="eyebrow">Delta Harness &middot; 0.2.15 runbook &middot; 18 Aug 2026</p>
+  <h1>What 0.2.15 Should Be</h1>
+  <p class="standfirst">The plan is settled and the specs are written. This is what happens next, in
+  order, and which parts need you rather than me.</p>
+</header>
+
+<div class="thesis">
+  <p><strong>Nine changes. Two fix defects that are already costing a paying consumer money and
+  correctness; the other seven are the visibility gaps that let those two hide.</strong></p>
+  <p>Nothing in the release needs a design pass. Everything in it has a test that must fail without
+  its fix, and a live confirmation before anything reaches npm.</p>
+</div>
+
+<section class="col">
+  <dl class="lede-num">
+    <div><dt>Items</dt><dd>9</dd></div>
+    <div><dt>Specs written</dt><dd>5</dd></div>
+    <div><dt>Proven damage</dt><dd>$141 <small>+ 42 wrong-task runs</small></dd></div>
+    <div><dt>Fleet lanes checked</dt><dd>13</dd></div>
+  </dl>
+</section>
+
+<section class="col">
+  <span class="kicker">Start here</span>
+  <h2>Four things only you can do</h2>
+  <p class="sublede">None of them block each other, and three of them unblock me. Do them before the
+  spec reviews come back.</p>
+
+  <div class="now">
+    <ol class="steps crit">
+      <li>
+        <b>Send the reply to the Delos engineer <span class="who you">you</span></b>
+        <span>It is written and sitting at <code>docs/reply-delos-field-report.md</code>. It confirms
+        nine of their twelve, corrects four with evidence, and asks for the two things below. Read it
+        first — it tells them their D-6 was wrong and their D-2 fix would have broken a shipped
+        feature, and you should be comfortable with that before it goes.</span>
+      </li>
+      <li>
+        <b>Ask Delos for one environment variable <span class="who you">you</span></b>
+        <span><code>DELTA_MODEL_PRICES</code>, verbatim, plus the per-turn cost query in the reply.
+        If it zeroes <code>gpt-5.6-sol</code>, D&#8209;6 closes as configuration and we build nothing.
+        If it does not, we have a live cost-truth bug and it jumps the queue.</span>
+      </li>
+      <li>
+        <b>Send Aperture two numbers <span class="who you">you</span></b>
+        <span>233 self-file write refusals caused by caps set at 1600 and 2400 tokens — they can fix
+        that today in config, with no release. And 11 runs worth $141 lost to budget exhaustion,
+        which is ours and which they do not know about. Neither has anything to do with waiting for
+        0.2.15.</span>
+      </li>
+      <li>
+        <b>Hold <code>config/ferni-codex-sol</code> <span class="who you">you</span></b>
+        <span>It is blocked, not stale. Landing it before D&#8209;12 deletes Ferni's entire
+        delegation surface on migration day, silently. While you are in there:
+        <code>fix/step-max-tokens</code> is already on main and can be deleted.</span>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<section class="band">
+  <div class="col">
+    <span class="kicker">The sequence</span>
+    <h2>How the release runs</h2>
+    <p class="sublede">Five stages. The only hard dependency inside the build is that D&#8209;1 lands
+    before D&#8209;9, because its regression fixture is the one D&#8209;9 needs.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 980 320" role="img" aria-label="Five stages: your four actions, two parallel spec reviews, six implementation steps, a from-source deploy with a human test, then publish and re-verify against the published package.">
+      <defs>
+        <marker id="ar" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="8" markerHeight="7" orient="auto">
+          <polygon points="0,0 10,4 0,8" fill="currentColor"></polygon>
+        </marker>
+      </defs>
+
+      <text class="dg-t-s" x="10" y="20">1 · now, you</text>
+      <text class="dg-t-s" x="196" y="20">2 · spec review</text>
+      <text class="dg-t-s" x="382" y="20">3 · implement, in order</text>
+      <text class="dg-t-s" x="618" y="20">4 · verify from source</text>
+      <text class="dg-t-s" x="814" y="20">5 · publish</text>
+
+      <rect class="dg-box-crit" x="10" y="40" width="150" height="44"></rect>
+      <text class="dg-t" x="85" y="66" text-anchor="middle">send the reply</text>
+      <rect class="dg-box-crit" x="10" y="94" width="150" height="44"></rect>
+      <text class="dg-t" x="85" y="113" text-anchor="middle">ask for</text>
+      <text class="dg-t" x="85" y="128" text-anchor="middle">DELTA_MODEL_PRICES</text>
+      <rect class="dg-box-crit" x="10" y="148" width="150" height="44"></rect>
+      <text class="dg-t" x="85" y="174" text-anchor="middle">tell Aperture</text>
+      <rect class="dg-box-crit" x="10" y="202" width="150" height="44"></rect>
+      <text class="dg-t" x="85" y="221" text-anchor="middle">hold</text>
+      <text class="dg-t" x="85" y="236" text-anchor="middle">ferni-codex-sol</text>
+
+      <line class="dg-line" x1="162" y1="143" x2="192" y2="143" marker-end="url(#ar)"></line>
+
+      <rect class="dg-box" x="196" y="76" width="150" height="52"></rect>
+      <text class="dg-t" x="271" y="98" text-anchor="middle">local Codex</text>
+      <text class="dg-t-s" x="271" y="114" text-anchor="middle">5 specs, independently</text>
+
+      <rect class="dg-box" x="196" y="148" width="150" height="52"></rect>
+      <text class="dg-t" x="271" y="170" text-anchor="middle">online Codex</text>
+      <text class="dg-t-s" x="271" y="186" text-anchor="middle">same specs, blind</text>
+
+      <line class="dg-line" x1="348" y1="145" x2="378" y2="145" marker-end="url(#ar)"></line>
+
+      <rect class="dg-box-crit" x="382" y="40" width="200" height="30"></rect>
+      <text class="dg-t" x="392" y="60">1 · D-1 the compaction pin</text>
+      <rect class="dg-box-crit" x="382" y="76" width="200" height="30"></rect>
+      <text class="dg-t" x="392" y="96">2 · D-9-min + D-10 handoff</text>
+      <rect class="dg-box" x="382" y="112" width="200" height="30"></rect>
+      <text class="dg-t" x="392" y="132">3 · D-3 + D-2 tool usability</text>
+      <rect class="dg-box" x="382" y="148" width="200" height="30"></rect>
+      <text class="dg-t" x="392" y="168">4 · D-12 the Codex conditional</text>
+      <rect class="dg-box" x="382" y="184" width="200" height="30"></rect>
+      <text class="dg-t" x="392" y="204">5 · D-7 the scratch dir</text>
+      <rect class="dg-box" x="382" y="220" width="200" height="30"></rect>
+      <text class="dg-t" x="392" y="240">6 · four one-diff items</text>
+
+      <line class="dg-line" x1="584" y1="145" x2="614" y2="145" marker-end="url(#ar)"></line>
+
+      <rect class="dg-box-crit" x="618" y="104" width="160" height="80"></rect>
+      <text class="dg-t" x="698" y="126" text-anchor="middle">deploy --from-source</text>
+      <text class="dg-t" x="698" y="142" text-anchor="middle">+ human-in-the-loop</text>
+      <text class="dg-t-c" x="698" y="162" text-anchor="middle">D-12 needs Delos:</text>
+      <text class="dg-t-c" x="698" y="176" text-anchor="middle">3 of 3 children</text>
+
+      <line class="dg-line" x1="780" y1="145" x2="810" y2="145" marker-end="url(#ar)"></line>
+
+      <rect class="dg-box" x="814" y="64" width="156" height="44"></rect>
+      <text class="dg-t" x="892" y="91" text-anchor="middle">npm + ghcr</text>
+      <line class="dg-line" x1="892" y1="108" x2="892" y2="118" marker-end="url(#ar)"></line>
+      <rect class="dg-box" x="814" y="122" width="156" height="44"></rect>
+      <text class="dg-t" x="892" y="141" text-anchor="middle">redeploy WITHOUT</text>
+      <text class="dg-t" x="892" y="156" text-anchor="middle">--from-source</text>
+      <line class="dg-line" x1="892" y1="166" x2="892" y2="176" marker-end="url(#ar)"></line>
+      <rect class="dg-box" x="814" y="180" width="156" height="44"></rect>
+      <text class="dg-t" x="892" y="207" text-anchor="middle">post-release battery</text>
+
+      <text class="dg-t-c" x="382" y="278">D-1 lands first: its regression fixture is the one D-9 needs.</text>
+      <text class="dg-t-s" x="382" y="296">D-12 unblocks config/ferni-codex-sol. Items 3, 5 and 6 are independent and can run in any order.</text>
+    </svg>
+    <figcaption>The release gate is the fourth stage, not the third: a critical path we know is
+    unverified blocks publishing, and an agent left running a worktree build is running something
+    nobody else can reproduce.</figcaption>
+  </figure>
+</section>
+
+<section class="band">
+  <div class="col">
+    <span class="kicker">The work</span>
+    <h2>Nine items, five specs</h2>
+    <p class="sublede">Each spec ends with numbered questions for the reviewer and names the one
+    thing it deliberately will not grow into.</p>
+  </div>
+
+  <div class="tw">
+    <table>
+      <caption>0.2.15 &middot; scope and where each is specified</caption>
+      <thead>
+        <tr>
+          <th style="width:3rem">#</th>
+          <th>Item</th>
+          <th style="width:15rem">Spec</th>
+          <th style="width:11rem">Size</th>
+          <th style="width:20rem">Why it is in</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="num">1</td><td><b>D-1</b> pin the compacting run's request, not the session's first</td><td class="m">spec-session-ask-pin.md</td><td>1 query + a deletion</td><td>42 runs across 3 lanes executed with a stale task pinned. None harmless.</td></tr>
+        <tr><td class="num">2</td><td><b>D-9-min + D-10</b> hand back the recoverables on exhaustion</td><td class="m">spec-exhaustion-handoff.md</td><td>medium — one signature change</td><td>11 runs, $141, 158 minutes of client work returned as a counter string.</td></tr>
+        <tr><td class="num">3</td><td><b>D-3 + D-2</b> tool registration and usability, visible</td><td class="m">spec-tool-usability.md</td><td>small</td><td>Delos configured 16 tools and had 13. Nothing said so.</td></tr>
+        <tr><td class="num">4</td><td><b>D-12</b> no <code>max_output_tokens</code> on the Codex backend</td><td class="m">spec-codex-output-cap.md</td><td>one conditional</td><td>Zero fleet impact today; blocks the Ferni migration until it lands.</td></tr>
+        <tr><td class="num">5</td><td><b>D-7</b> <code>DELTA_SCRATCH_DIR</code></td><td class="m">spec-scratch-dir.md</td><td>small, migration hazard</td><td>Untrusted web content is being committed to a phone-synced vault.</td></tr>
+        <tr><td class="num">6</td><td><b>D-11</b> read <code>DELTA_MAX_STEPS</code></td><td class="m">plan §1</td><td>2 lines</td><td>Ride-along. Fleet max is 62 of 100 steps, so nobody else sees a change.</td></tr>
+        <tr><td class="num">7</td><td><b>D-8</b> disable CLI connectors by default</td><td class="m">plan §2</td><td>1 line + a brief note</td><td>A delegated CLI reached a 6,913-message inbox with write scope.</td></tr>
+        <tr><td class="num">8</td><td><b>D-4</b> accept YAML block scalars in skill frontmatter</td><td class="m">plan §3</td><td>~6 lines</td><td>Two skills unreachable for months, invisible because laptops parse real YAML.</td></tr>
+        <tr><td class="num">9</td><td><b>D-5</b> re-scan the skill index behind an mtime check</td><td class="m">plan §4</td><td>~10 lines</td><td>Deletes a 40-line bash daemon-restart timer from an unattended box.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="col">
+  <span class="kicker">The rule that governs all of it</span>
+  <h2>Every fix ships with a test that fails without it</h2>
+
+  <p>This is not a formality here. In 0.2.12 two regression tests were kept specifically because they
+  were verified to fail without their fix — and one earlier test had passed without its fix, which is
+  how a defect shipped behind a green suite. So the instruction to whoever implements is: write the
+  test, watch it fail, then write the fix.</p>
+
+  <p>Three of the tests are doing more than proving a fix. They lock a decision:</p>
+
+  <div class="gate">
+    <p><b>D-2</b> — insert <code>EXA_API_KEY</code> into the vault and re-request
+    <code>/v1/status</code> <em>without restarting</em>; assert <code>web_search</code> is no longer
+    unusable. <strong>This test fails under the fix the field report proposed</strong>, which is the
+    point of writing it: de-registering credential-gated tools at boot would break the runtime
+    credential flow we shipped in Connect 0.4.3.</p>
+    <p><b>D-7</b> — a message row carrying a <em>legacy</em> spill path must still demote after the
+    scratch root moves. Without this, relocating the root silently stops the retained tail from
+    shrinking, which is the exact defect 0.2.11 was written to fix, presenting as a performance
+    regression with no error.</p>
+    <p><b>D-1</b> — a single-request session's summary must be <em>byte-identical</em> before and
+    after. That is the property that makes the change shippable as a patch rather than a behaviour
+    change.</p>
+  </div>
+
+  <p>Plus the standing gate before anything is called done: <code>bun test</code> and
+  <code>bash scripts/smoke.sh</code> against a running server.</p>
+</section>
+
+<section class="col">
+  <span class="kicker">Before npm</span>
+  <h2>The two things the release gate actually requires</h2>
+
+  <ol class="steps">
+    <li>
+      <b>Deploy from source to a real agent and finish the human test <span class="who me">me + you</span></b>
+      <span><code>sh connect/deploy/deploy.sh --from-source</code> builds from the worktree, so the
+      deploy → test → fix loop needs no release. <strong>D&#8209;12 is the one that cannot be
+      verified here</strong> — Delos owns the only lane with that provider. Their reproduction is
+      already written: one <code>/v1/responses</code> call asking for a single research with three
+      tasks, reporting verbatim whether each child succeeded. Require 3 of 3 before publishing. A fix
+      to a wire format nobody exercised is a fix we do not have.</span>
+    </li>
+    <li>
+      <b>Publish, then redeploy <em>without</em> <code>--from-source</code> <span class="who me">me</span></b>
+      <span>And run the post-release battery against the published tarball rather than the repo. An
+      agent left on a worktree is running something nobody else can reproduce, and a release nobody
+      has installed is untested. npm is a permanent public trail — a mistake is cleaned up with
+      <code>npm deprecate</code>, never <code>unpublish</code>.</span>
+    </li>
+  </ol>
+</section>
+
+<section class="band">
+  <div class="col">
+    <span class="kicker">Deliberately out</span>
+    <h2>What is not in this release, and why</h2>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Held back</th><th style="width:8rem">Lands</th><th style="width:26rem">Reason</th></tr></thead>
+        <tbody>
+          <tr><td><b>D-9-full</b> — the cheap final call for a partial answer</td><td class="v v-next">0.2.16</td><td>It spends tokens after the budget is exhausted, which needs a reserve carved before the guard fires and a story for when that call also fails. Get it wrong and a run cannot terminate.</td></tr>
+          <tr><td><b>D-6</b> — the <code>$0.0000</code> run</td><td class="v v-data">on your env var</td><td>The report's mechanism is false: Ferni meters 488 of 488 calls and <code>gpt-5.6-sol</code> prices at $4.75 for that run. We build nothing until Delos answers.</td></tr>
+          <tr><td>The history digest / prompt-cache defect</td><td class="v v-next">0.2.16</td><td>Unchanged in priority. It now starts with a targeted one-session capture, because <code>DELTA_CAPTURE_CALLS</code> is off fleet-wide by doctrine and every <code>calls</code> table is empty.</td></tr>
+          <tr><td>Anthropic-branch <code>max_tokens</code> headroom asymmetry</td><td class="v v-next">0.2.16</td><td>Nine live truncation warnings say it is real. Bundling a behavioural change to the Anthropic path inside a one-line Codex fix makes both reviews harder than either deserves.</td></tr>
+          <tr><td>Self-file write collisions — retry rather than error</td><td class="v v-next">0.2.16</td><td>48 on the fleet. Small, and not blocking anyone.</td></tr>
+          <tr><td>Aperture's self-caps at 1600 and 2400</td><td class="v v-drop">their config</td><td>233 refusals, fixable today without an engine change. Step 3 above.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="col">
+  <span class="kicker">Open</span>
+  <h2>Five questions the reviewers must answer</h2>
+  <p class="sublede">Written into the specs rather than decided quietly, because each one could
+  reasonably go the other way.</p>
+
+  <ol class="decide">
+    <li>
+      <b>D-1: should the seq-1 fallback exist at all?</b>
+      <span>The spec argues for deleting it — 42 of 42 measured pins under that query were the wrong
+      task, so a fallback whose behaviour is the bug is not a safety net. No pin degrades; the wrong
+      pin corrupts.</span>
+    </li>
+    <li>
+      <b>D-9: does the handoff belong in the transcript?</b>
+      <span><code>finalize</code> inserts the output as an assistant message on any non-done status,
+      so it enters the next turn's context automatically. Good for resume; also new context on a
+      session that just proved it was over budget. <strong>The most consequential open question in
+      the release.</strong></span>
+    </li>
+    <li>
+      <b>D-7: fallback forever, or refuse to boot on a changed root?</b>
+      <span>Falling back is simpler and permanently carries two path candidates. Refusing is safer
+      for a fleet and makes the operator choose. The spec picks fallback and says the other is
+      defensible.</span>
+    </li>
+    <li>
+      <b>D-3: return shape or callback?</b>
+      <span><code>builtinTools</code> has exactly one caller, so the honest return-shape change is
+      cheap. Confirm that caller count independently, including tests.</span>
+    </li>
+    <li>
+      <b>Semver, finally.</b>
+      <span>0.2.15 is additive, like 0.2.7 through 0.2.14. <code>version.ts</code> documents additive
+      = MINOR. Either the doc moves or the practice does — a fifth release either way makes it
+      worse.</span>
+    </li>
+  </ol>
+</section>
+
+<footer>
+  Plan: docs/harness-0.2.15-plan.md &middot; Specs: spec-session-ask-pin, spec-exhaustion-handoff,
+  spec-tool-usability, spec-codex-output-cap, spec-scratch-dir &middot; Reply:
+  docs/reply-delos-field-report.md<br>
+  Evidence: 12 Aperture lane databases from the 2026-08-10 pre-0.2.14 snapshot, queried offline;
+  ferni-delta-connect live, read-only, 174 runs / 488 model calls; all 12 lanes' Machines configs.
+  Aggregates only.<br>
+  Every code claim was read at the cited line before it entered a spec.
+</footer>
