@@ -250,3 +250,42 @@ of them and will.
 3. **`wipeRunSpill` and `wipeRunResearch` are ephemeral-only; `wipeRunScratch` is every-run.** With
    three families under one configurable root, is that asymmetry still right, or is it now just
    confusing? It is defensible per family and hard to explain as a set.
+
+## 8. Review outcome — Codex pass, 2026-08-19: §2 is redesigned
+
+The pass found a release-blocker the spec and both prior readers missed: **relocation as written
+makes every artifact unreadable and the scratchpad unwritable.**
+
+- `read_file` confines to `ctx.workspace` via `inside()` (`builtins.ts:374`) — a spill or research
+  path under an off-workspace `DELTA_SCRATCH_DIR` cannot be read by the model at all. The demotion
+  stub's "read_file this path" contract and `recall`'s reconstructed paths both break.
+- `.delta/*` is write-reserved for model file tools (`fileClass`, `builtins.ts:130`) — reads are
+  allowed (spill is read today), but §2's `.delta/scratch/<runId>` scratchpad could never be
+  written by the model it is advertised to.
+
+### The corrected shape
+
+1. `scratchDir` config, default workspace — unchanged.
+2. **Spill** → `${scratchDir}/.delta/spill/` (segment unchanged). **Research** →
+   `${scratchDir}/.delta/research/<runId>.<seq>/` (rename per §6.2 stands — readable under
+   `.delta/`, exactly like spill today). **Scratchpad** → `${scratchDir}/scratch/<runId>/` —
+   NOT under `.delta/`, because the model must write there.
+3. **The confinement seam:** file tools accept a second root. `inside()` resolution tries the
+   workspace as today; an absolute path (or resolution) landing under `scratchDir` is equally
+   in-bounds. `guardWrite`'s reserved-path classes apply under BOTH roots, so `.delta/*` stays
+   write-reserved everywhere and the scratchpad stays writable. When the roots are equal this is
+   byte-identical to today.
+4. `{{run.scratch}}` advertises `scratch/<runId>` (relative, unchanged) when the roots are equal,
+   and the absolute `${scratchDir}/scratch/<runId>` when they differ.
+5. Wipe sites move with write sites, same commit. `wipeRunSpill`/`wipeRunResearch`/`wipeRunScratch`
+   each wipe both roots when they differ (crash-resume across a root change strands run-scoped
+   dirs under the old root — spill was the only family §3.1 covered).
+6. §7.2 decided: WARN when roots differ, **plus** a fail-open nonempty probe for legacy layouts —
+   including when roots are equal, because the `research/` → `.delta/research/` rename applies to
+   every deployment. Never auto-delete.
+7. §7.3 decided: the per-family wipe-policy asymmetry stays — one root does not imply one
+   lifecycle. Document it as a set in the guide.
+8. §5's "default equality" test is restated: with `DELTA_SCRATCH_DIR` unset, spill and scratchpad
+   paths are byte-identical to pre-change; research paths intentionally rename (that is §6.2's
+   point). §5.5's `${scratch}/research/...` expectation was stale — it is
+   `${scratch}/.delta/research/...`.

@@ -208,3 +208,22 @@ Pre-fix, 1–5 all fail because the field does not exist. Verify that before kee
    credential-specific**, its `reason` is free text, and the guide must say a provider
    incompatibility is a legitimate reason. That costs nothing today and gives the next instance
    somewhere to go instead of a redesign.
+
+## 8. Review outcome — Codex pass, 2026-08-19 (pre-implementation)
+
+1. **§7.1 decided: keep `builtinTools(): Tools`.** "Exactly one caller" was false counting tests —
+   25 test invocations use Map methods directly. Omissions are collected via an optional
+   `onOmit?: (name: string, reason: string) => void` parameter; §4.1's return-shape change is dead.
+2. **The gate table missed four:** `list_secrets` (no vault, `builtins.ts:750`);
+   `research`/`spawn_subagent`/`eval_n` (suppressed at `subagentDepth ≥ 1`, `builtins.ts:882` —
+   report in the child's status, but do NOT stderr-warn in every child process); skill-registry
+   tools stripped post-registration (`index.ts:339`); failed MCP registration. Also: an allowlist
+   name that matches nothing deserves an "unknown tool in DELTA_ALLOWED_TOOLS" omission entry.
+3. **`/v1/status` reads the LIVE registry** (`deps.tools`), not the boot snapshot — MCP reconnects
+   after credential intake mutate it (`index.ts:371-379`).
+4. §6.4's `registered + omitted === allowlist` assertion is unsatisfiable from `builtinTools`
+   alone (profile intersection, MCP, skills all interpose) — assert the specific expected tools
+   per list instead.
+5. "Registered = offered to the model this run" is imprecise: residency/pinning and breaker
+   quarantine narrow what a given run sees. Status reports the daemon's allowed registry; the
+   guide says so.

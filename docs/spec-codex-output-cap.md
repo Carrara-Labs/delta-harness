@@ -179,3 +179,25 @@ not have.
    know it was ignored.
 3. **Does anything depend on children being capped?** Grep for `OUTPUT_CAP`. If a downstream assertion
    assumes a bounded child response size, uncapping needs a bound elsewhere.
+
+## 8. Review outcome — Codex pass, 2026-08-19 (pre-implementation)
+
+1. **§2.1's exact-host claim is wrong**: `hostMatches` suffix-matches subdomains
+   (`host.endsWith(`.${d}`)`, `provider.ts:745`). Decided: **reuse `hostMatches` as-is** — for a
+   DENYlist, suffix-deny is the safe direction (only OpenAI controls `*.chatgpt.com` DNS; denying
+   the param costs nothing, a 400 costs the call). §6.4's test expectation inverts:
+   `evil.chatgpt.com → false` (param denied).
+2. **§7.2 corrected inventory:** the direct `req.maxTokens` producers are research's child call
+   (`research.ts:210`), the eval judge (`builtins.ts:978`), and reflection (`reflect.ts:172` —
+   missed by the spec). `research.ts:364` is an internal budget handoff, not a wire producer.
+   All flow through `streamResponses` — wire gating covers everything. `spawn_subagent` passes a
+   budget env var, not `req.maxTokens`; D-12 does not explain its failures — do not claim it does
+   in the release brief.
+3. **§3's "the parent's budget already bounds it" is soft**, not hard: the budget check runs after
+   a call returns, so one uncapped child response can overshoot. Acceptable — research caps
+   persisted artifacts at 200 KB and summaries at 1,200 chars — but state it honestly.
+4. D-8 rider verified on pinned codex-cli 0.146.0: `--disable apps --disable plugins` accepted
+   end-to-end (`FLAGS-OK`); both are stable feature names and unknown names error loudly. Residual
+   risk: an OLDER codex still resolves argv[0] and then 400s per-call — the release brief names
+   the minimum version; operator-set `DELTA_CODE_CLI` never gets flags injected (the default only
+   applies when the env is unset).

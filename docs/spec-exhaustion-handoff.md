@@ -221,3 +221,31 @@ quality of that substance from pointers to prose.
 5. **Is `sessionArtifacts` over inactive rows a performance risk?** The carrara lane's DB is 204MB and
    one session held 16 runs. The scan is regex over `msg` text with no index. Measure before merging; if
    it is slow, bound it to the current run's rows and accept a smaller ledger.
+
+## 9. Review outcome — Codex pass, 2026-08-19 (pre-implementation)
+
+Session `01a0196c…`. Four findings reshape §4; all verified against source.
+
+1. **§8 Q1 decided: the handoff enters the transcript.** `finalize` deactivates every current-run
+   non-user row on failure, so a one-line transcript row would erase the only recovery map; the
+   exhausted quantity is the run's *billed* budget, not context capacity, and the next turn still
+   has pre-send compaction. Same text in payload and assistant row, capped at 10 KiB
+   (`Buffer.byteLength`, not string length — `LEDGER_MAX_CHARS` is chars despite its comment).
+2. **Scope is the RUN, not the session.** A session holds many requests (that is D-1's whole
+   premise); a session-wide ledger lets stale-task paths crowd out the current run's 40-path cap.
+3. **Discovery is filesystem enumeration, not row scanning.** `sessionArtifacts` over
+   `SPILL_PATH_RE` is dead: the regex reads model-visible text (weaker trust than claimed at
+   §4.2), and the row scan raised the §8.5 perf question. Instead enumerate
+   `.delta/spill/<runId>.*` and the run's research dirs under the **configured** roots — paths are
+   engine-derived, exist by construction, run-scoped for free, and root-agnostic across the D-7
+   change (the current run always wrote under the current config). Research entries list the
+   actual FILES (research returns file paths, not dirs); reserve the cap between families
+   (20 spill / 20 research).
+4. **Ephemeral runs get no ledger.** `queue.ts:411-418` wipes spill AND research right after
+   settle for `store:false` turns — the handoff must say the intermediates were not retained, not
+   promise paths that are already gone.
+5. §8 Q3 decided: **no `string | Outcome` union** — `finalize` has exactly six call sites, not "a
+   dozen"; all six pass `{user, diagnostic?}`. `responsePayload`'s `[delta] turn failed: ` prefix
+   stays (driver contract); the handoff reads fine behind it.
+6. The plan block is session-scoped `thread_state` — label it "current plan", not run output.
+   The builder is fail-open: any block that throws is dropped, never the finalize.
