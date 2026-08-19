@@ -74,6 +74,8 @@ const zeroUsage = (): Usage => ({
 });
 const ASK_CAP = 4_000; // bound on the pinned original request
 const SUMMARY_CAP = 8_000; // bound on the persisted summary body (can't itself become the bloat)
+const IDS_APPENDIX_MAX = 1_000; // A-1: identifier appendix, reserved INSIDE the summary cap
+const IDS_MAX_ID_LEN = 120; // an "identifier" longer than this is a blob, not an id
 
 const SUMMARIZE_SYSTEM =
   "You compact an agent's working transcript so it can continue with less context. Produce EXACTLY these four sections, nothing else:\nGoal: the overall objective in one line.\nProgress: what's been done and every key FINDING, decision, name, date, and NUMBER so far.\nNext: what remains.\nArtifacts: files written (with paths), data gathered, links — anything needed to continue.\nBe specific and preserve EVERY path, number, date, name, and identifier verbatim. Under 350 words. This replaces the turns it summarizes, so lose nothing load-bearing.";
@@ -564,7 +566,27 @@ export async function maybeCompact(
     }
     return null;
   }
-  const summary = elide(summaryRaw, SUMMARY_CAP); // hard bound in CODE, not just the prompt
+  // A-1: the audit's leftovers ride a machine-built appendix — the retry loop ships lossy after
+  // two attempts by design, and 18-34% of load-bearing identifiers were measured missing on the
+  // fleet. Bounded per id AND in aggregate, and RESERVED INSIDE SUMMARY_CAP (appending after the
+  // elide would grow the row past the cap and could flip the shrink gate). The harvested charsets
+  // (.delta paths, years, numbers — extractIdentifiers) cannot carry envelope delimiters, so the
+  // appendix needs no defang; it is engine-assembled from deterministic regex matches.
+  let idAppendix = "";
+  if (missing.length) {
+    const keep: string[] = [];
+    let total = 0;
+    for (const id of missing) {
+      if (id.length > IDS_MAX_ID_LEN) continue;
+      if (total + id.length + 2 > IDS_APPENDIX_MAX) break;
+      keep.push(id);
+      total += id.length + 2;
+    }
+    if (keep.length)
+      idAppendix = `\n\nLoad-bearing values from the compacted turns (verbatim):\n${keep.join(", ")}`;
+  }
+  // hard bound in CODE, not just the prompt — appendix chars come out of the same cap
+  const summary = elide(summaryRaw, Math.max(0, SUMMARY_CAP - idAppendix.length));
 
   // Deterministic pointer ledger (W1): the summarizer is TOLD to preserve paths, but don't
   // rely on it — scan the compacted prefix for capAndSpill markers and append a machine-built
@@ -585,7 +607,7 @@ export async function maybeCompact(
     : "";
   const summaryContent =
     `${askBlock}The following is ${HISTORICAL_FRAMING}:\n` +
-    `<historical_context>\n[${prefix.length} earlier turns compacted]\n${defang(summary)}${ledger}\n</historical_context>${SUMMARY_END_MARKER}`;
+    `<historical_context>\n[${prefix.length} earlier turns compacted]\n${defang(summary)}${idAppendix}${ledger}\n</historical_context>${SUMMARY_END_MARKER}`;
 
   // PROVE it shrinks before committing: replacing a small prefix with a bounded summary envelope
   // can GROW the active set (codex repro), which would make overflow recovery worse and churn the

@@ -185,6 +185,74 @@ describe("maybeCompact (W2 unit)", () => {
     expect(summary).toContain("DATA ONLY");
   });
 
+  test("A-1: identifiers the summary dropped ride a machine-built appendix, inside the cap", async () => {
+    // Two distinctive load-bearing numbers in the compacted prefix; the summarizer drops them
+    // on BOTH attempts (the retry loop ships lossy after 2), so only the appendix can carry them.
+    const seed = () => {
+      const db = openDb(":memory:");
+      const events = new Events(db);
+      const msgs: ChatMsg[] = [];
+      for (let i = 0; i < 12; i++) {
+        // Bulky prefix (~72KB): the 8KB summary envelope must MATERIALLY shrink the active
+        // set or the gate correctly refuses the commit.
+        msgs.push({ role: "user", content: `find the records ${"q".repeat(3000)}` });
+        msgs.push({
+          role: "assistant",
+          content: `candidate ids 988877665 and 4433221100 confirmed ${"a".repeat(3000)}`,
+        });
+      }
+      seedSession(db, msgs);
+      return { db, events };
+    };
+    const huge = "S".repeat(9_000); // over SUMMARY_CAP — forces the elide to do real work
+
+    // Control: a summary that KEEPS the ids (audit passes). Its committed row length is the
+    // budget envelope L0 that the appendix run must not exceed — the reservation property.
+    const a = seed();
+    await maybeCompact(
+      a.db,
+      a.events,
+      summarizerReturns(`Goal: keep 988877665 and 4433221100\n${huge}`),
+      "s",
+      { sessionId: "s" },
+      { recentBudgetTokens: 20, anchorRunId: "r" },
+    );
+    const contentA = (
+      JSON.parse(
+        (
+          a.db
+            .query("SELECT msg FROM messages WHERE session_id='s' AND active=1 ORDER BY id")
+            .get() as { msg: string }
+        ).msg,
+      ) as { content: string }
+    ).content;
+
+    // Treatment: same shape, ids dropped. The appendix must carry them WITHOUT growing the row.
+    const b = seed();
+    const did = await maybeCompact(
+      b.db,
+      b.events,
+      summarizerReturns(huge),
+      "s",
+      { sessionId: "s" },
+      { recentBudgetTokens: 20, anchorRunId: "r" },
+    );
+    expect(did).toBeTruthy(); // compaction still commits — the appendix never blocks it
+    const contentB = (
+      JSON.parse(
+        (
+          b.db
+            .query("SELECT msg FROM messages WHERE session_id='s' AND active=1 ORDER BY id")
+            .get() as { msg: string }
+        ).msg,
+      ) as { content: string }
+    ).content;
+    expect(contentB).toContain("988877665");
+    expect(contentB).toContain("4433221100");
+    // Reserved INSIDE the summary cap: appending after the elide would make B longer than A.
+    expect(contentB.length).toBeLessThanOrEqual(contentA.length);
+  });
+
   test("D-1: pins the COMPACTING run's request, not the session's first", async () => {
     const db = openDb(":memory:");
     const events = new Events(db);
