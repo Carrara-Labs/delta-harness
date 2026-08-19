@@ -267,26 +267,31 @@ async function researchOne(
   }
 }
 
-/** Parent-owned artifact write: temp + atomic rename under a realpath-verified in-workspace dir (a
- * `research -> /outside` symlink can't escape), UTF-8 byte-bounded. Returns the workspace-relative
- * path the agent can `read_file`. Written by the parent so a child's full findings survive even
- * though only its summary re-enters context. */
-async function writeArtifact(
+/** Parent-owned artifact write: temp + atomic rename under a realpath-verified in-root dir (a
+ * `research -> /outside` symlink can't escape), UTF-8 byte-bounded. Returns the path the agent can
+ * `read_file` — workspace-relative while the scratch root IS the workspace (the default; unchanged
+ * contract), ABSOLUTE when the operator moved it (read_file resolves relative paths against the
+ * workspace, so a root-relative path would point at the wrong tree). Lives under `.delta/research/`
+ * (D-7): hidden and uniquely named, so no operator has to write the `research/` ignore rule that
+ * misfired on five legitimate vault folders — readable like spill, write-reserved like all of
+ * `.delta/`. Exported for the D-7 test. */
+export async function writeArtifact(
   workspace: string,
+  scratchRoot: string,
   runId: string,
   seq: string,
   index: number,
   task: string,
   text: string,
 ): Promise<string> {
-  const dir = `${workspace}/research/${researchRunPrefix(runId)}${safeSeg(seq)}`;
+  const dir = `${scratchRoot}/.delta/research/${researchRunPrefix(runId)}${safeSeg(seq)}`;
   mkdirSync(dir, { recursive: true });
-  // Realpath BOTH sides (the workspace path itself may traverse symlinks, e.g. /tmp→/private/tmp)
+  // Realpath BOTH sides (the root path itself may traverse symlinks, e.g. /tmp→/private/tmp)
   // so the check only fires on a genuine escape like `research -> /outside`.
-  const realWs = realpathSync(workspace);
+  const realRoot = realpathSync(scratchRoot);
   const real = realpathSync(dir);
-  if (real !== realWs && !real.startsWith(`${realWs}/`))
-    throw new Error("artifact dir escaped the workspace");
+  if (real !== realRoot && !real.startsWith(`${realRoot}/`))
+    throw new Error("artifact dir escaped the scratch root");
   const path = `${dir}/${index}-${safeSeg(task)}.md`;
   // Belt-and-braces: the child's own prose could quote a value it saw. Nothing a research
   // child produces reaches the workspace unredacted.
@@ -299,7 +304,8 @@ async function writeArtifact(
   const tmp = `${path}.tmp`;
   await Bun.write(tmp, body);
   renameSync(tmp, path);
-  return path.slice(workspace.length + 1);
+  const ws = realpathSync(workspace);
+  return real === ws || real.startsWith(`${ws}/`) ? path.slice(workspace.length + 1) : path;
 }
 
 /** Run 1–3 sub-agent tasks in parallel, each in its own bounded context with the parent's tools.
@@ -395,7 +401,15 @@ export async function runResearch(
     const full = s.value.text || "(no findings)";
     let path = "";
     try {
-      path = await writeArtifact(ctx.workspace, runId, seq, i, task, full);
+      path = await writeArtifact(
+        ctx.workspace,
+        ctx.scratchDir ?? ctx.workspace,
+        runId,
+        seq,
+        i,
+        task,
+        full,
+      );
     } catch {
       path = "";
     }

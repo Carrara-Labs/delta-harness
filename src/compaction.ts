@@ -201,7 +201,7 @@ const LEDGER_MAX_CHARS = 4000; // hard byte bound so the ledger can't itself bec
  *  Done at the compaction COMMIT on purpose: that already rewrites the active set, so the prompt
  *  prefix is invalidated at that instant anyway and demotion costs zero extra cache churn. Doing
  *  it per-turn instead would rewrite the prefix every turn and destroy the cache. */
-function demoteSpilled(row: Row, workspace: string): string {
+function demoteSpilled(row: Row, roots: { scratch: string; workspace: string }): string {
   const msg = row.msg;
   let m: ChatMsg;
   try {
@@ -214,18 +214,23 @@ function demoteSpilled(row: Row, workspace: string): string {
   // A tool result is model-visible and attacker-influenced: the first regex match could be a fake
   // that suppresses demotion, or a real file we should never point at, and a forged sentinel could
   // opt a row out entirely (codex P1). The engine knows where IT wrote the spill.
-  const path = spillPathFor(
-    workspace,
-    row.run_id,
-    (m as { tool_call_id?: string }).tool_call_id ?? "",
-  );
-  if (!m.content.includes(path)) return msg; // not one of ours → leave it alone
+  // Two candidates AT MOST (D-7 §3.1), both engine-derived: the configured scratch root, then the
+  // legacy workspace root — a root change must not silently stop historical rows demoting.
+  const callId = (m as { tool_call_id?: string }).tool_call_id ?? "";
+  const candidates =
+    roots.scratch === roots.workspace
+      ? [spillPathFor(roots.scratch, row.run_id, callId)]
+      : [
+          spillPathFor(roots.scratch, row.run_id, callId),
+          spillPathFor(roots.workspace, row.run_id, callId),
+        ];
   // Already demoted? The sentinel alone is forgeable — a hostile tool result can open with it and
   // opt its 20KB body out of demotion (codex P1). Our stub is BOUNDED, so authenticate by shape:
   // only a row short enough to actually BE a stub is treated as one.
   if (m.content.startsWith(DEMOTED_MARK) && m.content.length <= DEMOTE_HEAD + STUB_TAIL_MAX)
     return msg;
-  if (!existsSync(path)) return msg;
+  const path = candidates.find((p) => m.content.includes(p) && existsSync(p));
+  if (!path) return msg; // not one of ours (or the file is gone) → leave it alone
   const head = m.content.slice(0, DEMOTE_HEAD);
   return JSON.stringify({
     ...m,
@@ -347,6 +352,10 @@ export async function maybeCompact(
     workspace?: string;
     /** `DELTA_TOOL_ARG_MAX_BYTES` — bounds the assistant arguments in the retained tail. */
     argCap?: number;
+    /** Engine scratch root (D-7). Demotion derives spill paths against THIS root first, then
+     * falls back once to the workspace: pre-relocation rows carry workspace-root paths, and
+     * losing them would silently stop the retained tail shrinking — the exact 0.2.11 defect. */
+    scratchDir?: string;
     /** The run whose provider-anchored input estimate must be invalidated ATOMICALLY with the
      * message rewrite (S5). The caller used to reset `runs.last_input` after this returned, so a
      * crash in that window resumed with a COMPACTED history and a STALE pre-compaction anchor —
@@ -423,7 +432,9 @@ export async function maybeCompact(
     if (tailTokens <= budget) break;
     // Both halves of the tail, oldest-first: the tool result's spilled body, and the assistant's
     // own arguments. Either one alone leaves a floor the other cannot move.
-    const shrunk = opts.workspace ? demoteSpilled(r, opts.workspace) : r.msg;
+    const shrunk = opts.workspace
+      ? demoteSpilled(r, { scratch: opts.scratchDir ?? opts.workspace, workspace: opts.workspace })
+      : r.msg;
     const both = elideRowArgs({ ...r, msg: shrunk }, opts.argCap ?? 0);
     if (both === r.msg) continue;
     tailTokens -= tokEst(r.msg) - tokEst(both);

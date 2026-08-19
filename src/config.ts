@@ -44,6 +44,10 @@ export type Config = {
    * DELTA_PROVIDERS fallbacks. `chatVia` walks this on a failover-worthy error. */
   providers: ProviderConfig[];
   workspace: string;
+  /** Engine scratch root — spill, research artifacts, and the model's per-run scratchpad live
+   * here. Defaults to the workspace; DELTA_SCRATCH_DIR moves the whole family off a precious
+   * (git-tracked, human-browsed) workspace. */
+  scratchDir: string;
   exaKey?: string;
   fetchAllowPrivate: boolean;
   codeCli: string[];
@@ -300,6 +304,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     provider,
     providers,
     workspace: workspaceDir,
+    scratchDir: env.DELTA_SCRATCH_DIR ? resolve(env.DELTA_SCRATCH_DIR) : workspaceDir,
     ...(env.EXA_API_KEY ? { exaKey: env.EXA_API_KEY } : {}),
     fetchAllowPrivate: env.DELTA_FETCH_ALLOW_PRIVATE === "1",
     codeCli: (

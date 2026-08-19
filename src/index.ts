@@ -4,8 +4,8 @@
 // (oneshot — execute one run and print the answer; spawn_subagent uses this to
 // give side-quests their own context in a child of the same binary).
 
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync, readdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import cockpitHtml from "../assets/cockpit.html" with { type: "text" };
 import { builtinTools } from "./builtins";
 import { FIXED_OPERATOR_FILES, SELF_FILE } from "./bundle";
@@ -82,6 +82,7 @@ function buildDeps(cfg: Config, dbPath: string): Deps {
     ...(chatUtility ? { chatUtility } : {}),
     tools,
     workspace: cfg.workspace,
+    scratchDir: cfg.scratchDir,
     profile: cfg.profile,
     safeMode: cfg.safeMode,
     allowSelfWrite: cfg.allowSelfWrite,
@@ -196,6 +197,19 @@ if (process.argv[2] === "run") {
 
 mkdirSync(dirname(cfg.dbPath), { recursive: true });
 mkdirSync(cfg.workspace, { recursive: true });
+// D-7: name the split loudly (once, at boot) — a relocated scratch root is an intentional,
+// visible state, and legacy artifacts under the old layout are the operator's to delete
+// (spec-scratch-dir §6.5: no migration; the §3.1 fallback keeps historical rows demoting).
+try {
+  if (cfg.scratchDir !== cfg.workspace)
+    console.error(
+      `delta: WARN scratch root is ${cfg.scratchDir} (workspace ${cfg.workspace}) — new spill/research/scratchpad writes land there; pre-existing artifacts under the workspace still resolve via the legacy fallback.`,
+    );
+  if (readdirSync(resolve(cfg.workspace, "research")).length)
+    console.error(
+      `delta: note: legacy research/ artifacts exist under the workspace (pre-0.2.15 layout; new writes go to .delta/research/) — delete them when convenient.`,
+    );
+} catch {} // fail-open: the probe must never block a boot
 let deps: Deps;
 try {
   deps = buildDeps(cfg, cfg.dbPath);

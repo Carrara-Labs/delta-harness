@@ -191,12 +191,12 @@ describe("runResearch — bounded parallel loop", () => {
       );
       expect(out).toContain("what is the answer?");
       expect(out).toContain("the answer is 42");
-      expect(out).toContain("research/"); // the artifact path
-      const files = readdirSync(join(dir, "research", "run1.0"));
+      expect(out).toContain(".delta/research/"); // the artifact path (D-7 layout)
+      const files = readdirSync(join(dir, ".delta", "research", "run1.0"));
       expect(files.length).toBe(1);
-      expect(readFileSync(join(dir, "research", "run1.0", files[0] as string), "utf8")).toContain(
-        "the answer is 42",
-      );
+      expect(
+        readFileSync(join(dir, ".delta", "research", "run1.0", files[0] as string), "utf8"),
+      ).toContain("the answer is 42");
       expect(charged).not.toBeNull();
       expect((charged as unknown as Usage).total).toBeGreaterThan(0);
     } finally {
@@ -385,7 +385,7 @@ describe("runResearch — bounded parallel loop", () => {
         "0",
       );
       expect((out.match(/^## /gm) ?? []).length).toBe(3);
-      expect(readdirSync(join(dir, "research", "run2.0")).length).toBe(3);
+      expect(readdirSync(join(dir, ".delta", "research", "run2.0")).length).toBe(3);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -442,8 +442,8 @@ describe("research builtin end-to-end (through the model + queue)", () => {
 
       const toolResult = (seen[1] ?? []).find((m) => m.role === "tool") as { content: string };
       expect(toolResult.content).toContain("found the widget spec");
-      expect(toolResult.content).toContain("research/");
-      const runDirs = readdirSync(join(dir, "research"));
+      expect(toolResult.content).toContain(".delta/research/");
+      const runDirs = readdirSync(join(dir, ".delta", "research"));
       expect(runDirs.length).toBeGreaterThan(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });

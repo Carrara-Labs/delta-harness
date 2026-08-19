@@ -79,7 +79,20 @@ const clip = (text: string, max = 2000): string => elide(text, max);
 
 // Resolve a user-supplied path inside the workspace; refuses `..` escapes AND
 // symlinks pointing outside (confine is realpath-hard — codex S8 #3).
-const inside = confine;
+/** Workspace confinement with the configured scratch root as a SECOND allowed root (D-7).
+ * The engine tells the model to read_file spill/research paths and to write its scratchpad —
+ * when the operator moves scratch off the workspace, those paths must stay reachable or the
+ * relocation silently deletes the recovery contract. Both roots are engine-configured; the
+ * reserved-path classes still apply under each (see guardWrite). Relative paths resolve against
+ * the workspace exactly as before; only an absolute path under the scratch root gains entry. */
+const inside = (ctx: { workspace: string; scratchDir?: string }, path: string): string => {
+  try {
+    return confine(ctx.workspace, path);
+  } catch (e) {
+    if (ctx.scratchDir && ctx.scratchDir !== ctx.workspace) return confine(ctx.scratchDir, path);
+    throw e;
+  }
+};
 
 // A5 probe: can the code CLI actually run? A bare name is resolved on PATH (Bun.which returns only
 // executables); an explicit path must be a regular, executable FILE (existsSync alone accepts a
@@ -139,7 +152,11 @@ function fileClass(workspace: string, abs: string): "self" | "operator" | "reser
 }
 
 /** The error a mutation tool returns for `abs`, or null when the write is allowed. */
-function guardWrite(workspace: string, abs: string): string | null {
+function guardWrite(workspace: string, abs: string, scratchDir?: string): string | null {
+  // Under the SCRATCH root only the reserved class applies — a DELTA.md there is a plain file,
+  // not the self-file, but `.delta/*` (spill, research) stays engine-owned under both roots.
+  if (scratchDir && scratchDir !== workspace && fileClass(scratchDir, abs) === "reserved")
+    return RESERVED_FILE_ERROR;
   switch (fileClass(workspace, abs)) {
     case "self":
       return SELF_FILE_ERROR;
@@ -372,7 +389,7 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
     idempotent: true,
     execute: async (args, ctx) => {
       const rel = String(args.path);
-      const abs = inside(ctx.workspace, rel);
+      const abs = inside(ctx, rel);
       const f = Bun.file(abs);
       if (!(await f.exists())) return `[tool error] no such file: ${rel}`;
       // Sniff from the head, decide from the stat — materializing the whole file
@@ -449,9 +466,11 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
     },
     idempotent: false,
     execute: async (args, ctx) => {
-      const from = inside(ctx.workspace, String(args.from));
-      const to = inside(ctx.workspace, String(args.to));
-      const err = guardWrite(ctx.workspace, from) ?? guardWrite(ctx.workspace, to);
+      const from = inside(ctx, String(args.from));
+      const to = inside(ctx, String(args.to));
+      const err =
+        guardWrite(ctx.workspace, from, ctx.scratchDir) ??
+        guardWrite(ctx.workspace, to, ctx.scratchDir);
       if (err) return err;
       if (!existsSync(from)) return `[tool error] no such file: ${args.from}`;
       if (existsSync(to) && args.overwrite !== true)
@@ -474,8 +493,8 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
     idempotent: false,
     execute: async (args, ctx) => {
       const rel = String(args.path);
-      const abs = inside(ctx.workspace, rel);
-      const err = guardWrite(ctx.workspace, abs);
+      const abs = inside(ctx, rel);
+      const err = guardWrite(ctx.workspace, abs, ctx.scratchDir);
       if (err) return err;
       if (!existsSync(abs)) return `[tool error] no such file: ${rel}`;
       if (statSync(abs).isDirectory() && args.recursive !== true)
@@ -501,7 +520,7 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
     },
     idempotent: true,
     execute: async (args, ctx) => {
-      const root = inside(ctx.workspace, String(args.path ?? "."));
+      const root = inside(ctx, String(args.path ?? "."));
       if (!existsSync(root)) return `[tool error] no such path: ${args.path}`;
       // System grep, not a JS RegExp: a model-supplied pattern like `(a+)+$`
       // backtracks catastrophically, and a synchronous JS regex blocks the whole
@@ -699,8 +718,8 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
     // Full-content overwrite with the same args lands the same bytes — safe to re-fire.
     idempotent: true,
     execute: async (args, ctx) => {
-      const abs = inside(ctx.workspace, String(args.path));
-      const err = guardWrite(ctx.workspace, abs);
+      const abs = inside(ctx, String(args.path));
+      const err = guardWrite(ctx.workspace, abs, ctx.scratchDir);
       if (err) return err;
       await Bun.write(abs, String(args.content), { createPath: true });
       return `wrote ${String(args.content).length} chars to ${args.path}`;
@@ -778,7 +797,7 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
     },
     idempotent: true,
     execute: async (args, ctx) => {
-      const abs = inside(ctx.workspace, String(args.path ?? "."));
+      const abs = inside(ctx, String(args.path ?? "."));
       const entries = readdirSync(abs, { recursive: true, withFileTypes: true })
         .filter((e) => e.isFile())
         .map((e) => resolve(e.parentPath, e.name).slice(ctx.workspace.length + 1));

@@ -148,6 +148,8 @@ export type Deps = {
   chatUtility?: (req: ChatRequest) => Promise<ModelResult>;
   tools: Tools;
   workspace: string;
+  /** Engine scratch root; defaults to the workspace (see config.scratchDir). */
+  scratchDir?: string;
   agentId?: string;
   /** Placement profile ceiling; requests may narrow, never escalate. */
   profile?: string;
@@ -463,8 +465,10 @@ export async function executeRun(
     ),
     maxCostUsd: Math.max(0, profile.budget.maxCostUsd - usage.costUsd),
   });
+  const scratchRoot = resolve(deps.scratchDir ?? deps.workspace);
   const ctx: ToolCtx = {
     workspace: resolve(deps.workspace),
+    scratchDir: scratchRoot,
     ...(deps.toolResultCap !== undefined ? { resultCap: deps.toolResultCap } : {}),
     activate,
     owner: runOwner,
@@ -835,7 +839,13 @@ export async function executeRun(
           // active window lean and survive compaction. Engine-advertised, product-neutral: a bundle
           // opts in with {{run.scratch}} in PROMPT_CONTEXT.md. Auto-wiped when the run terminates
           // (see Queue.wipeRunScratch) — so it holds within-run state only, never cross-turn state.
-          "run.scratch": `scratch/${run.id}`,
+          // Relative while scratch lives in the workspace (unchanged contract); ABSOLUTE when the
+          // operator moved it — file tools resolve relative paths against the workspace, so a
+          // relative advert under a moved root would point at the wrong tree.
+          "run.scratch":
+            scratchRoot === resolve(deps.workspace)
+              ? `scratch/${run.id}`
+              : `${scratchRoot}/scratch/${run.id}`,
         }).trim(),
         4_000,
       );
@@ -934,6 +944,7 @@ export async function executeRun(
         {
           recentBudgetTokens: recentBudget,
           workspace: deps.workspace,
+          scratchDir: scratchRoot,
           argCap: deps.toolArgCap ?? 0,
           anchorRunId: run.id, // S5: reset the stale anchor INSIDE the rewrite transaction
         },
@@ -1088,6 +1099,7 @@ export async function executeRun(
             recentBudgetTokens: 0,
             force: true,
             workspace: deps.workspace,
+            scratchDir: scratchRoot,
             argCap: deps.toolArgCap ?? 0,
             // S5: the overflow-recovery path needs the atomic anchor reset just as much as the
             // proactive one — arguably more, since it runs on a turn that already failed. Omitting
@@ -1688,7 +1700,13 @@ async function execCall(
     });
     // Cap oversized output at the source — it's persisted AND re-sent every turn, and a single
     // giant payload is the top cause of a mid-run context-window overflow. Spill keeps it re-readable.
-    result = await capAndSpill(result, ctx.workspace, run.id, call.id, deps.toolResultCap);
+    result = await capAndSpill(
+      result,
+      ctx.scratchDir ?? ctx.workspace,
+      run.id,
+      call.id,
+      deps.toolResultCap,
+    );
     const errClass = toolErrorClass(result);
     const isErr = result.startsWith("[tool error]");
     events.emit("tool.result", spine, {
@@ -1763,7 +1781,7 @@ function exhaustionHandoff(deps: Deps, run: RunRow, committedSelfWrite: boolean)
     parts.push("Intermediate results were not retained (this was an ephemeral turn).");
   } else {
     try {
-      const ws = resolve(deps.workspace);
+      const root = resolve(deps.scratchDir ?? deps.workspace);
       const family = (dir: string, prefix: string): string[] => {
         try {
           return readdirSync(dir)
@@ -1774,10 +1792,10 @@ function exhaustionHandoff(deps: Deps, run: RunRow, committedSelfWrite: boolean)
           return []; // most runs spill/research nothing — the dir may not exist
         }
       };
-      const spills = family(`${ws}/.delta/spill`, spillRunPrefix(run.id));
+      const spills = family(`${root}/.delta/spill`, spillRunPrefix(run.id));
       // Research artifacts are FILES inside per-call dirs — list the files, which is what
       // read_file takes (the dirs alone would send the user somewhere read_file rejects).
-      const research = family(`${ws}/research`, researchRunPrefix(run.id)).flatMap((d) =>
+      const research = family(`${root}/.delta/research`, researchRunPrefix(run.id)).flatMap((d) =>
         family(d, ""),
       );
       const bounded = (paths: string[]): string[] => {

@@ -45,6 +45,10 @@ export type TodoItem = { text: string; status: TodoStatus };
 export type ToolCtx = {
   /** Workspace root for file tools; absolute path. */
   workspace: string;
+  /** Engine scratch root (DELTA_SCRATCH_DIR); equals workspace unless the operator moved it.
+   * Spill/research/scratchpad live here, and file tools accept it as a second confined root so
+   * the model can read what the engine tells it to read_file. */
+  scratchDir?: string;
   /** This run's tool-result cap. A tool that returns bounded pages sizes them from this, so its
    * output can never itself trip `capAndSpill` and write a spill file (0.2.12). */
   resultCap?: number;
