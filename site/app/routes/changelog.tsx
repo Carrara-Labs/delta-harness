@@ -96,11 +96,49 @@ const kindLabel: Record<Kind, string> = {
 // exactly. Update this alongside the root CHANGELOG.md when a release ships.
 const releases: Release[] = [
   {
+    version: "0.2.15",
+    date: "August 19, 2026",
+    iso: "2026-08-19",
+    tagline: "Stop losing the task and the output.",
+    latest: true,
+    note: "Twelve changes, every one motivated by a number measured on the live fleet. The headline pair: compaction pinned the session's first request as trusted task instructions — measured across three lanes, 42 of 42 exposed compactions on multi-request sessions pinned a different task than the one being served, zero harmless — and now pins the compacting run's own request; and a budget-exhausted run returned one sentence of internal counters while its results sat on disk — eleven runs, 771 tool calls, $140.98 and 158 minutes of paid work returned as 'budget exhausted' — and now returns the plan plus every spill and research artifact the run produced, with the counters kept in runs.error where operators look. Around those two, the visibility and hygiene gaps that let them hide: tool usability on /v1/status in three states, a countable tool.rejected event, memory-save refusals that name the exact overage and hand back a merge base, an identifier appendix that floors what compaction summaries may drop, a relocatable scratch root for engine intermediates, connector-free defaults for the delegated CLI, and a skill index that stays current without restarts. No schema migration: reversible from 0.2.13 or 0.2.14. Three deliberate upgrade-day changes — research artifacts move under .delta/research/, the code CLI default disables account connectors, and a failed run's output_text is a user-facing handoff rather than operator counters.",
+    groups: [
+      {
+        kind: "fixed",
+        items: [
+          "**Compaction pins the request it is compacting, not the session's first.** On any threaded session the summary re-instructed the agent to do old work — and 23 of 27 stale pins on the busiest lane were longer than the live request they outranked. The pin now reads the anchoring run's own request, bound by run and session id, and the first-run fallback — the defect itself — is deleted so no caller can reach it.",
+          "**A budget-exhausted run hands back what it already has**: the current plan, this run's spill files and research artifacts (enumerated from disk under the run's own id — nothing stale, nothing forged), the self-write note, and advice to narrow rather than retry. Bounded at 10 KiB and 20 paths per family, truncation named. Ephemeral runs get no paths, because the queue wipes theirs right after settle.",
+          "**`max_output_tokens` is never sent to the ChatGPT/Codex subscription backend**, which rejects it at any value. Parent turns never send one, so the identical connection worked for the parent while every research, eval, and reflection child died with a billed 400 — 24 of 24 child starts on one observed run. A denylist of the one host with wire proof; every other endpoint keeps its cap.",
+          "**YAML block-scalar skill descriptions parse**, without adding a YAML dependency. Two skills were registered but unsearchable for months — the identical file parses fine under real YAML on a laptop, which is why nobody noticed. A description under ten characters now warns loudly at scan time.",
+          "**Identifiers the compaction summary dropped ride a machine-built appendix** — 18 to 34 percent of load-bearing identifiers were measured missing from committed summaries. Bounded per id and in aggregate, and reserved inside the summary cap so it can never bloat the context it protects.",
+        ],
+      },
+      {
+        kind: "added",
+        items: [
+          "**`DELTA_SCRATCH_DIR`** — one root for the three per-run artifact families the engine used to write into the workspace: spilled tool results, research artifacts, and the model's per-run scratchpad. Defaults to the workspace, so nothing moves unless set; on a git-tracked or human-browsed workspace, point it at machine-local disposable storage. File tools accept it as a second confined root, old artifacts keep resolving via a legacy fallback, and a root that would contain the daemon DB is refused.",
+          "**`GET /v1/status` reports tool usability in three states** — registered, unusable now (heals the moment a credential lands, no restart), and omitted with a reason — plus one loud boot line. A deployment had configured 16 tools and was running 13, and nothing anywhere said so; the one missing search key cost 724,804 input tokens of routing-around on a single question. No tool is ever de-registered for a missing credential.",
+          "**`tool.rejected` telemetry** with a closed reason enum; the raw model-requested name stays on-box unless payload capture is on. 9.4 percent of one lane's tool calls were rejections no counter recorded.",
+          "**`DELTA_MAX_STEPS`** completes the third budget axis, floored at one. Honest scope: the fleet's binding constraint is tokens, so this is a knob for deep-research shapes, not a change anyone currently deployed will see.",
+          "**The skill index refreshes without a restart** — search re-scans behind a per-file stat, so skills added, renamed, or re-described after boot are findable. One deployment ran a two-minute external restart timer as a workaround; it can be deleted.",
+          "**A `remember` refusal for size names the exact overage and hands back the current file as a merge base.** 86 of 240 fleet saves were refused with neither, so the model compressed by guesswork, re-fired, and hit the breaker — the largest self-learning failure mode on the fleet.",
+        ],
+      },
+      {
+        kind: "changed",
+        items: [
+          "**The delegated code CLI defaults to `--disable apps --disable plugins`.** A codex session, asked to prove its Gmail skill was inert, listed the operator's real inbox — 6,913 messages, write scope — granted by nothing on the host: account connectors live server-side on the CLI's own login. Anyone who deliberately relies on a connector sets `DELTA_CODE_CLI` explicitly, which is used verbatim. Requires codex-cli 0.146.0 or newer.",
+          "**A failed run's `output_text` is the user-facing outcome, not the operator diagnostic.** The counters live in `runs.error` and the error event, as they always did; consumers that string-matched them out of `output_text` must move.",
+          "**Research artifacts write under `.delta/research/`** instead of a bare `research/` directory — hidden and uniquely named, so no operator has to write the ignore rule that, on one deployment, silently swallowed new files in five legitimate folders. Old trees stay where they are.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.2.14",
     date: "August 10, 2026",
     iso: "2026-08-10",
     tagline: "Bounds and correctness.",
-    latest: true,
     note: "The debug capture table can no longer fill a volume, a shrinking turn no longer reads as a cache disaster, and sub-agent capabilities are locked to what the engine actually enforces. There is also one real prompt-cache fix, and it is worth scoping honestly: Anthropic's cache lookback is twenty blocks per breakpoint and finds only positions earlier requests already wrote, and our rolling breakpoints were landing one block apart, sharing a single window instead of starting separate ones. A turn issuing ten or more parallel tool calls outran all of them and re-billed the entire prefix. Measured live on both wires at a burst of twelve, cache read went from 2,523 to 10,207 tokens, roughly 4.8x cheaper on an affected turn. Below ten parallel calls per turn this changes nothing about your cost: at bursts of four and nine the before and after arms are identical to the token, and agents that batch two or three calls a turn will see no difference. It also does not close the open prompt-cache question. Production turns still show shortfalls of two to ten thousand tokens at burst widths of nought to two, with a byte-identical prefix. That signature is unexplained and predates this release; better telemetry for it is the next piece of work. 0.2.14 adds no migration, so from 0.2.13 it is reversible; from 0.2.11 it is not, because it carries the one-way step 0.2.13 introduced.",
     groups: [
       {
