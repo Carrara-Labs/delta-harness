@@ -1,6 +1,13 @@
 # Release brief — Harness 0.2.15 "stop losing the task and the output"
 
-Status: **STAGED 2026-08-19, pending publish.** Implemented, Codex-reviewed twice (spec pass +
+Status: **PUBLISHING 2026-08-19.** D-12 gate **PASSED** by Delos on the live Codex lane: 3/3
+children succeeded, zero `Unsupported parameter` errors, and the negative control (forcing
+`acceptsMaxOutputTokens()` true on the same backend, same minute) reproduced 0/3 with the exact
+error string — plus a fresh raw-wire A/B confirming the parameter is still rejected today, so the
+denylist is load-bearing now, not a historical artifact. Their boot checks all confirmed (scratch
+relocation with zero workspace writes, legacy note, status report, 978 tests, tsc clean).
+
+Formerly: STAGED, pending publish. Implemented, Codex-reviewed twice (spec pass +
 full-diff pass, nine findings fixed), 978 tests green, deployed `--from-source` to Ferni and
 verified live (smoke, threaded turns, a real budget exhaustion, spill under the new scratch root,
 and an operator Telegram battery — all clean). Remaining gate at time of writing: Delos's live
@@ -69,4 +76,15 @@ counts visible for the first time (A-2).
    smoke + status checks against the published tarball.
 4. Site deploy (changelog + guide).
 5. Hand Aperture the upgrade brief; they lead lane testing on the published version.
-6. `config/ferni-codex-sol` unblocks once Delos confirms 3/3.
+6. `config/ferni-codex-sol` is unblocked — Delos confirmed 3/3.
+
+## Carried to 0.2.16 from the gate run (Delos)
+
+- **A child's provider 400 has no observable surface outside the tool return value.** On the
+  negative control the error appeared 3x in tool results and 0x in stdout — an operator watching
+  logs sees a clean run while every child dies and bills. That is the mechanism behind "24 starts,
+  24 failures" surviving two weeks. By the D-2/D-3 principle it wants a log line or its own
+  telemetry event. 0.2.16.
+- **Delos fixture DB is ready** (1.3 MB gz, leak-scanned, both target runs present with spill
+  paths intact) — validate the D-1/D-9 tests against it post-release.
+- `DELTA_MODEL_PRICES` from Delos still blocked on their side; D-6 stays open.
