@@ -1,0 +1,409 @@
+<title>The 0.2.15 Cut</title>
+<style>
+  :root {
+    --paper: #f7f7f9;
+    --card: #ffffff;
+    --ink: #1d2130;
+    --ink-soft: #4c5265;
+    --ink-faint: #8a90a3;
+    --line: #dcdfe8;
+    --accent: #46508c;
+    --accent-soft: #e8eaf4;
+    --good: #1d7a4f;
+    --good-bg: #e3f2ea;
+    --warn: #9a6b15;
+    --warn-bg: #f7edd8;
+    --bad: #a83a3a;
+    --bad-bg: #f8e6e6;
+    --host: #2a6f8f;
+    --host-bg: #e2eff5;
+    --later: #6b6f80;
+    --later-bg: #ebecf1;
+    --code-bg: #eef0f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #16181f;
+      --card: #1e212b;
+      --ink: #e6e8f0;
+      --ink-soft: #b0b5c6;
+      --ink-faint: #767c90;
+      --line: #333747;
+      --accent: #9aa4e0;
+      --accent-soft: #2a2e45;
+      --good: #5cc490;
+      --good-bg: #1b3327;
+      --warn: #d9a84e;
+      --warn-bg: #3a2f18;
+      --bad: #e08585;
+      --bad-bg: #3d2323;
+      --host: #6db6d6;
+      --host-bg: #1c313c;
+      --later: #9ba0b3;
+      --later-bg: #272a36;
+      --code-bg: #262a37;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #16181f;
+    --card: #1e212b;
+    --ink: #e6e8f0;
+    --ink-soft: #b0b5c6;
+    --ink-faint: #767c90;
+    --line: #333747;
+    --accent: #9aa4e0;
+    --accent-soft: #2a2e45;
+    --good: #5cc490;
+    --good-bg: #1b3327;
+    --warn: #d9a84e;
+    --warn-bg: #3a2f18;
+    --bad: #e08585;
+    --bad-bg: #3d2323;
+    --host: #6db6d6;
+    --host-bg: #1c313c;
+    --later: #9ba0b3;
+    --later-bg: #272a36;
+    --code-bg: #262a37;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: Charter, "Bitstream Charter", Cambria, Georgia, serif;
+    font-size: 16px;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 1020px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1, h2, h3, .sans { font-family: "Avenir Next", Avenir, "Segoe UI", system-ui, sans-serif; }
+  h1 { font-size: 34px; font-weight: 700; letter-spacing: -0.5px; margin: 6px 0 4px; text-wrap: balance; }
+  h2 { font-size: 21px; font-weight: 600; margin: 0 0 12px; letter-spacing: -0.2px; text-wrap: balance; }
+  h3 { font-size: 16px; font-weight: 600; margin: 0 0 6px; }
+  code, .mono { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size: 0.86em; }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  .eyebrow {
+    font-family: "Avenir Next", Avenir, "Segoe UI", system-ui, sans-serif;
+    font-size: 12px; font-weight: 600; letter-spacing: 1.6px; text-transform: uppercase;
+    color: var(--accent); margin: 0;
+  }
+  .lede { font-size: 18px; color: var(--ink-soft); max-width: 68ch; margin: 10px 0 0; }
+  .strip {
+    display: flex; flex-wrap: wrap; gap: 10px 26px; margin: 26px 0 0;
+    padding: 14px 18px; background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  }
+  .strip div { font-size: 13.5px; color: var(--ink-soft); }
+  .strip b { display: block; font-family: "Avenir Next", Avenir, system-ui, sans-serif; font-size: 17px; color: var(--ink); font-variant-numeric: tabular-nums; }
+  section { margin-top: 48px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 22px 24px; }
+  .pill {
+    display: inline-block; font-family: "Avenir Next", Avenir, system-ui, sans-serif;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase;
+    padding: 2px 9px; border-radius: 99px; white-space: nowrap;
+  }
+  .p-shipped { color: var(--good); background: var(--good-bg); }
+  .p-ship { color: var(--accent); background: var(--accent-soft); }
+  .p-host { color: var(--host); background: var(--host-bg); }
+  .p-later { color: var(--later); background: var(--later-bg); }
+  .p-config { color: var(--warn); background: var(--warn-bg); }
+  .p-defect { color: var(--bad); background: var(--bad-bg); }
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  table { border-collapse: collapse; width: 100%; min-width: 780px; font-size: 14px; }
+  th {
+    font-family: "Avenir Next", Avenir, system-ui, sans-serif; font-size: 11.5px; font-weight: 600;
+    letter-spacing: 0.8px; text-transform: uppercase; color: var(--ink-faint);
+    text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--line);
+  }
+  td { padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--ink-soft); }
+  tr:last-child td { border-bottom: none; }
+  td.askname { color: var(--ink); font-weight: 600; font-family: "Avenir Next", Avenir, system-ui, sans-serif; font-size: 13.5px; white-space: nowrap; }
+  td .num { font-variant-numeric: tabular-nums; }
+  .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 760px) { .twocol { grid-template-columns: 1fr; } }
+  .lane { border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 20px 22px; }
+  .lane.speed { border-top: 3px solid var(--host); }
+  .lane.quality { border-top: 3px solid var(--accent); }
+  ul { margin: 10px 0 0; padding-left: 20px; }
+  li { margin: 7px 0; color: var(--ink-soft); }
+  li b { color: var(--ink); }
+  figure { margin: 22px 0 0; }
+  figure svg { max-width: 100%; height: auto; display: block; }
+  figcaption { font-size: 13px; color: var(--ink-faint); margin-top: 8px; max-width: 75ch; }
+  .quote {
+    border-left: 3px solid var(--accent); padding: 4px 0 4px 16px; margin: 14px 0 0;
+    color: var(--ink-soft); font-size: 14.5px;
+  }
+  .quote .who { font-family: "Avenir Next", Avenir, system-ui, sans-serif; font-size: 12px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--ink-faint); }
+  .verdictgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 14px; }
+  .vcard { border: 1px solid var(--line); border-radius: 10px; background: var(--card); padding: 16px 18px; font-size: 14px; color: var(--ink-soft); }
+  .vcard h3 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .asks { counter-reset: ask; }
+  .ask-item { display: flex; gap: 14px; padding: 13px 0; border-bottom: 1px solid var(--line); font-size: 14.5px; color: var(--ink-soft); }
+  .ask-item:last-child { border-bottom: none; }
+  .ask-item .q { font-family: "Avenir Next", Avenir, system-ui, sans-serif; font-weight: 700; color: var(--accent); white-space: nowrap; }
+  .footnote { font-size: 13px; color: var(--ink-faint); margin-top: 40px; border-top: 1px solid var(--line); padding-top: 14px; }
+  a { color: var(--accent); }
+</style>
+
+<div class="wrap">
+
+<p class="eyebrow">Delta Harness · release alignment · 2026-08-19</p>
+<h1>The 0.2.15 Cut</h1>
+<p class="lede">All nine Aperture asks verified against the raw receipts and the engine source, an adversarial Codex pass folded in, and the version boundary closed. This page is the alignment: what ships, what waits, what needs no release at all — and the four calls that are yours.</p>
+
+<div class="strip">
+  <div><b>9 / 9</b>asks verified at the line</div>
+  <div><b>3</b>already shipped (v0.2.4)</div>
+  <div><b>12</b>items in the final 0.2.15</div>
+  <div><b>2</b>demoted by Codex to 0.2.16</div>
+  <div><b>2.9M</b>Codex review tokens</div>
+  <div><b>days</b>until the frontier-lab demo</div>
+</div>
+
+<!-- ============ HEADLINE ============ -->
+<section>
+  <h2>The headline: their two biggest speed asks were shipped weeks ago</h2>
+  <div class="card">
+    <p style="margin:0; color:var(--ink-soft); max-width:75ch;">Aperture's board leads with speed: R1 (suspend-safe resume) and R2 (a first-turn heartbeat). Both verdicts came back the same way — <b style="color:var(--ink)">the engine work landed in v0.2.4</b> and has been running on their fleet all period, unexercised. The lease renew-or-reacquire fix (<code>6e36b99</code>, changelog credits "Aperture A2") and the full progress feed — <code>turn.start</code> before every model call, SSE <code>/v1/tasks/:id/events</code> with a coarse mode, a cursor-paged JSON poll labeled "A1" in the source — are all in the released package they run today. R7's proximate failure is likely their own MCP server not setting <code>readOnlyHint</code>, which fail-closed excludes their data tools from sub-agents (<code>mcp.ts:327</code>).</p>
+    <p style="margin:12px 0 0; color:var(--ink-soft); max-width:75ch;">The consequence for the demo window: <b style="color:var(--ink)">the biggest speed wins this week are host wiring and config — zero engine risk, no release.</b> The engine release spends its risk budget where the report's real defects are: accuracy and memory quality.</p>
+  </div>
+</section>
+
+<!-- ============ THE BOARD ============ -->
+<section>
+  <h2>The board: nine asks, nine verdicts</h2>
+  <div class="tablewrap">
+  <table>
+    <tr><th>Ask</th><th>Their claim (verified)</th><th>Verdict at the line</th><th>Goes to</th></tr>
+    <tr>
+      <td class="askname">R1 · suspend</td>
+      <td>wake costs <span class="num">4.7 s</span> vs <span class="num">1.1 s</span>; −3.6 s off every first response</td>
+      <td>Lease fix + wire self-heal shipped v0.2.4/0.2.5. Unsoaked under suspend — the test models the logic, not a real resume.</td>
+      <td><span class="pill p-config">config soak</span></td>
+    </tr>
+    <tr>
+      <td class="askname">R2 · heartbeat</td>
+      <td>p50 <span class="num">43 s</span> / p90 <span class="num">152 s</span> / max <span class="num">579 s</span> of dead air (n=103 ✓)</td>
+      <td>Feed shipped v0.2.4. Caveat from Codex: SSE replays nothing — the host must poll from <code>since=0</code> first, then tail.</td>
+      <td><span class="pill p-host">host wiring</span></td>
+    </tr>
+    <tr>
+      <td class="askname">R3 · self-memory</td>
+      <td><span class="num">86/240</span> writes refused ✓; three lanes built identical overflow machinery</td>
+      <td>Cap check is deterministic on every path since 0.1.0 — the "inconsistent cap" needs their env history, not an engine fix. The breaker latch and refusal UX are real.</td>
+      <td><span class="pill p-ship">A-4a ships</span> <span class="pill p-later">rest 0.2.16+</span></td>
+    </tr>
+    <tr>
+      <td class="askname">R4 · identifiers</td>
+      <td>summaries lose <span class="num">34%</span> of audited identifiers post-upgrade, worst <span class="num">30/30</span> ✓ (was 18% pre)</td>
+      <td><span class="pill p-defect">confirmed defect</span> &nbsp;Engine audits, retries once, then ships the lossy summary anyway. The only ask that produces a <i>wrong</i> artifact.</td>
+      <td><span class="pill p-ship">A-1 ships</span></td>
+    </tr>
+    <tr>
+      <td class="askname">R5 · provider health</td>
+      <td><span class="num">121</span> doomed hops over a 5-hour billing outage ✓; found 8 days later</td>
+      <td>Ladder is genuinely stateless per call. But sticky health changes failover semantics — and their alarm can key on the existing <code>model.retry</code> today.</td>
+      <td><span class="pill p-later">0.2.16</span></td>
+    </tr>
+    <tr>
+      <td class="askname">R6 · cache defect</td>
+      <td><span class="num">162</span> stationary-prefix misses, <span class="num">979 k</span> wasted tokens ✓, worst <span class="num">107,983</span></td>
+      <td>Their dataset is gold for our open defect. The cache-diagnosis beta is real (verified against docs) — but wiring it needs per-run state through shared provider closures.</td>
+      <td><span class="pill p-later">0.2.16</span> + out-of-band now</td>
+    </tr>
+    <tr>
+      <td class="askname">R7 · sub-agents</td>
+      <td>children guessed instead of reading data; both lanes banned spawning</td>
+      <td>Children <i>do</i> inherit read-only tools — MCP tools qualify only via <code>readOnlyHint</code>, which their server almost certainly doesn't set.</td>
+      <td><span class="pill p-host">host annotation</span></td>
+    </tr>
+    <tr>
+      <td class="askname">R8 · utility cache</td>
+      <td>~$3.29/fortnight of uncached utility calls</td>
+      <td>Real but the smallest item, and the summary prefix is mostly unique per call. Folds into the CachePlan batch.</td>
+      <td><span class="pill p-later">0.2.16</span></td>
+    </tr>
+    <tr>
+      <td class="askname">R9 · tool rejects</td>
+      <td>a rejected tool call emits no telemetry — frequency unknowable</td>
+      <td>Confirmed: the unknown-tool branch returns a string and emits nothing (<code>run.ts:1587</code>). Measure first (A-2); auto-activate is a semantics change, so it follows the data.</td>
+      <td><span class="pill p-ship">A-2 ships</span> <span class="pill p-later">auto-activate 0.2.16</span></td>
+    </tr>
+  </table>
+  </div>
+</section>
+
+<!-- ============ R4 DIAGRAM ============ -->
+<section>
+  <h2>The defect worth drawing: compaction measures the leak, then ships it</h2>
+  <figure>
+    <svg viewBox="0 0 940 300" role="img" aria-label="Compaction pipeline: identifiers are extracted and audited, the summary is retried once, but after two attempts the lossy summary ships anyway. The fix reserves an identifier appendix inside the existing summary cap.">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <g fill="none" stroke="currentColor" stroke-width="1.3" color="currentColor">
+        <!-- boxes -->
+        <rect x="10" y="70" width="150" height="54" rx="8"/>
+        <rect x="220" y="70" width="150" height="54" rx="8"/>
+        <rect x="430" y="70" width="160" height="54" rx="8"/>
+        <rect x="660" y="70" width="180" height="54" rx="8" stroke-dasharray="5 4"/>
+        <!-- flow -->
+        <line x1="160" y1="97" x2="216" y2="97" marker-end="url(#arr)"/>
+        <line x1="370" y1="97" x2="426" y2="97" marker-end="url(#arr)"/>
+        <line x1="590" y1="97" x2="656" y2="97" marker-end="url(#arr)"/>
+        <!-- retry loop -->
+        <path d="M 510 70 C 510 30, 295 30, 295 66" marker-end="url(#arr)"/>
+        <!-- fix box -->
+        <rect x="430" y="200" width="410" height="62" rx="8" stroke="var(--accent)" stroke-width="2"/>
+        <line x1="510" y1="128" x2="510" y2="196" stroke="var(--accent)" stroke-width="2" marker-end="url(#arr)"/>
+        <line x1="750" y1="262" x2="750" y2="290" stroke="var(--accent)" stroke-width="0" />
+        <path d="M 840 231 C 890 231, 890 97, 846 97" stroke="var(--accent)" stroke-width="2" marker-end="url(#arr)"/>
+      </g>
+      <g font-family="Avenir Next, Avenir, system-ui, sans-serif" font-size="12.5" fill="currentColor" text-anchor="middle">
+        <text x="85" y="92">extract</text><text x="85" y="108">identifiers</text>
+        <text x="295" y="92">summarize</text><text x="295" y="108">(utility model)</text>
+        <text x="510" y="92">audit misses</text><text x="510" y="108" font-size="11" opacity="0.7">accept if ≤ 25% dropped</text>
+        <text x="750" y="92" fill="var(--bad)">ships lossy anyway</text><text x="750" y="108" font-size="11" opacity="0.7">worst observed: 30 / 30 missing</text>
+        <text x="402" y="40" font-size="11" opacity="0.7">retry once, misses listed</text>
+        <text x="635" y="224" fill="var(--accent)" font-weight="600">A-1: machine-built identifier appendix</text>
+        <text x="635" y="242" font-size="11.5" opacity="0.85">byte-bounded, reserved INSIDE the summary cap — the W1 ledger pattern</text>
+        <text x="635" y="256" font-size="11" opacity="0.6">compaction.ts:488–535 · summarizer-independent, so the 34% loss rate stops mattering</text>
+      </g>
+    </svg>
+    <figcaption>The engine already computes exactly which identifiers vanished — <code>identifiers_missing</code> is on every compaction event. Today that knowledge is telemetry-only. A-1 appends the missing list deterministically, mirroring the artifact ledger ten lines below it, with the appendix bytes reserved inside <code>SUMMARY_CAP</code> so the 8 KB bound and the shrink-proof both hold (Codex's correction).</figcaption>
+  </figure>
+</section>
+
+<!-- ============ CODEX ============ -->
+<section>
+  <h2>Codex's opinion, and what it changed</h2>
+  <div class="card">
+    <p style="margin:0; color:var(--ink-soft); max-width:75ch;">A high-effort adversarial pass (2.9 M tokens, session <code>01a0196c…</code>) over the triage and the code. Its verdict, verbatim: <i>"No: four of the five additions are riskier than LOW as currently specified."</i> I verified its factual claims independently before accepting — both hard ones checked out.</p>
+    <div class="verdictgrid">
+      <div class="vcard">
+        <h3><span class="pill p-later">accepted</span> A-5 demoted to 0.2.16</h3>
+        The previous-response-id chain is per-run state, but the provider closures are shared across runs (<code>index.ts:59</code>); the id must advance only on successful attempts across the retry/model-hop cascade; the beta header must compose with fast mode; the utility lane must be isolated. That is exactly the CachePlan shape — it belongs in the provider-controls batch. <b>Interim:</b> run the diagnosis beta out-of-band against captured Ferni payloads; the defect investigation does not wait.
+      </div>
+      <div class="vcard">
+        <h3><span class="pill p-later">accepted</span> A-3 demoted to 0.2.16</h3>
+        Auto-activate changes execution semantics, not just residency: a model could execute a side-effecting allowed tool from a guessed name without ever seeing its schema — <code>search_tools</code> currently provides argument grounding. And A-2 makes the class measurable first. Measure, then fix.
+      </div>
+      <div class="vcard">
+        <h3><span class="pill p-ship">pushed back</span> A-4 split, not dropped</h3>
+        Codex wanted A-4 deferred entirely. Half of it is safe and precedented: <code>writeSelf</code> returns structured <code>{current, overBy, cap}</code>, rendered into the model-facing message only by the <code>remember</code> tool (the Cockpit endpoint keeps its short error). <code>self_conflict</code> already embeds the current file, and the breaker classifies <code>self_cap</code> by prefix before any embedded text. The hollow half — the overflow-path promise — waits for the R3d rail, exactly as Codex argued: profiles with <code>remember</code> but no <code>write_file</code> can't honor it.
+      </div>
+      <div class="vcard">
+        <h3><span class="pill p-ship">accepted</span> A-1 / A-2 hardened</h3>
+        A-1: byte-bound the identifiers individually and in aggregate; reserve appendix bytes <i>inside</i> <code>SUMMARY_CAP</code>; build the final row before the shrink gate. A-2: add <code>tool.rejected</code> to the exporter's payload-event set and export only a closed reason enum — the raw model-controlled tool name must not leave the box with payload capture off (<code>exporter.ts:41</code>).
+      </div>
+      <div class="vcard">
+        <h3><span class="pill p-shipped">corrected</span> Ship version: v0.2.4</h3>
+        R1/R2 shipped in v0.2.4, not 0.2.10 — my tag listing was truncated by lexical sort (<code>v0.2.10</code> sorts before <code>v0.2.4</code>). Verified with <code>merge-base</code>. The verdict is unchanged; the history is now right.
+      </div>
+      <div class="vcard">
+        <h3><span class="pill p-ship">accepted</span> D-5 does the complete fix</h3>
+        Stat the individual <code>SKILL.md</code> files instead of the parent directory mtime — the directory version documented a miss on re-description, the exact case operators expect the feature to catch.
+      </div>
+    </div>
+    <div class="quote">
+      <div class="who">Codex, on R2's mechanics</div>
+      "Task SSE replays nothing … A client that POSTs and then opens SSE can miss both [<code>run.enqueued</code>, <code>run.started</code>]. Its next guaranteed signal may be the 15-second comment heartbeat, not 1–2 seconds. … The cursor poll from <code>since=0</code> is reliable."
+    </div>
+  </div>
+</section>
+
+<!-- ============ THE TWO LANES ============ -->
+<section>
+  <h2>Where the impact actually comes from: two lanes</h2>
+  <div class="twocol">
+    <div class="lane speed">
+      <h3><span class="pill p-host">no release</span> &nbsp;Speed — this week, host-side, demo-critical</h3>
+      <ul>
+        <li><b>R2 wiring (Aperture):</b> poll <code>/v1/tasks/:id/events</code> from <code>since=0</code>, then tail the SSE. First user signal: 43 s → seconds. Zero engine risk.</li>
+        <li><b>R7 annotation (Aperture):</b> set <code>readOnlyHint: true</code> on their read-only MCP tools; verify with one spawn on a bench lane. Potentially their largest latency lever.</li>
+        <li><b>R1 soak (Aperture, config):</b> flip speed-lab to Fly suspend; watch lease + first-turn events for the week. Production stays stop-mode until green.</li>
+        <li><b>QS config canary (ours):</b> <code>DELTA_TOOL_ARG_MAX_BYTES=4096</code>, <code>DELTA_CACHE_TTL=1h</code>, self-cap raise.</li>
+        <li><b>Demo day (their plan, endorsed):</b> machine kept started, credits pre-checked, room pre-opened. Nothing engine-side rushed inside the window.</li>
+      </ul>
+    </div>
+    <div class="lane quality">
+      <h3><span class="pill p-ship">0.2.15</span> &nbsp;Accuracy &amp; quality — where the release spends its risk</h3>
+      <ul>
+        <li><b>Nine Delos items</b> (unchanged): ask-pin D-1 first, exhaustion handoff D-9-min, tool usability, codex output cap, scratch dir, four one-diffs.</li>
+        <li><b>A-1 identifier appendix</b> — closes the wrong-artifact class regardless of summarizer quality.</li>
+        <li><b>A-2 <code>tool.rejected</code></b> — makes the invisible class measurable, exporter-safe.</li>
+        <li><b>A-4a structured <code>self_cap</code> refusal</b> — one-shot compression becomes possible; recovers refused lessons without touching the breaker.</li>
+        <li>Every item carries a fail-without-fix test; battery tiers 0–4 run before publish.</li>
+      </ul>
+    </div>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 940 250" role="img" aria-label="The R2 wiring Aperture needs: POST /v1/tasks returns 202 with an id immediately; the host polls events from cursor zero, which replays run.enqueued and run.started; then it tails the SSE feed live. Opening SSE alone can miss the early events.">
+      <defs>
+        <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <g fill="none" stroke="currentColor" stroke-width="1.3" color="currentColor">
+        <!-- lifelines -->
+        <line x1="150" y1="55" x2="150" y2="230" opacity="0.35"/>
+        <line x1="700" y1="55" x2="700" y2="230" opacity="0.35"/>
+        <!-- messages -->
+        <line x1="150" y1="80" x2="696" y2="80" marker-end="url(#arr2)"/>
+        <line x1="700" y1="105" x2="154" y2="105" marker-end="url(#arr2)"/>
+        <line x1="150" y1="140" x2="696" y2="140" marker-end="url(#arr2)" stroke="var(--host)" stroke-width="1.8"/>
+        <line x1="700" y1="163" x2="154" y2="163" marker-end="url(#arr2)" stroke="var(--host)" stroke-width="1.8"/>
+        <line x1="150" y1="198" x2="696" y2="198" marker-end="url(#arr2)" stroke="var(--host)" stroke-width="1.8"/>
+        <line x1="700" y1="220" x2="154" y2="220" marker-end="url(#arr2)" stroke="var(--host)" stroke-width="1.8" stroke-dasharray="4 4"/>
+      </g>
+      <g font-family="Avenir Next, Avenir, system-ui, sans-serif" font-size="12.5" fill="currentColor">
+        <g text-anchor="middle" font-weight="600" font-size="13.5">
+          <text x="150" y="40">QS host</text>
+          <text x="700" y="40">delta daemon</text>
+        </g>
+        <g text-anchor="middle">
+          <text x="425" y="72" class="mono" font-size="12">POST /v1/tasks</text>
+          <text x="425" y="99" font-size="11.5" opacity="0.75">202 + id — immediately, before any model work</text>
+          <text x="425" y="132" class="mono" font-size="12" fill="var(--host)">GET …/events?since=0 (poll)</text>
+          <text x="425" y="158" font-size="11.5" fill="var(--host)">replays run.enqueued · run.started · turn.start — nothing missed</text>
+          <text x="425" y="190" class="mono" font-size="12" fill="var(--host)">GET …/events?coarse=1 (SSE tail)</text>
+          <text x="425" y="215" font-size="11.5" fill="var(--host)">live: turn.start · tool.call · model.retry · done</text>
+        </g>
+        <text x="150" y="248" font-size="11" opacity="0.6">the order matters: SSE replays nothing — poll first, then tail</text>
+      </g>
+    </svg>
+    <figcaption>The heartbeat Aperture asked for, as it already exists in the engine they run. The one wiring rule Codex surfaced: the SSE feed emits live events only, so the host polls the persisted cursor feed once before tailing — otherwise it can miss the earliest events and see nothing until the 15-second keepalive.</figcaption>
+  </figure>
+</section>
+
+<!-- ============ 0.2.16 ============ -->
+<section>
+  <h2>Riding to 0.2.16 (the OpenAI-native release)</h2>
+  <div class="card" style="font-size:14.5px; color:var(--ink-soft);">
+    The provider-controls batch (CachePlan / ModelControls / ReasoningCarry, M1–M5) now also carries:
+    <b style="color:var(--ink)">A-5</b> cache-diagnosis pass-through (it needs exactly the per-run wire state that batch builds) ·
+    <b style="color:var(--ink)">A-3</b> named-tool auto-activate, designed with the R7 parity question ·
+    <b style="color:var(--ink)">R5</b> sticky provider health, billing-class first ·
+    <b style="color:var(--ink)">R3c</b> distill-on-refuse as a canary on their volunteered lanes ·
+    <b style="color:var(--ink)">R8</b> utility-tier cache marks. R3d (the scoped memory rail — the design all three lanes already built in userspace) is the roadmap item behind the whole R3 family.
+  </div>
+</section>
+
+<!-- ============ ASKS ============ -->
+<section>
+  <h2>The four calls that are yours</h2>
+  <div class="card asks">
+    <div class="ask-item"><span class="q">1</span><span><b>Approve the 12-item cut</b> — nine Delos + A-1 + A-2 + A-4a, with A-3 and A-5 riding to 0.2.16. This is the post-Codex shape; my recommendation is to ship it as-is.</span></div>
+    <div class="ask-item"><span class="q">2</span><span><b>The reply to the Aperture engineer</b> — it should carry the R2 poll-then-tail wiring guide, the <code>readOnlyHint</code> check, the R1 soak instruction, the R3a env-history request, and acceptance of their standing R6 dataset offer. Say the word and I draft it.</span></div>
+    <div class="ask-item"><span class="q">3</span><span><b>Client-material scope</b> — their data package was scrubbed on their side (telemetry only, verified-by-read workspace files). Fine to keep referencing it in specs, but the receipts stay in their repo, not ours. Confirm that boundary matches your read.</span></div>
+    <div class="ask-item"><span class="q">4</span><span><b>Green-light implementation</b> — plan order: D-8 flag verification first, then D-1 → D-9 → A-1 in the compaction slice, D-7 early for its migration hazard, D-3/D-2 → A-2 together, then D-12 and the one-diffs. Battery tiers 0–4, source-deploy test, publish, then the post-release battery against the tarball.</span></div>
+  </div>
+</section>
+
+<p class="footnote">
+  Sources: <code>docs/aperture-asks-0.2.15-triage.md</code> (verdicts + receipts) · <code>docs/harness-0.2.15-plan.md</code> §Addendum (final cut) · Aperture report + raw data in <code>~/ai-recruiter/docs/research/</code> · Codex session <code>01a0196c-2e78-75d0-81e1-45222ca8b61e</code> (full findings preserved in the session; resumable via /codex). Numbers on this page were recomputed from the raw JSONL, not quoted from the report. Repo state: <code>main@71aadb3</code>, pushed.
+</p>
+
+</div>
