@@ -25,15 +25,28 @@ primary_region = "iad"
   # the workspace is the agent's document tree, not a dump for untrusted intermediate state.
   DELTA_SCRATCH_DIR = "/data/scratch"
   CONNECT_DB = "/data/connect.sqlite"
-  # provider: Opus 5 direct on Anthropic (MODEL_API_KEY is a Fly secret), OpenRouter failover
-  MODEL_BASE_URL = "https://api.anthropic.com/v1"
-  MODEL_API = "anthropic"
-  DELTA_MODEL_PRIMARY = "claude-opus-5"
+  # provider: the ferni-codex-sol migration (planned in 0.2.15, unblocked by the D-12 gate,
+  # applied on 0.2.16) — GPT-5.6 Sol via the ChatGPT/Codex SUBSCRIPTION backend, broker-minted
+  # bearer (~$0 marginal; cost_usd meters the API-rate equivalent). NOTE: 0.2.16's new
+  # Responses fields (reasoning carry, phase, breakpoints, verbosity, summaries) are
+  # allowlisted to openai.com and NOT sent to this host until the Delos probe battery passes —
+  # this lane's wire is byte-identical to 0.2.15, including the D-12 max_output_tokens
+  # suppression that keeps delegation alive here. OpenRouter (keyed) stays as the T5 fallback
+  # for broker exhaustion/auth failure.
+  MODEL_BASE_URL = "https://chatgpt.com/backend-api/codex"
+  MODEL_API = "responses"
+  DELTA_MODEL_PRIMARY = "gpt-5.6-sol"
+  DELTA_BROKER_TOKEN_URL = "https://delta-control-plane.fly.dev/api/broker/openai-token"
+  MODEL_HEADERS = '{"originator":"codex_cli_rs"}'
+  # Sol tuning (docs/report-sol-tuning-0.2.16.md): low effort — identical quality to
+  # medium/high on hard tasks, fastest and most decisive. (Verbosity/summary knobs are
+  # deliberately unset: unprobed on this backend, they would only trip the unmapped report.)
+  DELTA_REASONING_EFFORT = "low"
   DELTA_MODEL_PRICES = '{"claude-opus-5":{"in":5,"out":25,"cacheRead":0.5},"claude-opus-4-8":{"in":5,"out":25,"cacheRead":0.5},"claude-haiku-4-5-20251001":{"in":1,"out":5,"cacheRead":0.1}}'
   DELTA_PROVIDERS = '[{"label":"openrouter","baseUrl":"https://openrouter.ai/api/v1","models":["anthropic/claude-opus-5","anthropic/claude-opus-4.8"],"apiKeyEnv":"OPENROUTER_API_KEY"}]'
-  # cheap lane for compaction/reflection so they never burn Opus (served natively by the Anthropic
-  # primary; falls back to the main cascade on any failure).
-  DELTA_UTILITY_MODEL = "claude-haiku-4-5-20251001"
+  # utility on the main cascade: a Claude utility model is skipped on Responses providers, and
+  # on the subscription lane the marginal cost of sol-served utility calls is ~$0 anyway.
+  DELTA_UTILITY_MODEL = ""
   # identity + the safe-learning trio
   DELTA_AGENT_ID = "ferni"
   DELTA_AGENT_NAME = "Ferni"
@@ -52,12 +65,12 @@ primary_region = "iad"
   # not export prompts or tool payloads. The exporter fails open and is never on a turn's path.
   TELEMETRY_URL = "https://delta-control-plane.fly.dev/api/telemetry/ingest"
   DELTA_CAPTURE_PAYLOADS = "1"
-  # Kept from the 2026-08-03 cache investigation, now on a permanent rationale rather than as a
-  # probe: Ferni is human-paced, so consecutive messages are routinely hours apart and the default
-  # 5-minute cache would be cold on nearly every first turn. 1h costs a write premium on turn 1 and
-  # pays it back on every turn after; the within-run case it was originally testing turned out to be
-  # a measurement artefact, not a TTL effect (0.2.13).
-  DELTA_CACHE_TTL = "1h"
+  # DELTA_CACHE_TTL removed with the codex-sol migration: it is an Anthropic-wire knob with no
+  # mapping on the Responses wire (0.2.16 would name it on the boot line + /v1/status as
+  # unmapped). The subscription backend auto-caches; explicit control returns if/when the
+  # Delos probes admit prompt_cache_breakpoint on this host. If this lane ever moves back to
+  # Anthropic, restore DELTA_CACHE_TTL = "1h" (rationale: Ferni is human-paced — messages are
+  # hours apart, and the 5-minute TTL was cold on nearly every first turn; see 0.2.13 notes).
   # DELTA_CAPTURE_CALLS is deliberately OFF. It persisted the full request + response per call into
   # the `calls` table at ~95 KB a call, that table has no retention sweep (only session delete
   # clears it), and it had reached 16.5 MB of a 1 GB volume. 0.2.13's segmented prefix hashes now
