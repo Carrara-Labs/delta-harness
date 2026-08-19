@@ -81,12 +81,10 @@ primary_region = "iad"
   DELTA_MAX_COST_USD = "15"
   DELTA_MAX_TOKENS = "3000000"
   DELTA_STEP_MAX_TOKENS = "16384"
-  # Explicit rather than inherited (0.2.13). Unset sends no effort at all, so the lane silently took
-  # the provider default and every arm in telemetry was unlabelled. `medium` is the fleet standard
-  # set at the 0.2.6 rollout; the effort lab's own recommendation for chat-shaped work is `low`
-  # (-56% p50, half cost, blind quality inside margin), which is the next thing worth testing here
-  # now that gen_ai.request.effort ships on model.call and makes the arm self-labelling.
-  DELTA_REASONING_EFFORT = "medium"
+  # DELTA_REASONING_EFFORT lives in the provider block above (low, with the sol-tuning data) —
+  # the old Opus-era `medium` was set here at the 0.2.6 rollout; the effort lab's chat-shape
+  # recommendation was already `low` (-56% p50, half cost, blind quality inside margin), and
+  # the 0.2.16 sol tuning reconfirmed low on this model family.
   # compact well below where Opus per-step latency + re-billed context get painful. 160k never fired
   # (heavy turns topped ~155k and re-sent it every step); 130k makes compaction actually kick in.
   # NOTE (0.2.13/S5): the retained tail is no longer derived from this number. It used to be
