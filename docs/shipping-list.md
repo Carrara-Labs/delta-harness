@@ -5,10 +5,14 @@
 Two versions, cut by theme, **pipelined because Aperture lab testing is the bottleneck** - batching
 small releases would cost days of test time we do not have:
 
-- **0.2.15 - harness improvements from usage.** Plan: [`harness-0.2.15-plan.md`](./harness-0.2.15-plan.md),
-  five specs (`spec-session-ask-pin` / `spec-exhaustion-handoff` / `spec-tool-usability` /
-  `spec-codex-output-cap` / `spec-scratch-dir`). One input still open: the incoming Aperture request
-  list, which is the last data point before the final cut.
+- **0.2.15 - harness improvements from usage. CUT IS FINAL (2026-08-19).** Plan:
+  [`harness-0.2.15-plan.md`](./harness-0.2.15-plan.md) — nine Delos items + five Aperture items
+  (identifier appendix, `tool.rejected`, named-tool auto-activate, `self_cap` message fixes,
+  cache-diagnosis pass-through). Five specs (`spec-session-ask-pin` / `spec-exhaustion-handoff` /
+  `spec-tool-usability` / `spec-codex-output-cap` / `spec-scratch-dir`) plus the Aperture triage:
+  [`aperture-asks-0.2.15-triage.md`](./aperture-asks-0.2.15-triage.md). Headline from that triage:
+  R1 and R2 (the speed asks) shipped in 0.2.5/0.2.10 already — they are host wiring + a suspend
+  soak, no release needed; R5/R3c/R8 go to 0.2.16.
 - **0.2.16 - the OpenAI native path.** Audit: [`spec-responses-first-class.md`](./spec-responses-first-class.md).
   Design: [`spec-provider-controls.md`](./spec-provider-controls.md) (CachePlan / ModelControls /
   ReasoningCarry, MUST batch M1-M5). Driver: Quick Search demos to an OpenAI co-founder on

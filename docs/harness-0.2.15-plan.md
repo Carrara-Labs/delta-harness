@@ -29,6 +29,25 @@ a run doing the wrong work and a run throwing good work away.
 because it is the smaller diff and its regression test is the fixture item 2 also needs. Item 4
 unblocks `config/ferni-codex-sol`, which is held until it lands.
 
+## Addendum 2026-08-19: five Aperture items close the cut
+
+The Aperture two-week report (`~/ai-recruiter/docs/research/qs-harness-asks-2026-08-19.md`) was the
+last open input. Verified verdicts and receipts: `docs/aperture-asks-0.2.15-triage.md`. Five
+additions, all LOW risk, each ≤ ~30 lines + a fail-without-fix test:
+
+| # | item | from |
+|---|---|---|
+| 10 | A-1 · identifier appendix after the compaction summary retry loop | R4 |
+| 11 | A-2 · `tool.rejected` telemetry on the unknown-tool branch | R9a |
+| 12 | A-3 · auto-activate a named allowed-but-unactivated tool (parent `execCall` + child `research.ts:235`) | R9b / R7 |
+| 13 | A-4 · `self_cap` refusal carries current file + headroom; latch norm names an overflow path (message-only) | R3b |
+| 14 | A-5 · opt-in Anthropic cache-diagnosis pass-through (`DELTA_CACHE_DIAGNOSIS=1`) | R6 |
+
+Deferred to 0.2.16 by that triage: R5 sticky provider health, R3c distill-on-refuse, R8 utility-tier
+cache marks. R1 and R2 need **no engine work** (shipped 0.2.5/0.2.10) — they are host wiring and a
+config soak, in the triage doc's no-release lane. Items 10–14 are independent of items 1–9; the D-1
+→ D-9 ordering above still governs.
+
 ## Explicitly not in this release
 
 - **D-9-full**, the cheap final call for a partial answer from context. The genuine behaviour change;
