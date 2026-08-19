@@ -179,6 +179,27 @@ function scratchDirFor(envVal: string | undefined, workspace: string, dbPath: st
   return scratch;
 }
 
+/** M4 (0.2.16): the configured controls this provider's wire will NOT render — named by their
+ * env knob so the operator can act on the report. Speed renders only on the native Anthropic
+ * wire; cacheTtl on the Anthropic-model paths (native + chat's withPromptCache) but never on
+ * Responses (whose only TTL is the 30m default); verbosity/summary are Responses-only. Used by
+ * the boot line and the /v1/status controls block — same computation, one truth. */
+export function unmappedControls(p: {
+  api?: "openai" | "anthropic" | "responses";
+  speed?: "fast";
+  cacheTtl?: "1h";
+  textVerbosity?: string;
+  reasoningSummary?: string;
+}): string[] {
+  const api = p.api ?? "chat";
+  const out: string[] = [];
+  if (p.speed && api !== "anthropic") out.push("DELTA_SPEED");
+  if (p.cacheTtl && api === "responses") out.push("DELTA_CACHE_TTL");
+  if (p.textVerbosity && api !== "responses") out.push("DELTA_TEXT_VERBOSITY");
+  if (p.reasoningSummary && api !== "responses") out.push("DELTA_REASONING_SUMMARY");
+  return out;
+}
+
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
   const safeMode = env.DELTA_SAFE_MODE === "1";
   warnLegacyBundleEnv(env);
@@ -223,6 +244,22 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const cacheTtl = !safeMode && env.DELTA_CACHE_TTL === "1h" ? ("1h" as const) : undefined; // stable-prefix cache retention
   // Anthropic fast mode opt-in (research preview, 2× pricing — pair with DELTA_MODEL_PRICES).
   // Only "fast" is meaningful; anything else is a visible no-op, mirroring the effort warning.
+  // M4 (0.2.16): the Responses-wire tuning knobs. Unrecognized values are ignored with a
+  // warning (config style) — a typo must degrade to the provider default, never to a 400.
+  const textVerbosity =
+    !safeMode && ["low", "medium", "high"].includes(env.DELTA_TEXT_VERBOSITY ?? "")
+      ? (env.DELTA_TEXT_VERBOSITY as "low" | "medium" | "high")
+      : undefined;
+  if (!safeMode && env.DELTA_TEXT_VERBOSITY && !textVerbosity)
+    console.error(
+      `delta: DELTA_TEXT_VERBOSITY='${env.DELTA_TEXT_VERBOSITY}' is not a level (low, medium, high) — ignoring.`,
+    );
+  const reasoningSummary =
+    !safeMode && env.DELTA_REASONING_SUMMARY === "auto" ? ("auto" as const) : undefined;
+  if (!safeMode && env.DELTA_REASONING_SUMMARY && !reasoningSummary)
+    console.error(
+      `delta: DELTA_REASONING_SUMMARY='${env.DELTA_REASONING_SUMMARY}' is not recognized ("auto" or unset) — ignoring.`,
+    );
   const speed = !safeMode && env.DELTA_SPEED === "fast" ? ("fast" as const) : undefined;
   if (!safeMode && env.DELTA_SPEED && !speed) {
     console.error(
@@ -276,6 +313,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
         ? { promptCacheKey: false }
         : {}),
     ...(speed ? { speed } : {}),
+    ...(textVerbosity ? { textVerbosity } : {}),
+    ...(reasoningSummary ? { reasoningSummary } : {}),
     ...(modelHeaders ? { headers: modelHeaders } : {}),
     // Subscription path: mint the bearer from the control plane's broker endpoint
     // instead of a static key (§C). DELTA_BROKER_MINT_URL points at GET
@@ -291,6 +330,15 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     ...(cacheTtl ? { cacheTtl } : {}),
   };
   // Every provider in the cascade inherits the same wall-clock ceilings.
+  // M4 (0.2.16): a configured control the primary wire cannot render is REPORTED, not silent —
+  // the D-2/D-3 principle. One boot line, evaluated against the PRIMARY lane's wire.
+  {
+    const unmapped = unmappedControls(provider);
+    if (unmapped.length)
+      console.error(
+        `delta: not mapped on the '${provider.api ?? "chat"}' wire: ${unmapped.join(", ")} — set but without effect on the primary lane.`,
+      );
+  }
   const providers = [provider, ...(safeMode ? [] : parseFallbackProviders(env, models))].map(
     (p) => ({
       ...p,
@@ -484,6 +532,16 @@ export function devConfigView(
       provider: providerLabel(cfg.provider),
       provider_chain: cfg.providers.map(providerLabel),
       reasoning_effort: cfg.reasoningEffort ?? "default",
+      // M4 (0.2.16): what the operator dialed vs what this lane's wire renders. `unmapped`
+      // names the knobs that are set but without effect here — same computation as the boot
+      // line, so the two can never disagree.
+      controls: {
+        speed: cfg.provider.speed ?? null,
+        cache_ttl: cfg.provider.cacheTtl ?? null,
+        text_verbosity: cfg.provider.textVerbosity ?? null,
+        reasoning_summary: cfg.provider.reasoningSummary ?? null,
+        unmapped: unmappedControls(cfg.provider),
+      },
     },
     // Presence only — never the value (not even a first4/last4 slice).
     secrets_present: {

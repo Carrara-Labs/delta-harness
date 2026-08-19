@@ -119,6 +119,13 @@ export type ProviderConfig = {
    * hard-gated per model: Opus 4.7 rejects the field outright (no standard fallback), and the
    * utility lane rides this same config. Unset → wire unchanged. Set via DELTA_SPEED=fast. */
   speed?: "fast";
+  /** Responses-wire output-length dial (`text.verbosity`, GPT-5.x). Rendered only where the
+   * backend is proven to accept it; declared unmapped elsewhere. DELTA_TEXT_VERBOSITY. */
+  textVerbosity?: "low" | "medium" | "high";
+  /** Ask the Responses backend for reasoning SUMMARIES (`reasoning.summary:"auto"`) — the SSE
+   * consumer for the deltas has existed since Sprint C and is dead code without this request
+   * field. DELTA_REASONING_SUMMARY=auto. */
+  reasoningSummary?: "auto";
   /** Label recorded on the served turn's event when this provider is used (G1c). */
   label?: string;
   /** Absolute wall-clock cap on a single model call (ms). A generous backstop for a
@@ -794,6 +801,13 @@ export function acceptsMaxOutputTokens(baseUrl: string): boolean {
  * DENIED until Delos probes it — same D-12 rule as the cap above: its parameter surface is
  * undocumented and 400s on fields it does not recognize. */
 export function acceptsReasoningReplay(baseUrl: string): boolean {
+  return !hostMatches(baseUrl, ["chatgpt.com"]);
+}
+
+/** M4 (0.2.16): whether the Responses backend gets the tuning knobs (`text.verbosity`,
+ * `reasoning.summary`). Wire-proven on api.openai.com (2026-08-19, both 200); the subscription
+ * host is denied until probed — the D-12 rule, one more sibling in the predicate family. */
+export function acceptsResponsesTuning(baseUrl: string): boolean {
   return !hostMatches(baseUrl, ["chatgpt.com"]);
 }
 
@@ -1671,7 +1685,15 @@ async function streamResponses(
   // migrate guide would make capture silently backend-dependent.
   if (replay) body.include = ["reasoning.encrypted_content"];
   // The Responses API (ChatGPT/Codex subscription backend) takes reasoning effort natively.
-  if (req.reasoningEffort) body.reasoning = { effort: req.reasoningEffort };
+  // M4: the tuning knobs ride the same object where the backend is proven to accept them.
+  const tuning = acceptsResponsesTuning(cfg.baseUrl);
+  const summary = tuning && cfg.reasoningSummary ? { summary: cfg.reasoningSummary } : {};
+  if (req.reasoningEffort || summary.summary)
+    body.reasoning = {
+      ...(req.reasoningEffort ? { effort: req.reasoningEffort } : {}),
+      ...summary,
+    };
+  if (tuning && cfg.textVerbosity) body.text = { verbosity: cfg.textVerbosity };
   if (req.tools?.length) {
     // Responses tools are flat (no nested `function` wrapper).
     body.tools = req.tools.map((t) => ({

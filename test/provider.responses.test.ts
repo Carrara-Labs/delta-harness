@@ -282,3 +282,51 @@ describe("ReasoningCarry replay (M1)", () => {
     expect(toAnthropic(history)).toEqual(toAnthropic(bare));
   });
 });
+
+describe("Responses tuning knobs (M4, 0.2.16)", () => {
+  // Both wire-proven on api.openai.com 2026-08-19 (probes B and D: 200).
+  const done = [
+    { type: "response.output_text.delta", delta: "ok" },
+    { type: "response.completed", response: { usage: {} } },
+  ];
+  const cfg = (baseUrl: string): ProviderConfig => ({
+    baseUrl,
+    apiKey: "x",
+    models: ["gpt-5.6-sol"],
+    api: "responses",
+    maxRetries: 0,
+    textVerbosity: "low",
+    reasoningSummary: "auto",
+  });
+
+  test("api.openai.com: verbosity + summary render; summary composes with effort", async () => {
+    const cap = mockCapture(done);
+    const r = await chat(cfg("https://api.openai.com/v1"), {
+      messages: [{ role: "user", content: "hi" }],
+      reasoningEffort: "low",
+    });
+    expect(r.ok).toBe(true);
+    expect(cap.body().text).toEqual({ verbosity: "low" });
+    expect(cap.body().reasoning).toEqual({ effort: "low", summary: "auto" });
+  });
+
+  test("summary rides alone when no effort is set", async () => {
+    const cap = mockCapture(done);
+    const r = await chat(cfg("https://api.openai.com/v1"), {
+      messages: [{ role: "user", content: "hi" }],
+    });
+    expect(r.ok).toBe(true);
+    expect(cap.body().reasoning).toEqual({ summary: "auto" });
+  });
+
+  test("chatgpt.com: neither knob is sent (unprobed surface)", async () => {
+    const cap = mockCapture(done);
+    const r = await chat(cfg("https://chatgpt.com/backend-api/codex"), {
+      messages: [{ role: "user", content: "hi" }],
+      reasoningEffort: "low",
+    });
+    expect(r.ok).toBe(true);
+    expect("text" in cap.body()).toBe(false);
+    expect(cap.body().reasoning).toEqual({ effort: "low" });
+  });
+});
