@@ -96,11 +96,43 @@ const kindLabel: Record<Kind, string> = {
 // exactly. Update this alongside the root CHANGELOG.md when a release ships.
 const releases: Release[] = [
   {
+    version: "0.2.16",
+    date: "August 19, 2026",
+    iso: "2026-08-19",
+    tagline: "OpenAI as a first-class citizen.",
+    latest: true,
+    note: "The Responses wire worked, but it was a ported integration: the model's own reasoning was discarded every turn, the phase field that tells GPT-5.5+ an intermediate update apart from a final answer was dropped, none of the harness's cache-placement discipline applied there, and the 5.6 family was mispriced roughly four-fold. Every change is gated per backend and was proven on the live wire before it shipped: api.openai.com gets the full surface — verified across all three GPT-5.6 models (sol, terra, luna) with tool chains, reasoning round-trips, and a consistent ~7.7x cached-turn cost drop — while chatgpt.com and every other Responses-compatible endpoint receive requests byte-identical to 0.2.15 until a wire probe earns each field its place. The Anthropic and Chat wires are pinned unchanged by full-body-equality tests. No schema migration: reversible from 0.2.13 through 0.2.15.",
+    groups: [
+      {
+        kind: "added",
+        items: [
+          "**Reasoning and phase carry on the Responses wire.** GPT-5.6 hands back its reasoning as an encrypted item and marks each message with a phase; both were discarded every turn — the model re-read its own past actions with the thinking that produced them missing, which is exactly OpenAI's documented quality gap for long tool chains, and a dropped phase makes the model treat an intermediate update as the final answer. Captured from the finalized stream event, persisted on the message, replayed verbatim ahead of the turn's calls. Contained everywhere else: the chat wire strips both fields, the Anthropic builder rebuilds, and compaction strips reasoning from retained rows because it reasons about a history the rewrite just replaced.",
+          "**Explicit prompt-cache breakpoints on the Responses wire.** The same placement brain that drives Anthropic caching now renders GPT-5.6's isomorphic breakpoint API: one stable mark that caches instructions, tools, and the first user message, plus two rolling marks — capped at three because implicit mode's own breakpoint spends the fourth write slot. Additive under implicit mode, model-gated to 5.6 and newer.",
+          "**`DELTA_TEXT_VERBOSITY`** and **`DELTA_REASONING_SUMMARY=auto`** — the output-length dial and the reasoning-summary request the SSE consumer has been waiting for since it was built.",
+          "**Unmapped-control reporting.** A configured control the primary lane's wire or host cannot render is named on one boot line and in a controls block on `/v1/status` — same computation, so the two can never disagree. DELTA_SPEED on a Responses lane now says so instead of silently doing nothing.",
+          "**Failed utility and child model calls are visible.** A child's provider error used to become tool-result text nobody greps — one gate run measured three child 400s in tool results, zero in stdout, zero in telemetry, and 24 of 24 child failures once hid that way for two weeks. A failed call now emits the model.call event with the classified error enum plus one stderr line.",
+        ],
+      },
+      {
+        kind: "fixed",
+        items: [
+          "**The GPT-5.6 family is priced correctly.** gpt-5.6-sol was prefix-matching the old gpt-5 entry and under-billing the metered lane about four-fold; sol, terra, luna, and the bare alias get real entries, and cache writes — billed at 1.25x on 5.6 — are read from their nested usage location, so the meter finally charges them.",
+          "**Concurrent self-file appends merge engine-side.** Two runs each appending a learned line to the same DELTA.md base produced 48 fleet collisions, each billing a model turn to concatenate two suffixes. Pure appends of the same base now merge losslessly — crash-replay idempotent, and anything that is not a pure append keeps the conflict contract, because auto-merge never guesses.",
+        ],
+      },
+      {
+        kind: "changed",
+        items: [
+          "**New Responses parameters are allowlisted to openai.com, not sprayed at every endpoint.** An unknown field is a legitimate 400 on a strict endpoint, so an arbitrary Responses-compatible proxy — the ChatGPT subscription backend included — keeps receiving the byte-identical 0.2.15 surface until a two-curl wire probe earns each field its place on that host.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.2.15",
     date: "August 19, 2026",
     iso: "2026-08-19",
     tagline: "Stop losing the task and the output.",
-    latest: true,
     note: "Twelve changes, every one motivated by a number measured on the live fleet. The headline pair: compaction pinned the session's first request as trusted task instructions — measured across three lanes, 42 of 42 exposed compactions on multi-request sessions pinned a different task than the one being served, zero harmless — and now pins the compacting run's own request; and a budget-exhausted run returned one sentence of internal counters while its results sat on disk — eleven runs, 771 tool calls, $140.98 and 158 minutes of paid work returned as 'budget exhausted' — and now returns the plan plus every spill and research artifact the run produced, with the counters kept in runs.error where operators look. Around those two, the visibility and hygiene gaps that let them hide: tool usability on /v1/status in three states, a countable tool.rejected event, memory-save refusals that name the exact overage and hand back a merge base, an identifier appendix that floors what compaction summaries may drop, a relocatable scratch root for engine intermediates, connector-free defaults for the delegated CLI, and a skill index that stays current without restarts. No schema migration: reversible from 0.2.13 or 0.2.14. Three deliberate upgrade-day changes — research artifacts move under .delta/research/, the code CLI default disables account connectors, and a failed run's output_text is a user-facing handoff rather than operator counters.",
     groups: [
       {
