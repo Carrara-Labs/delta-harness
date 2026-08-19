@@ -20,6 +20,7 @@ import { LocalSkillsAdapter } from "./local-skills";
 import { McpRegistry } from "./mcp";
 import { fileRefreshStore, RefreshingMcpCredential } from "./mcp-refresh";
 import { loadPolicy } from "./policy";
+import { getProfile } from "./profiles";
 import { loadPromptContext, renderTemplate, stableVars } from "./promptcontext";
 import { chatVia, markWireSuspect, warmupWire } from "./provider";
 import { Queue } from "./queue";
@@ -38,23 +39,31 @@ function selfCmd(): string[] {
   return process.execPath.endsWith("bun") ? [process.execPath, Bun.main] : [process.execPath];
 }
 
+/** D-3: tools a failed precondition kept out of the registry, with operator-actionable reasons.
+ * Module-level because it is filled by buildDeps and read by the boot sweep + /v1/status below —
+ * this module IS the singleton daemon. */
+const toolsOmitted: Array<{ name: string; reason: string }> = [];
+
 function buildDeps(cfg: Config, dbPath: string): Deps {
   const db = openDb(dbPath);
   // The vault opens on the daemon DB before any tool exists: null when DELTA_VAULT_KEY is
   // unset or in safe mode, and every vault surface then simply isn't there (fail-safe).
   const vault = Vault.open(db, cfg.vaultKey, cfg.safeMode);
-  const tools = builtinTools({
-    workspace: cfg.workspace,
-    vision: cfg.vision,
-    ...(cfg.exaKey ? { exaKey: cfg.exaKey } : {}),
-    fetchAllowPrivate: cfg.fetchAllowPrivate,
-    codeCli: cfg.codeCli,
-    selfCmd: selfCmd(),
-    subagentDepth: cfg.subagentDepth,
-    ...(cfg.controlUrl ? { controlUrl: cfg.controlUrl } : {}),
-    ...(cfg.controlToken ? { controlToken: cfg.controlToken } : {}),
-    vault,
-  });
+  const tools = builtinTools(
+    {
+      workspace: cfg.workspace,
+      vision: cfg.vision,
+      ...(cfg.exaKey ? { exaKey: cfg.exaKey } : {}),
+      fetchAllowPrivate: cfg.fetchAllowPrivate,
+      codeCli: cfg.codeCli,
+      selfCmd: selfCmd(),
+      subagentDepth: cfg.subagentDepth,
+      ...(cfg.controlUrl ? { controlUrl: cfg.controlUrl } : {}),
+      ...(cfg.controlToken ? { controlToken: cfg.controlToken } : {}),
+      vault,
+    },
+    (name, reason) => toolsOmitted.push({ name, reason }),
+  );
   if (process.env.DELTA_TEST_TOOLS) for (const [n, t] of testTools()) tools.set(n, t);
   const chat = (req: Parameters<typeof chatVia>[1]) => chatVia(cfg.providers, req);
   // Utility lane: same providers, cheap model. The Anthropic-native wire wants a bare DASHED id
@@ -352,6 +361,34 @@ if (!cfg.safeMode) {
 
 if (cfg.skills !== "mcp") stripSkillRegistryTools(deps.tools);
 
+// D-3 closing sweep, after every registration source has run (builtins, MCP, skill strip):
+// an allowlisted name that matches NOTHING in the final registry is a config typo the operator
+// can only see here, and the startup line is the daemon's one chance to say so out loud —
+// /v1/status carries the same lists for anything that polls. Depth-expected omissions stay
+// out of the stderr line (every child would cry wolf) but stay in status.
+try {
+  const profileAllowed = getProfile(cfg.profile).allowed;
+  if (profileAllowed !== "*")
+    for (const name of profileAllowed)
+      if (!deps.tools.has(name) && !toolsOmitted.some((o) => o.name === name))
+        toolsOmitted.push({ name, reason: "allowed by profile but matched no registered tool" });
+  const unusableNow = [...deps.tools.values()].flatMap((d) => {
+    try {
+      const u = d.usable?.();
+      return u && !u.ok ? [`${d.name} (${u.reason})`] : [];
+    } catch {
+      return [];
+    }
+  });
+  const loud = toolsOmitted.filter((o) => !o.reason.startsWith("sub-agent depth"));
+  if (loud.length || unusableNow.length)
+    console.error(
+      `delta: ${deps.tools.size} tools registered.${
+        loud.length ? ` Omitted: ${loud.map((o) => `${o.name} (${o.reason})`).join("; ")}.` : ""
+      }${unusableNow.length ? ` Registered but not usable now: ${unusableNow.join("; ")}.` : ""}`,
+    );
+} catch {} // reporting must never block a boot
+
 await loadIdentity(deps, cfg); // DELTA.md self-file + POLICY.md contract
 
 const queue = new Queue(deps, cfg.maxConcurrency);
@@ -378,6 +415,8 @@ try {
     ...(cfg.strictTenant ? { strictTenant: true } : {}),
     ...(cfg.trustReviewMetadata ? { trustReviewMetadata: true } : {}),
     db: deps.db,
+    tools: deps.tools,
+    toolsOmitted,
     // Exact-name allowlist for /v1/dev/files?path=operator/<name> — the bundle's
     // viewable files (the self-file + the fixed operator files).
     operatorFiles: [SELF_FILE, ...FIXED_OPERATOR_FILES],

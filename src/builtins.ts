@@ -276,13 +276,27 @@ function stripHtml(html: string): string {
     .trim();
 }
 
-export function builtinTools(cfg: BuiltinConfig): Tools {
+/** Build the builtin registry. `onOmit` reports every tool a failed precondition kept OUT of the
+ * registry, with a reason the operator can act on — DELTA_ALLOWED_TOOLS is a ceiling, not a
+ * guarantee, and the gates below used to fail silently (D-3: a deployment configured 16 tools,
+ * had 13, and nothing said so). */
+export function builtinTools(
+  cfg: BuiltinConfig,
+  onOmit?: (name: string, reason: string) => void,
+): Tools {
   const tools: Tools = new Map();
   const add = (t: ToolDef) => tools.set(t.name, t);
+  const omit = (name: string, reason: string) => onOmit?.(name, reason);
 
   add({
     name: "web_search",
     readonly: true,
+    // The same expression the tool evaluates at call time, so the status answer and the call
+    // outcome cannot disagree. A report, not a gate — see ToolDef.usable.
+    usable: () =>
+      credentialFor("EXA_API_KEY", cfg.exaKey, cfg.vault)
+        ? { ok: true }
+        : { ok: false, reason: "no EXA_API_KEY in the environment or the vault" },
     description: "Search the web (Exa). Returns titles, URLs, and text snippets.",
     parameters: {
       type: "object",
@@ -766,6 +780,7 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
   // There is deliberately no `get_secret` — a tool that returns a value would make every
   // other tool an exfiltration path, which is exactly the mistake to avoid. The agent asks
   // its human for a credential; the edge runs the secure intake; egress code does the rest.
+  if (!cfg.vault) omit("list_secrets", "no vault (DELTA_VAULT_KEY unset, or safe mode)");
   if (cfg.vault)
     add({
       name: "list_secrets",
@@ -810,10 +825,12 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
   // looked up on PATH, an explicit path is checked on disk. Absent → skip registration + warn loud.
   const codeBin = cfg.codeCli[0];
   const codeAvailable = codeBin ? codeCliResolves(codeBin, cfg.workspace) : false;
-  if (!codeAvailable)
+  if (!codeAvailable) {
     console.error(
       `delta: code CLI '${codeBin ?? "(unset)"}' not found — 'code' tool disabled this run (set DELTA_CODE_CLI or install it).`,
     );
+    omit("code", `CLI '${cfg.codeCli.join(" ")}' not found or not executable on this host`);
+  }
   if (codeAvailable)
     add({
       name: "code",
@@ -1021,6 +1038,11 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
         return `[eval_n: ${valid.length}/${n} variants, winner #${winnerIdx}]\n${winner}`;
       },
     });
+  } else {
+    // Expected suppression, not a config error — reported in the child's status, and index.ts
+    // keeps it OUT of the startup warning so every child process doesn't cry wolf on stderr.
+    for (const name of ["research", "spawn_subagent", "eval_n"])
+      omit(name, "sub-agent depth ≥ 1 — delegation tools are parent-only");
   }
 
   // ── Self-scheduling (Sprint 4) ────────────────────────────────────────────────
@@ -1028,6 +1050,9 @@ export function builtinTools(cfg: BuiltinConfig): Tools {
   // suspend. These tools register a durable schedule at the CP (authed by this VM's own
   // gateway token, hash-matched server-side); a 60s CP ticker fires due schedules as wake
   // turns. Only registered when CP-wired: a bare dev binary boots without them.
+  if (!cfg.controlUrl || !cfg.controlToken)
+    for (const name of ["schedule_self", "list_schedules", "cancel_schedule"])
+      omit(name, "no controlUrl/controlToken — not control-plane-wired; fix config and restart");
   if (cfg.controlUrl && cfg.controlToken) {
     // `owner` asserts WHICH user this schedule call is for (x-delta-user), so the gateway binds the
     // schedule to the right conversation even when several users' turns run concurrently — the async

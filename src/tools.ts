@@ -127,6 +127,13 @@ export type ToolDef = {
    * new tool without this flag is safe by construction — it simply won't reach children. */
   readonly?: boolean;
   execute: (args: Record<string, unknown>, ctx: ToolCtx) => Promise<string>;
+  /** Live precondition check for a tool that is registered but may not be callable RIGHT NOW —
+   * a missing credential today, a provider incompatibility tomorrow (the reason is free text; it
+   * is NOT credential-specific). Must be pure and local: no network, no probe request. Absent →
+   * assumed usable. Reported by /v1/status; NEVER a call gate — the tool still runs and returns
+   * its own error, so a credential handed to the agent mid-session keeps working the moment it
+   * lands (the 0.2.10 vault contract). */
+  usable?: () => { ok: true } | { ok: false; reason: string };
   /** Per-tool wall-clock ceiling (ms). Overrides the run default. Set `0` for tools that
    * legitimately run long (the `code`/`codex` CLI, sub-agents) so they're never guillotined
    * — declarative, unlike a model-slug allowlist. Unset → the run's `toolTimeoutMs`. */
