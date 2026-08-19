@@ -291,3 +291,38 @@ describe("buildSpine — the You + Policy layers", () => {
     expect(a).toBe(b);
   });
 });
+
+describe("append-append collision auto-merge (C2, 0.2.16)", () => {
+  test("two runs both appending to the same base merge losslessly, engine-side", () => {
+    // The measured fleet shape (48 collisions): concurrent runs each append a learned line.
+    // Both edits are pure appends of the SAME base → the merge is mechanical; billing a model
+    // turn to concatenate two suffixes was pure waste.
+    const dir = ws({ "DELTA.md": "base\n" });
+    const db = openDb(":memory:");
+    expect(writeSelf(db, dir, "base\n- lesson A\n", 10_000, "base\n").ok).toBe(true);
+    // Run B still holds the old base and appends its own line.
+    const r = writeSelf(db, dir, "base\n- lesson B\n", 10_000, "base\n");
+    expect(r.ok).toBe(true);
+    expect(r.conflict).toBeUndefined();
+    expect(currentSelf(dir)).toBe("base\n- lesson A\n- lesson B\n"); // BOTH lessons, no turn spent
+    db.close();
+  });
+  test("a rewrite (non-append) still conflicts — auto-merge never guesses", () => {
+    const dir = ws({ "DELTA.md": "base\n" });
+    const db = openDb(":memory:");
+    expect(writeSelf(db, dir, "rewritten entirely\n", 10_000, "base\n").ok).toBe(true);
+    const r = writeSelf(db, dir, "base\n- lesson B\n", 10_000, "base\n");
+    expect(r.ok).toBe(false);
+    expect(r.conflict).toBe(true);
+    db.close();
+  });
+  test("a merge that would blow the cap falls back to the conflict contract", () => {
+    const dir = ws({ "DELTA.md": "base\n" });
+    const db = openDb(":memory:");
+    expect(writeSelf(db, dir, `base\n${"A".repeat(60)}\n`, 100, "base\n").ok).toBe(true);
+    const r = writeSelf(db, dir, `base\n${"B".repeat(60)}\n`, 100, "base\n");
+    expect(r.ok).toBe(false);
+    expect(r.conflict).toBe(true); // the model must shrink-and-merge; silently dropping either side would be worse
+    db.close();
+  });
+});

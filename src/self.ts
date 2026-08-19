@@ -130,7 +130,19 @@ export function writeSelf(
   // tool) is a no-op — no rewrite, no duplicate revision.
   if (before === content) return { ok: true, bytes };
   // Lost-update guard: the file moved on under us since the caller read `base`.
-  if (base !== undefined && before !== base)
+  if (base !== undefined && before !== base) {
+    // C2 (0.2.16): the measured collision shape (48 on the fleet) is two runs both APPENDING
+    // to the same base — learned lines. When BOTH edits are pure appends the merge is
+    // mechanical and lossless (disk's suffix, then ours); billing a model turn to concatenate
+    // two suffixes was pure waste. Anything else — either side rewrote — keeps the conflict
+    // contract: auto-merge never guesses. The recursive call re-runs the cap check on the
+    // merged size and re-reads disk; writeSelf is synchronous, so the fresh base cannot move
+    // again mid-call and the recursion terminates at depth one.
+    if (base && content.startsWith(base) && before.startsWith(base)) {
+      const merged = before + content.slice(base.length);
+      if (Buffer.byteLength(merged, "utf8") <= maxBytes)
+        return writeSelf(db, workspace, merged, maxBytes, before);
+    }
     return {
       ok: false,
       conflict: true,
@@ -139,6 +151,7 @@ export function writeSelf(
         "DELTA.md was updated by another run since you read it — your change was NOT saved to avoid overwriting theirs. Re-apply your change on top of the CURRENT version below, then call remember again:\n\n" +
         before,
     };
+  }
   // Collision-resistant temp (codex #4): Date.now() alone collides under a same-ms double
   // write; add randomness and create it EXCLUSIVELY so two writers can't share a temp.
   const tmp = `${abs}.${Date.now()}.${Math.floor(Math.random() * 1e9)}.tmp`;
