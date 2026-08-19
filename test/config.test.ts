@@ -76,3 +76,21 @@ describe("DELTA_MAX_CONCURRENCY", () => {
     expect(loadConfig({ DELTA_MAX_CONCURRENCY: "nope" }).maxConcurrency).toBe(8); // garbage → default
   });
 });
+
+describe("code CLI default (D-8)", () => {
+  test("connectors are disabled by default — the delegated CLI must not inherit account plugins", () => {
+    // A codex session proved its "inert" Gmail skill by listing the operator's real inbox:
+    // 6,913 messages, write scope, granted by NOTHING on the host — the connection lives
+    // server-side on the CLI's own auth token. Verified against pinned codex-cli 0.146.0:
+    // both flags are stable feature names, unknown names error loudly.
+    const cli = loadConfig({}).codeCli;
+    expect(cli).toContain("--disable");
+    expect(cli).toContain("apps");
+    expect(cli).toContain("plugins");
+  });
+
+  test("an operator-set DELTA_CODE_CLI is used verbatim — no flag injection", () => {
+    const cli = loadConfig({ DELTA_CODE_CLI: "codex exec --sandbox workspace-write" }).codeCli;
+    expect(cli).not.toContain("--disable");
+  });
+});

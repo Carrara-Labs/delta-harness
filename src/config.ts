@@ -307,8 +307,16 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     scratchDir: env.DELTA_SCRATCH_DIR ? resolve(env.DELTA_SCRATCH_DIR) : workspaceDir,
     ...(env.EXA_API_KEY ? { exaKey: env.EXA_API_KEY } : {}),
     fetchAllowPrivate: env.DELTA_FETCH_ALLOW_PRIVATE === "1",
+    // `--disable apps --disable plugins` (D-8): the delegated CLI signs in with its OWN account,
+    // and account connectors live server-side on that auth token — a codex session with no
+    // send-capable tool listed the operator's real inbox (6,913 messages, write scope) through a
+    // Gmail plugin nothing on the host granted. Anyone who deliberately relies on a connector
+    // through `code` sets DELTA_CODE_CLI explicitly (used verbatim — no flag injection).
+    // Requires codex-cli >= 0.146.0 (verified: both are stable feature flags; a bad flag would
+    // make codeCliResolves fail per-call, not at boot — the brief names the minimum version).
     codeCli: (
-      env.DELTA_CODE_CLI ?? "codex exec --sandbox workspace-write --skip-git-repo-check"
+      env.DELTA_CODE_CLI ??
+      "codex exec --sandbox workspace-write --skip-git-repo-check --disable apps --disable plugins"
     ).split(" "),
     subagentDepth: Number(env.DELTA_SUBAGENT_DEPTH ?? 0),
     profile: safeMode ? "safe" : (env.DELTA_PROFILE ?? "trusted"),

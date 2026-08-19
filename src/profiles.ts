@@ -124,6 +124,7 @@ export function getProfile(requested: unknown, ceiling = "trusted"): Profile {
     const c = pinned.length ? clampTools(pinned, finalAllowed) : [];
     return c.length ? c : SAFE_FLOOR.pinned;
   })();
+  const envSteps = Number(process.env.DELTA_MAX_STEPS);
   const envTokens = Number(process.env.DELTA_MAX_TOKENS);
   const envCost = Number(process.env.DELTA_MAX_COST_USD);
   return {
@@ -132,6 +133,10 @@ export function getProfile(requested: unknown, ceiling = "trusted"): Profile {
     pinned: finalPinned,
     budget: {
       ...selected.budget,
+      // ≥ 1, DELIBERATELY unlike the other two axes: a zero token or cost budget is a coherent
+      // "refuse all work" setting, but maxSteps 0 fires the guard before step 1 and every run
+      // fails with a budget error the operator cannot diagnose (D-11).
+      ...(Number.isFinite(envSteps) && envSteps >= 1 ? { maxSteps: Math.floor(envSteps) } : {}),
       ...(Number.isFinite(envTokens) && envTokens >= 0 ? { maxTokens: envTokens } : {}),
       ...(Number.isFinite(envCost) && envCost >= 0 ? { maxCostUsd: envCost } : {}),
     },

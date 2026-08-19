@@ -199,3 +199,85 @@ describe("skills selector wiring", () => {
     expect("propose" in local).toBe(false);
   });
 });
+
+describe("YAML block-scalar descriptions (D-4)", () => {
+  test("a folded-scalar description registers AND is retrievable by search", async () => {
+    const ws = workspace();
+    mkdirSync(join(ws, "skills", "folded"));
+    writeFileSync(
+      join(ws, "skills", "folded", "SKILL.md"),
+      "---\nname: folded\ndescription: >\n  Renders quarterly zorbfin reports\n  from the ledger exports.\n---\nbody",
+    );
+    mkdirSync(join(ws, "skills", "literal"));
+    writeFileSync(
+      join(ws, "skills", "literal", "SKILL.md"),
+      "---\nname: literal\ndescription: |-\n  Files flumtrak claims upstream.\n---\nbody",
+    );
+    const a = new LocalSkillsAdapter(ws);
+    // Claude Code parses real YAML, so the identical file works on a laptop; the regex parser
+    // captured the '>' indicator, the skill registered, and search() could never surface it —
+    // two skills were unreachable for months. Score against the CONTINUATION text.
+    const hits = await a.search("zorbfin reports", ctx);
+    expect(hits[0]?.name).toBe("folded");
+    expect(hits[0]?.description).toContain("zorbfin");
+    const hits2 = await a.search("flumtrak", ctx);
+    expect(hits2[0]?.name).toBe("literal");
+  });
+
+  test("a too-short description warns on stderr — this defect class is defined by silence", () => {
+    const ws = workspace();
+    writeSkill(ws, "terse", "meh", "body");
+    const errs: string[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => errs.push(a.join(" "));
+    try {
+      new LocalSkillsAdapter(ws);
+    } finally {
+      console.error = orig;
+    }
+    expect(errs.join("\n")).toContain("terse");
+    expect(errs.join("\n")).toContain("retriev");
+  });
+});
+
+describe("skill index re-scan (D-5)", () => {
+  test("a skill added AFTER construction is found by search() without a restart", async () => {
+    const ws = workspace();
+    writeSkill(ws, "first", "does the first thing", "body");
+    const a = new LocalSkillsAdapter(ws);
+    expect((await a.search("first thing", ctx))[0]?.name).toBe("first");
+    // Delos's workaround was a 2-minute external timer that fingerprinted the skill set and
+    // RESTARTED the daemon. This is the line that deletes it.
+    writeSkill(ws, "second", "handles grobnitz escalations", "body");
+    const hits = await a.search("grobnitz", ctx);
+    expect(hits[0]?.name).toBe("second");
+  });
+
+  test("a RE-DESCRIBED skill is re-indexed (stat is per SKILL.md file, not the parent dir)", async () => {
+    const ws = workspace();
+    writeSkill(ws, "mutating", "old wording here", "body");
+    const a = new LocalSkillsAdapter(ws);
+    expect((await a.search("old wording", ctx))[0]?.description).toContain("old wording");
+    // Rewrite in place with a bumped mtime — a dir-mtime gate documented a miss on exactly this.
+    writeFileSync(
+      join(ws, "skills", "mutating", "SKILL.md"),
+      "---\nname: mutating\ndescription: brand new phrasing entirely\n---\nbody",
+    );
+    const { utimesSync } = await import("node:fs");
+    const future = new Date(Date.now() + 5_000);
+    utimesSync(join(ws, "skills", "mutating", "SKILL.md"), future, future);
+    const hits = await a.search("brand new phrasing", ctx);
+    expect(hits[0]?.description).toContain("brand new phrasing");
+  });
+
+  test("a removed skill drops out of search()", async () => {
+    const ws = workspace();
+    writeSkill(ws, "doomed", "soon to vanish", "body");
+    writeSkill(ws, "stays", "sticks around", "body");
+    const a = new LocalSkillsAdapter(ws);
+    expect((await a.search("vanish", ctx))[0]?.name).toBe("doomed");
+    rmSync(join(ws, "skills", "doomed"), { recursive: true });
+    const hits = await a.search("vanish", ctx);
+    expect(hits.find((h) => h.name === "doomed")).toBeUndefined();
+  });
+});

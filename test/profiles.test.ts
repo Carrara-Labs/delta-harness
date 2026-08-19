@@ -78,3 +78,33 @@ describe("profiles: tiers, aliases, envelope knob (0.2.7)", () => {
     expect(getProfile(undefined, "trusted").allowed).toBe("*");
   });
 });
+
+describe("DELTA_MAX_STEPS (D-11)", () => {
+  const restore = { ...process.env };
+  afterEach(() => {
+    process.env.DELTA_MAX_STEPS = restore.DELTA_MAX_STEPS; // undefined deletes on assignment? no —
+    if (restore.DELTA_MAX_STEPS === undefined) delete process.env.DELTA_MAX_STEPS;
+  });
+
+  test("raises and lowers maxSteps in either direction, like the other two axes", () => {
+    process.env.DELTA_MAX_STEPS = "7";
+    expect(getProfile("safe").budget.maxSteps).toBe(7);
+    process.env.DELTA_MAX_STEPS = "500";
+    expect(getProfile("safe").budget.maxSteps).toBe(500);
+  });
+
+  test("0 is refused — a zero-step budget fails every run before step 1, undiagnosable", () => {
+    const base = getProfile("safe").budget.maxSteps;
+    process.env.DELTA_MAX_STEPS = "0";
+    expect(getProfile("safe").budget.maxSteps).toBe(base);
+    process.env.DELTA_MAX_STEPS = "-3";
+    expect(getProfile("safe").budget.maxSteps).toBe(base);
+    process.env.DELTA_MAX_STEPS = "not-a-number";
+    expect(getProfile("safe").budget.maxSteps).toBe(base);
+  });
+
+  test("fractions floor", () => {
+    process.env.DELTA_MAX_STEPS = "7.9";
+    expect(getProfile("safe").budget.maxSteps).toBe(7);
+  });
+});
