@@ -1,6 +1,17 @@
 # Harness 0.2.15 — "stop losing the task and the output"
 
-Status: **plan v1, pre-implementation.** Written 2026-08-17 from `docs/backlog-delos-field-report.md`
+Status: **IMPLEMENTED 2026-08-19** on `feat/0.2.15-stop-losing-the-task` — all 12 items, test-first
+(978 tests green), plus nine post-implementation Codex review fixes (P1: relocated-scratch images
+now actually attach; P2: second-root list/move/delete/research seams, dual-root handoff, live-registry
+status filter, argv-free omission reasons, scratch-root overlap guard; P3: block-scalar scoping,
+size-aware skill fingerprint). Live-verified: local smoke + D-3/D-7/D-9 exercised against a running
+from-source daemon, and `deploy.sh --from-source` to Ferni — boot shows the scratch WARN, the
+legacy-research probe (it found real pre-0.2.15 artifacts), and the D-3 line surfacing a REAL
+pre-existing omission (`codex` was never installed in the Ferni image). Remaining before publish:
+the human-in-the-loop Telegram test, Delos's D-12 3/3-children confirmation, the version bump, and
+`npm publish` — the operator's call. Original plan below.
+
+Formerly: plan v1, pre-implementation. Written 2026-08-17 from `docs/backlog-delos-field-report.md`
 (639d053), re-ranked against twelve Aperture lane databases and Ferni's live DB. Reply to the reporter
 is `docs/reply-delos-field-report.md`; the reviewable summary is `docs/harness-0.2.15-triage.html`.
 
