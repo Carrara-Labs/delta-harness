@@ -97,6 +97,10 @@ export type WriteSelfResult = {
    * builds an actionable model-facing message from these; the Cockpit keeps the short `error`.
    * Precedent: `self_conflict` above already hands back the current file. */
   overCap?: { attempted: number; cap: number; overBy: number; current: string };
+  /** On success, the content actually ON DISK — differs from the caller's `content` after an
+   * append-append auto-merge (C2). Callers tracking a merge base must advance to THIS, not to
+   * what they sent, or the run's next remember conflicts with its own successful write. */
+  landed?: string;
 };
 
 /** Atomically replace DELTA.md with `content`, after snapshotting the current version.
@@ -128,7 +132,7 @@ export function writeSelf(
     };
   // Idempotent (codex #2): a same-content re-fire (e.g. crash-resume of the `remember`
   // tool) is a no-op — no rewrite, no duplicate revision.
-  if (before === content) return { ok: true, bytes };
+  if (before === content) return { ok: true, bytes, landed: before };
   // Lost-update guard: the file moved on under us since the caller read `base`.
   if (base !== undefined && before !== base) {
     // C2 (0.2.16): the measured collision shape (48 on the fleet) is two runs both APPENDING
@@ -139,7 +143,15 @@ export function writeSelf(
     // merged size and re-reads disk; writeSelf is synchronous, so the fresh base cannot move
     // again mid-call and the recursion terminates at depth one.
     if (base && content.startsWith(base) && before.startsWith(base)) {
-      const merged = before + content.slice(base.length);
+      const suffix = content.slice(base.length);
+      // Crash-replay idempotency (codex 0.2.16 BLOCKER): `remember` is idempotent:true, so the
+      // journal may re-fire this exact call after a crash that landed the filesystem write but
+      // not the journal row. If OUR suffix is already the tail of the file, the append has
+      // landed — acknowledge it, never apply it twice. (Also correctly no-ops a concurrent run
+      // that appended the identical lesson.)
+      if (before.endsWith(suffix))
+        return { ok: true, bytes: Buffer.byteLength(before, "utf8"), landed: before };
+      const merged = before + suffix;
       if (Buffer.byteLength(merged, "utf8") <= maxBytes)
         return writeSelf(db, workspace, merged, maxBytes, before);
     }
@@ -167,7 +179,7 @@ export function writeSelf(
   // Snapshot the prior version only AFTER a successful rename (codex #3): a failed write
   // must not evict a good old revision via retention pruning.
   if (before) snapshot(db, before);
-  return { ok: true, bytes };
+  return { ok: true, bytes, landed: content };
 }
 
 export type Revision = { id: number; ts: number; content: string };

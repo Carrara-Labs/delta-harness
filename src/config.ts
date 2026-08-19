@@ -10,6 +10,7 @@ import type { McpServerConfig } from "./mcp";
 import { deriveContextCeiling, maxSafeCeiling, parsePrices } from "./pricing";
 import { getProfile } from "./profiles";
 import {
+  acceptsResponsesTuning,
   KNOWN_EFFORTS,
   normalizeEffort,
   type ProviderConfig,
@@ -186,6 +187,7 @@ function scratchDirFor(envVal: string | undefined, workspace: string, dbPath: st
  * the boot line and the /v1/status controls block — same computation, one truth. */
 export function unmappedControls(p: {
   api?: "openai" | "anthropic" | "responses";
+  baseUrl: string;
   speed?: "fast";
   cacheTtl?: "1h";
   textVerbosity?: string;
@@ -195,8 +197,12 @@ export function unmappedControls(p: {
   const out: string[] = [];
   if (p.speed && api !== "anthropic") out.push("DELTA_SPEED");
   if (p.cacheTtl && api === "responses") out.push("DELTA_CACHE_TTL");
-  if (p.textVerbosity && api !== "responses") out.push("DELTA_TEXT_VERBOSITY");
-  if (p.reasoningSummary && api !== "responses") out.push("DELTA_REASONING_SUMMARY");
+  // Wire AND host: a Responses knob suppressed by the backend predicate (chatgpt.com, an
+  // unproven proxy) is just as unmapped as one on the wrong wire — reporting it as live
+  // would make this surface untrustworthy for exactly the lanes that need it (codex #6).
+  const tuning = api === "responses" && acceptsResponsesTuning(p.baseUrl);
+  if (p.textVerbosity && !tuning) out.push("DELTA_TEXT_VERBOSITY");
+  if (p.reasoningSummary && !tuning) out.push("DELTA_REASONING_SUMMARY");
   return out;
 }
 

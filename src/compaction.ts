@@ -387,9 +387,16 @@ export async function maybeCompact(
     anchorRunId: string;
   },
 ): Promise<CompactResult | null> {
-  const rows = db
+  const rowsRaw = db
     .query("SELECT id, run_id, msg FROM messages WHERE session_id = ? AND active = 1 ORDER BY id")
     .all(sessionId) as Row[];
+  // M1 (codex #3): ALL selection and retention accounting happens on the STRIPPED view.
+  // Retained rows are stripped at commit anyway, so an opaque encrypted reasoning payload must
+  // not consume retained-tail budget and evict visible history the model could actually use —
+  // and a blob can't feed the identifier harvest or fake a spill path in the artifact scan.
+  // Only the shrink BASELINES (activeBytes/oldBytes below) count the raw bytes: the blobs are
+  // real prompt weight on the wire, and a commit genuinely sheds them.
+  const rows = rowsRaw.map((r) => ({ ...r, msg: stripReasoningItems(r.msg) }));
   // Group rows into PROTOCOL UNITS: an assistant with tool_calls plus the tool results answering
   // it are one atomic wire group. Selecting whole units replaces BOTH the old MIN_TAIL row floor
   // and the unbounded orphan-snap that repaired it — a group can never be split, so there is
@@ -446,9 +453,8 @@ export async function maybeCompact(
 
   // Demote oldest-first until the retained tail fits its budget. Oldest-first keeps the freshest
   // results verbatim when there is room, while still letting the budget win when there is not.
-  // M1: every retained row is a COPY about to be re-inserted (both commit paths below), so the
-  // reasoning strip lands here once and covers demotion-only and summarize alike.
-  const kept = tail.map((r) => ({ ...r, msg: stripReasoningItems(r.msg) }));
+  const kept = tail.map((r) => ({ ...r })); // already stripped at load; copies for demotion
+
   let tailTokens = kept.reduce((n, r) => n + tokEst(r.msg), 0);
   let demotedAny = false;
   for (const r of kept) {
@@ -470,7 +476,7 @@ export async function maybeCompact(
   // to summarize a turn or two it did not need to lose — observed in the lab as a compaction that
   // summarized a SINGLE turn purely to reach the demotion. The prefix stays ACTIVE here: nothing
   // is summarized, so nothing may be dropped; only the tail rows are replaced by bounded copies.
-  const activeBytes = rows.reduce((n, r) => n + bytes(r.msg), 0);
+  const activeBytes = rowsRaw.reduce((n, r) => n + bytes(r.msg), 0);
   const demotedBytes =
     prefix.reduce((n, r) => n + bytes(r.msg), 0) + kept.reduce((n, r) => n + bytes(r.msg), 0);
   // force (overflow recovery) accepts ANY reduction here too: the provider has already refused the
@@ -527,12 +533,10 @@ export async function maybeCompact(
   // Load-bearing tokens the summary MUST keep — from the recent slice (new findings) and the prior
   // summary (carried-forward facts, harvested first so recent numbers can't crowd them out).
   const ids = extractIdentifiers(
+    // Rows are stripped at load (M1) — no opaque base64 digit-runs can reach the harvest.
     prefix
       .slice(-14)
-      // M1: raw rows can carry opaque reasoning payloads whose base64 is dense with
-      // digit runs — harvested "identifiers" from those would crowd real ones out of
-      // the bounded appendix with noise no reader can use.
-      .map((r) => stripReasoningItems(r.msg))
+      .map((r) => r.msg)
       .join("\n"),
     priorSummaries.map((r) => r.msg).join("\n"),
   );
@@ -659,7 +663,7 @@ export async function maybeCompact(
   // comparing the two made compaction report a win while the active set GREW (codex reproduced
   // 5,091 → 8,406). Build the row once here and reuse the identical object at commit.
   const summaryRow = JSON.stringify({ role: "user", content: summaryContent } satisfies ChatMsg);
-  const oldBytes = rows.reduce((n, r) => n + bytes(r.msg), 0);
+  const oldBytes = rowsRaw.reduce((n, r) => n + bytes(r.msg), 0);
   const newBytes = bytes(summaryRow) + kept.reduce((n, r) => n + bytes(r.msg), 0);
   // `force` is the overflow-recovery path: the provider has ALREADY refused the prompt, so ANY
   // reduction beats failing the turn. The material floor exists to stop the PROACTIVE loop

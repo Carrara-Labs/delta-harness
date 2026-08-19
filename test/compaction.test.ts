@@ -961,3 +961,31 @@ describe("reasoning carry across compaction (M1, 0.2.16)", () => {
     expect((summaryRow as { content: string }).content).not.toContain(blobId);
   });
 });
+
+describe("opaque carry cannot distort retention (codex #3, 0.2.16)", () => {
+  test("a session with huge reasoning blobs keeps the same visible tail as one without", async () => {
+    // Retained rows are stripped at commit, so blob bytes must not consume retained-tail
+    // budget and evict visible turns the model could actually use.
+    async function tailLen(blob: boolean): Promise<number> {
+      const db = openDb(":memory:");
+      const events = new Events(db);
+      const msgs: ChatMsg[] = [];
+      for (let i = 0; i < 12; i++) {
+        msgs.push({ role: "user", content: `question ${i} ${"q".repeat(300)}` });
+        msgs.push({
+          role: "assistant",
+          content: `answer ${i} ${"a".repeat(300)}`,
+          ...(blob
+            ? { reasoningItems: [{ type: "reasoning", id: `rs_${i}`, encrypted_content: "Z".repeat(8_000) }] }
+            : {}),
+        });
+      }
+      seedSession(db, msgs);
+      await maybeCompact(db, events, okSummary, "s", { sessionId: "s" }, { recentBudgetTokens: 400, anchorRunId: "r" });
+      const n = active(db).length;
+      db.close();
+      return n;
+    }
+    expect(await tailLen(true)).toBe(await tailLen(false));
+  });
+});

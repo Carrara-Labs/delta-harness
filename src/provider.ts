@@ -796,28 +796,31 @@ export function acceptsMaxOutputTokens(baseUrl: string): boolean {
 }
 
 /** M1 (0.2.16): whether the Responses backend gets `include:["reasoning.encrypted_content"]`
- * on requests and reasoning items + `phase` replayed on input. Wire-proven on api.openai.com
- * (2026-08-19: capture, verbatim replay, and phase replay all 200). The subscription host is
- * DENIED until Delos probes it — same D-12 rule as the cap above: its parameter surface is
- * undocumented and 400s on fields it does not recognize. */
+ * on requests and reasoning items + `phase` replayed on input. ALLOWLIST, not denylist — the
+ * acceptsPromptCacheKey precedent: these are NEW fields, an unknown top-level field is a
+ * legitimate 400 on a strict endpoint, and a plain 4xx is not failover-worthy, so an arbitrary
+ * Responses-compatible proxy that worked on 0.2.15 must keep receiving the 0.2.15 surface.
+ * openai.com is wire-proven (2026-08-19: capture, verbatim replay, and phase replay all 200);
+ * chatgpt.com joins when the Delos probe battery passes (docs/probe-request-delos-0.2.16.md).
+ * Note the direction difference vs acceptsMaxOutputTokens above: DROPPING the cap costs
+ * nothing, so deny-one-host is safe there; SENDING a new field can break, so prove-per-host. */
 export function acceptsReasoningReplay(baseUrl: string): boolean {
-  return !hostMatches(baseUrl, ["chatgpt.com"]);
+  return hostMatches(baseUrl, ["openai.com"]);
 }
 
 /** M4 (0.2.16): whether the Responses backend gets the tuning knobs (`text.verbosity`,
- * `reasoning.summary`). Wire-proven on api.openai.com (2026-08-19, both 200); the subscription
- * host is denied until probed — the D-12 rule, one more sibling in the predicate family. */
+ * `reasoning.summary`). Same allowlist rationale as acceptsReasoningReplay; wire-proven on
+ * api.openai.com (2026-08-19, both 200). */
 export function acceptsResponsesTuning(baseUrl: string): boolean {
-  return !hostMatches(baseUrl, ["chatgpt.com"]);
+  return hostMatches(baseUrl, ["openai.com"]);
 }
 
 /** M2 (0.2.16): whether the Responses backend gets explicit `prompt_cache_breakpoint` marks.
- * Wire-proven on api.openai.com (2026-08-19, 200 with store:false + prompt_cache_key); the
- * subscription host auto-caches and is denied until probed — this is exactly a D-12-shaped
- * parameter. Kept separate from the tuning/replay predicates so a probe can flip each family
- * independently. */
+ * Same allowlist rationale; wire-proven on api.openai.com (2026-08-19, 200 with store:false +
+ * prompt_cache_key). Kept separate from the tuning/replay predicates so a probe can flip each
+ * family independently. */
 export function acceptsCacheBreakpoints(baseUrl: string): boolean {
-  return !hostMatches(baseUrl, ["chatgpt.com"]);
+  return hostMatches(baseUrl, ["openai.com"]);
 }
 
 /** Explicit breakpoints exist from GPT-5.6 up; older models 400 on the field (prompt-caching
@@ -1630,17 +1633,25 @@ export function markResponsesCache(input: ResponsesInputItem[], ephemeralCount: 
   const eligible = (i: number): boolean => {
     const it = input[i];
     if (!it || !("role" in it) || it.role !== "user") return false;
+    // Array.isArray, not trust: replayed carry items land in `input` verbatim before marking
+    // runs, and corrupted persisted data claiming role:"user" without a content array must be
+    // a skipped candidate, never a synchronous throw past the error-as-value seam.
+    if (!Array.isArray(it.content)) return false;
     if (it.content.some((b) => b.type === "input_image")) return false;
     return it.content[it.content.length - 1]?.type === "input_text";
   };
+  // BOTH scans respect the ephemeral boundary. The rolling scan always did; an unbounded
+  // stable scan could walk into the trailing derived block when every persisted user message
+  // is ineligible (image-bearing), marking content that is rebuilt every turn.
+  const limit = rollingScanFrom(input.length, ephemeralCount);
   const marks = new Set<number>();
-  for (let i = 0; i < input.length; i++)
+  for (let i = 0; i <= limit; i++)
     if (eligible(i)) {
       marks.add(i); // the stable mark
       break;
     }
   for (const i of rollingMarks(
-    rollingScanFrom(input.length, ephemeralCount),
+    limit,
     eligible,
     () => 1, // rendered items are the unit here; OpenAI reads back 50 breakpoints, no block window
   ).slice(0, 2))

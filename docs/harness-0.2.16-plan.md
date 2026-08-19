@@ -113,3 +113,18 @@ measurement pass).
 
 M5's probe request goes to Delos early (it runs in parallel and blocks only the codex-lane
 upgrade, not the demo lane).
+
+## Post-implementation Codex diff review (same day) — the fix round
+
+1 BLOCKER + 7 SHOULD-FIX, all verified against source before acting; all fixed except two
+recorded here: (NIT) an append-append merge whose result exceeds the cap falls back to the
+conflict contract rather than the over-cap message — costs one model turn in a rare corner;
+(INFO) `DELTA_CAPTURE_CALLS=1` retains full response messages including encrypted reasoning —
+intentional for a diagnostic knob that is off by default, but treat capture DBs as sensitive.
+Fixed: crash-replay idempotency of the C2 merge (suffix-already-landed detection), landed-content
+tracking through the run's writeSelf wrapper, retention accounting on stripped rows (blobs can't
+evict visible history), the stable cache mark now respects the ephemeral boundary, all three new
+predicates flipped from chatgpt-denylist to openai.com ALLOWLIST (the acceptsPromptCacheKey
+precedent — proxies keep the 0.2.15 surface), unmappedControls is host-aware, eligible() cannot
+throw on malformed persisted carry, and byte-identity is pinned by full-body-equality tests on
+both the Anthropic and chatgpt.com wires.

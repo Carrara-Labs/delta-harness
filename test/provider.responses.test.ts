@@ -455,3 +455,145 @@ describe("explicit cache breakpoints on the Responses wire (M2, 0.2.16)", () => 
     expect(oldestRolling2).toBeGreaterThanOrEqual(oldestRolling1);
   });
 });
+
+describe("codex diff-review fixes (0.2.16)", () => {
+  const done = [
+    { type: "response.output_text.delta", delta: "ok" },
+    { type: "response.completed", response: { usage: {} } },
+  ];
+
+  test("new params are ALLOWLISTED to openai.com — an arbitrary Responses proxy stays on the 0.2.15 surface", async () => {
+    // The acceptsPromptCacheKey precedent: an unknown top-level field is a legitimate 400 on a
+    // strict endpoint, and a plain 4xx is not failover-worthy — guessing would break a proxy
+    // lane that worked on 0.2.15. Evidence-first: openai.com is wire-proven; everything else
+    // (chatgpt.com included) waits for its probe.
+    const cap = mockCapture(done);
+    const r = await chat(
+      {
+        baseUrl: "https://my-proxy.example.com/v1",
+        apiKey: "x",
+        models: ["gpt-5.6-sol"],
+        api: "responses",
+        maxRetries: 0,
+        textVerbosity: "low",
+        reasoningSummary: "auto",
+      },
+      {
+        messages: [
+          { role: "user", content: "hi" },
+          { role: "assistant", content: "x", reasoningItems: [RS], phase: "final_answer" },
+          { role: "user", content: "again" },
+        ],
+        reasoningEffort: "low",
+        cacheKey: "s",
+      },
+    );
+    expect(r.ok).toBe(true);
+    const body = cap.body();
+    expect("include" in body).toBe(false);
+    expect("text" in body).toBe(false);
+    expect(body.reasoning).toEqual({ effort: "low" });
+    const input = body.input as Array<Record<string, unknown>>;
+    expect(input.some((i) => i.type === "reasoning")).toBe(false);
+    expect(input.some((i) => "phase" in i)).toBe(false);
+    expect(JSON.stringify(body)).not.toContain("prompt_cache_breakpoint");
+  });
+
+  test("the STABLE cache mark respects the ephemeral boundary too", async () => {
+    // If every persisted user message is ineligible (image-bearing), an unbounded stable scan
+    // walks into the trailing derived block — a prefix ending on content that is rebuilt every
+    // turn can never match again.
+    const cap = mockCapture(done);
+    const r = await chat(
+      { baseUrl: "https://api.openai.com/v1", apiKey: "x", models: ["gpt-5.6-sol"], api: "responses", maxRetries: 0 },
+      {
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "look at this" },
+              { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+            ],
+          },
+          { role: "assistant", content: "seen" },
+          { role: "user", content: "EPHEMERAL per-turn context" },
+        ],
+        cacheKey: "s",
+        ephemeralCount: 1,
+      },
+    );
+    expect(r.ok).toBe(true);
+    expect(JSON.stringify(cap.body())).not.toContain("prompt_cache_breakpoint");
+  });
+
+  test("malformed persisted carry cannot throw the marker off the error-as-value path", async () => {
+    const cap = mockCapture(done);
+    const r = await chat(
+      { baseUrl: "https://api.openai.com/v1", apiKey: "x", models: ["gpt-5.6-sol"], api: "responses", maxRetries: 0 },
+      {
+        messages: [
+          { role: "user", content: "hi" },
+          {
+            role: "assistant",
+            content: "x",
+            // Corrupted persisted data: an item that CLAIMS to be a user message with no
+            // content array. Replayed verbatim, it lands in `input` before marking runs.
+            reasoningItems: [{ role: "user", type: "reasoning", encrypted_content: "z" }],
+          },
+          { role: "user", content: "go" },
+        ],
+        cacheKey: "s",
+      },
+    );
+    expect(r.ok).toBe(true); // never a synchronous throw
+  });
+
+  test("the Anthropic body is BYTE-identical with and without every 0.2.16 addition configured", () => {
+    const carry: import("../src/provider").ChatMsg[] = [
+      { role: "system", content: "spine" },
+      { role: "user", content: "ask" },
+      {
+        role: "assistant",
+        content: "step",
+        tool_calls: [{ id: "c1", type: "function", function: { name: "f", arguments: "{}" } }],
+        reasoningItems: [RS],
+        phase: "intermediate",
+      },
+      { role: "tool", tool_call_id: "c1", content: "out" },
+    ];
+    const bare = carry.map((m) =>
+      m.role === "assistant" ? { role: m.role, content: m.content, tool_calls: m.tool_calls } : m,
+    ) as import("../src/provider").ChatMsg[];
+    expect(JSON.stringify(toAnthropic(carry, "1h", 0))).toBe(
+      JSON.stringify(toAnthropic(bare, "1h", 0)),
+    );
+  });
+
+  test("the chatgpt.com body is BYTE-identical with and without every 0.2.16 addition configured", async () => {
+    const messages: import("../src/provider").ChatMsg[] = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "x", reasoningItems: [RS], phase: "final_answer" },
+      { role: "user", content: "again" },
+    ];
+    const bare = messages.map((m) =>
+      m.role === "assistant" ? { role: m.role, content: m.content } : m,
+    ) as import("../src/provider").ChatMsg[];
+    const base = {
+      baseUrl: "https://chatgpt.com/backend-api/codex",
+      apiKey: "x",
+      models: ["gpt-5.6"],
+      api: "responses" as const,
+      maxRetries: 0,
+    };
+    const cap1 = mockCapture(done);
+    await chat({ ...base, textVerbosity: "low", reasoningSummary: "auto" }, {
+      messages,
+      reasoningEffort: "low",
+      cacheKey: "s",
+    });
+    const withEverything = JSON.stringify(cap1.body());
+    const cap2 = mockCapture(done);
+    await chat(base, { messages: bare, reasoningEffort: "low", cacheKey: "s" });
+    expect(withEverything).toBe(JSON.stringify(cap2.body()));
+  });
+});

@@ -170,6 +170,28 @@ describe("Responses tuning knobs + unmapped-control reporting (M4, 0.2.16)", () 
         }).provider,
       ).sort(),
     ).toEqual(["DELTA_REASONING_SUMMARY", "DELTA_TEXT_VERBOSITY"]);
+    // …and HOST-suppressed knobs are unmapped too (codex #6): a chatgpt.com Responses lane
+    // never sends them, so reporting them as live would lie to exactly that lane.
+    expect(
+      unmappedControls(
+        loadConfig({
+          MODEL_API: "responses",
+          MODEL_BASE_URL: "https://chatgpt.com/backend-api/codex",
+          DELTA_TEXT_VERBOSITY: "low",
+          DELTA_REASONING_SUMMARY: "auto",
+        }).provider,
+      ).sort(),
+    ).toEqual(["DELTA_REASONING_SUMMARY", "DELTA_TEXT_VERBOSITY"]);
+    expect(
+      unmappedControls(
+        loadConfig({
+          MODEL_API: "responses",
+          MODEL_BASE_URL: "https://api.openai.com/v1",
+          DELTA_TEXT_VERBOSITY: "low",
+          DELTA_REASONING_SUMMARY: "auto",
+        }).provider,
+      ),
+    ).toEqual([]);
     // Nothing configured → nothing reported.
     expect(unmappedControls(loadConfig({}).provider)).toEqual([]);
   });
