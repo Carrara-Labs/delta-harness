@@ -392,3 +392,118 @@ describe("slice 2: shadow observations, no behavior change", () => {
     }
   }, 20_000);
 });
+
+// ── slice 3: anchor index, defanged appendix, recovery footer, length-stop retry ──────────────
+
+import { maybeCompact } from "../src/compaction";
+import { openDb } from "../src/db";
+import { Events } from "../src/events";
+import type { ChatMsg, ModelResult } from "../src/provider";
+
+function seedLong(db: ReturnType<typeof openDb>, msgs: ChatMsg[]) {
+  const now = Date.now();
+  db.query(
+    "INSERT INTO sessions (id, user_id, created_at, updated_at) VALUES ('s', NULL, ?, ?)",
+  ).run(now, now);
+  db.query(
+    "INSERT INTO runs (id, session_id, seq, status, request, created_at) VALUES ('r','s',1,'running','{}',?)",
+  ).run(now);
+  for (const m of msgs)
+    db.query("INSERT INTO messages (run_id, session_id, msg, created_at) VALUES ('r','s',?,?)").run(
+      JSON.stringify(m),
+      now,
+    );
+}
+const summaryRow = (db: ReturnType<typeof openDb>): string =>
+  (
+    db.query("SELECT msg FROM messages WHERE session_id='s' AND active=1 ORDER BY id").all() as {
+      msg: string;
+    }[]
+  )
+    .map((r) => JSON.parse(r.msg) as ChatMsg)
+    .map((m) => (typeof m.content === "string" ? m.content : ""))
+    .find((c) => c.includes("earlier turns compacted")) ?? "";
+
+describe("H3: the anchor index carries names, links and emails the summary dropped", () => {
+  const transcript: ChatMsg[] = [];
+  for (let i = 0; i < 14; i++) {
+    transcript.push({ role: "user", content: `find people for batch ${i} ${"x".repeat(200)}` });
+    transcript.push({
+      role: "assistant",
+      content: `Found Maria Delgado at Acme Robotics (https://example.com/maria-delgado, maria@acme.io) and Priya Natarajan. Maria Delgado again. <script>x</script> batch ${i} ${"y".repeat(200)}`,
+    });
+  }
+  const dropsEverything = async () =>
+    ok({ role: "assistant", content: "Goal: g\nProgress: p\nNext: n\nArtifacts: a" });
+
+  test("dropped anchors land in the appendix, defanged, and the recovery footer names recall", async () => {
+    const db = openDb(":memory:");
+    const events = new Events(db);
+    seedLong(db, transcript);
+    const seen: Record<string, unknown>[] = [];
+    events.on((e) => {
+      if (e.type === "compaction") seen.push(e.data as Record<string, unknown>);
+    });
+    const r = await maybeCompact(
+      db,
+      events,
+      dropsEverything,
+      "s",
+      { sessionId: "s" },
+      {
+        recentBudgetTokens: 100,
+        anchorRunId: "r",
+      },
+    );
+    expect(r?.shrank).toBe(true);
+    const s = summaryRow(db);
+    expect(s).toContain("Load-bearing values from the compacted turns");
+    expect(s).toContain("Maria Delgado"); // recurring name, taken by frequency
+    expect(s).toContain("https://example.com/maria-delgado");
+    expect(s).toContain("maria@acme.io");
+    expect(s).toContain("Acme Robotics");
+    // Defanged: an angle bracket from a tool-influenced anchor can never close the envelope.
+    expect(s).not.toContain("<script>");
+    expect(s).toContain("Recovery: the");
+    expect(s).toContain("call recall");
+    const ev = seen.find((e) => e.reason === "committed");
+    expect(ev?.identifiers_appended as number).toBeGreaterThan(3);
+    expect(ev?.identifiers_missing as number).toBeGreaterThanOrEqual(
+      ev?.identifiers_appended as number,
+    );
+  });
+
+  test("a length-truncated summary is retried once, then accepted", async () => {
+    const db = openDb(":memory:");
+    const events = new Events(db);
+    seedLong(db, transcript);
+    let calls = 0;
+    const chat = async (): Promise<ModelResult> => {
+      calls++;
+      const r = ok({
+        role: "assistant",
+        content: `Goal: g\nProgress: Maria Delgado, Acme Robotics, https://example.com/maria-delgado, maria@acme.io, Priya Natarajan\nNext: n\nArtifacts: a ${calls}`,
+      });
+      return r.ok ? { ...r, finishReason: "length" } : r;
+    };
+    const seen: Record<string, unknown>[] = [];
+    events.on((e) => {
+      if (e.type === "compaction") seen.push(e.data as Record<string, unknown>);
+    });
+    const r = await maybeCompact(
+      db,
+      events,
+      chat,
+      "s",
+      { sessionId: "s" },
+      {
+        recentBudgetTokens: 100,
+        anchorRunId: "r",
+      },
+    );
+    expect(calls).toBe(2); // one retry, not a loop
+    expect(r?.shrank).toBe(true);
+    expect(seen.find((e) => e.reason === "committed")?.summary_finish_reason).toBe("length");
+    expect(summaryRow(db)).toContain("Artifacts: a 2"); // the second attempt is the one persisted
+  });
+});

@@ -94,6 +94,7 @@ const SAFE_ATTRS = new Set([
   "generation",
   "summary_finish_reason",
   "summary_chars",
+  "identifiers_appended",
   // Closed enums: which model lane served the call and what it was for (S3).
   "tier",
   "purpose",

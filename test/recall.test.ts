@@ -190,7 +190,7 @@ describe("W1 integration: recall + pointer ledger after a real compaction", () =
     const spilled =
       "head\n\n… [elided 50000 chars — full output saved to /ws/.delta/spill/r.c2.txt; read that file for the rest] …\n\ntail";
     const rows: Seed[] = [];
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 16; i++) {
       rows.push({ msg: { role: "user", content: `q${i}` } });
       rows.push({ msg: { role: "assistant", content: `a${i}` } });
     }

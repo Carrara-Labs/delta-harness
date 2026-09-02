@@ -74,7 +74,7 @@ const zeroUsage = (): Usage => ({
 });
 const ASK_CAP = 4_000; // bound on the pinned original request
 const SUMMARY_CAP = 8_000; // bound on the persisted summary body (can't itself become the bloat)
-const IDS_APPENDIX_MAX = 1_000; // A-1: identifier appendix, reserved INSIDE the summary cap
+const IDS_APPENDIX_MAX = 2_000; // A-1: identifier appendix, reserved INSIDE the summary cap
 const IDS_MAX_ID_LEN = 120; // an "identifier" longer than this is a blob, not an id
 
 const SUMMARIZE_SYSTEM =
@@ -109,26 +109,51 @@ function isEngineSummaryRow(msg: string): boolean {
   }
 }
 
-const AUDIT_MAX = 30;
+const AUDIT_MAX = 60;
 
-/** Harvest load-bearing tokens the summary must keep verbatim — spill paths, 4-digit years, and
- * numbers (≥3 digits, incl. decimals/commas). PATHS and PRIOR-summary (carried-forward) facts are
- * harvested BEFORE recent numbers so incidental recent values can't crowd carried facts out of the
- * 30-slot budget. The path regex is anchored on `.delta/` (no leading `*` → no ReDoS). */
+/** The anchor index (H3a, 2026-09-02). Harvest load-bearing tokens the summary must keep
+ * verbatim, by CLASS with a budget per class so no one kind can crowd the others out: spill paths,
+ * URLs, emails, slugs, proper names, years, numbers. The recall eval on real compactions measured
+ * the old numbers-and-paths audit at 1 of 12 grounded facts surviving a first cut closed-book; on
+ * a knowledge-work transcript the payload IS the names, links and identifiers, and Hermes's
+ * mechanical anchor index alone moved one transcript from 23 to 60 recall points at zero model cost.
+ * PRIOR-summary (carried-forward) facts are harvested before recent ones within each class so
+ * incidental recent values can't crowd carried facts out. Names are taken by frequency first: a
+ * two-or-three-word capitalized run that recurs is an entity; a single mention is sentence noise as
+ * often as not, and only fills what budget is left. Every regex is anchored or bounded (no leading
+ * `*`, no nested quantifiers): ReDoS-safe on attacker-influenced tool output. */
+const ANCHOR_CLASSES: Array<{ re: RegExp; cap: number; byFrequency?: boolean }> = [
+  // No spill-path class: the deterministic ledger below already carries every spill path, and
+  // auditing them here only made the appendix repeat the ledger (measured on the toy fixtures).
+  { re: /https?:\/\/[^\s"'<>)\]]{8,200}/g, cap: 8 },
+  { re: /\b[\w.+-]{1,64}@[\w-]{1,64}(?:\.[\w-]{1,24}){1,4}\b/g, cap: 6 },
+  { re: /\b[a-z0-9]{2,24}(?:-[a-z0-9]{1,24}){2,6}\b/g, cap: 8 }, // slugs like acme-corp-inc
+  { re: /\b[A-Z][a-z]{1,20}(?: [A-Z][a-z]{1,20}){1,2}\b/g, cap: 16, byFrequency: true }, // names
+  { re: /\b(?:19|20)\d{2}\b/g, cap: 6 }, // years
+  { re: /\b\d[\d,.]{2,}\b/g, cap: 10 }, // numbers (≥3 digits, decimals/commas)
+];
 function extractIdentifiers(recent: string, prior: string): string[] {
   const out = new Set<string>();
-  const harvest = (re: RegExp, text: string) => {
-    if (out.size >= AUDIT_MAX) return;
-    for (const m of text.matchAll(re)) {
-      out.add(m[0]);
-      if (out.size >= AUDIT_MAX) return;
+  for (const cls of ANCHOR_CLASSES) {
+    if (out.size >= AUDIT_MAX) break;
+    let taken = 0;
+    const take = (v: string) => {
+      if (taken >= cls.cap || out.size >= AUDIT_MAX || out.has(v)) return;
+      out.add(v);
+      taken++;
+    };
+    if (cls.byFrequency) {
+      // Count across both spans, prior first on ties (carried facts win), recurring first.
+      const counts = new Map<string, number>();
+      for (const text of [prior, recent])
+        for (const m of text.matchAll(cls.re)) counts.set(m[0], (counts.get(m[0]) ?? 0) + 1);
+      for (const [v] of [...counts.entries()].sort((a, b) => b[1] - a[1]))
+        if ((counts.get(v) ?? 0) >= 2) take(v);
+      for (const [v] of counts) take(v);
+    } else {
+      for (const text of [prior, recent]) for (const m of text.matchAll(cls.re)) take(m[0]);
     }
-  };
-  harvest(/\.delta\/[\w./-]+/g, `${recent}\n${prior}`); // spill paths (anchored — ReDoS-safe)
-  harvest(/\b(?:19|20)\d{2}\b/g, prior); // carried-forward years
-  harvest(/\b\d[\d,.]{2,}\b/g, prior); // carried-forward numbers
-  harvest(/\b(?:19|20)\d{2}\b/g, recent); // recent years
-  harvest(/\b\d[\d,.]{2,}\b/g, recent); // recent numbers
+  }
   return [...out];
 }
 
@@ -581,6 +606,11 @@ export async function maybeCompact(
     summaryRaw = raw;
     summaryFinish = res.finishReason;
     missing = auditMissing(raw, ids);
+    // A summary the model could not finish (`length` stop) is truncated at an arbitrary point,
+    // usually inside `Next` or `Artifacts`, the sections that carry the future of the task. Pi
+    // rejects these outright; we retry once with the audit feedback and accept the second attempt
+    // whatever its stop, because a truncated summary still beats no summary on the overflow path.
+    if (summaryFinish === "length" && attempt === 0) continue;
     if (missing.length * 4 <= ids.length) break; // ≤25% dropped (strict) → accept
   }
   // No usable summary. If we DID bill an attempt (ok response, empty/short content), charge it but
@@ -612,10 +642,11 @@ export async function maybeCompact(
   // A-1: the audit's leftovers ride a machine-built appendix — the retry loop ships lossy after
   // two attempts by design, and 18-34% of load-bearing identifiers were measured missing on the
   // fleet. Bounded per id AND in aggregate, and RESERVED INSIDE SUMMARY_CAP (appending after the
-  // elide would grow the row past the cap and could flip the shrink gate). The harvested charsets
-  // (.delta paths, years, numbers — extractIdentifiers) cannot carry envelope delimiters, so the
-  // appendix needs no defang; it is engine-assembled from deterministic regex matches.
+  // elide would grow the row past the cap and could flip the shrink gate). DEFANGED (H3a): the
+  // anchor classes now include URLs, emails and names harvested from attacker-influenced tool
+  // output, so the appendix can no longer assume its charset is delimiter-free.
   let idAppendix = "";
+  let appended = 0;
   if (missing.length) {
     const keep: string[] = [];
     let total = 0;
@@ -625,8 +656,9 @@ export async function maybeCompact(
       keep.push(id);
       total += id.length + 2;
     }
+    appended = keep.length;
     if (keep.length)
-      idAppendix = `\n\nLoad-bearing values from the compacted turns (verbatim):\n${keep.join(", ")}`;
+      idAppendix = `\n\nLoad-bearing values from the compacted turns (verbatim):\n${defang(keep.join(", "))}`;
   }
   // hard bound in CODE, not just the prompt — appendix chars come out of the same cap
   const summary = elide(summaryRaw, Math.max(0, SUMMARY_CAP - idAppendix.length));
@@ -639,6 +671,10 @@ export async function maybeCompact(
   const ledger = artifacts.length
     ? `\n\nArtifacts (full results on disk — read_file the path, or recall a keyword):\n${artifacts.map((p) => `- ${p}`).join("\n")}`
     : "";
+  // H3b: advertise the recovery path IN the summary. `recall` existed for three releases and was
+  // used in 3% of production runs; the model cannot reach for a tool the compacted context never
+  // mentions. One fixed line, engine-authored, so it costs the same on every generation.
+  const recovery = `\n\nRecovery: the ${prefix.length} compacted turns stay searchable; call recall with a name, number or keyword before redoing work.`;
 
   // The summary message separates TRUSTED task semantics (the original ask, an operator input)
   // from UNTRUSTED historical data (a model-written summary over tool output that may carry an
@@ -650,7 +686,7 @@ export async function maybeCompact(
     : "";
   const summaryContent =
     `${askBlock}The following is ${HISTORICAL_FRAMING}:\n` +
-    `<historical_context>\n[${prefix.length} earlier turns compacted]\n${defang(summary)}${idAppendix}${ledger}\n</historical_context>${SUMMARY_END_MARKER}`;
+    `<historical_context>\n[${prefix.length} earlier turns compacted]\n${defang(summary)}${idAppendix}${ledger}${recovery}\n</historical_context>${SUMMARY_END_MARKER}`;
 
   // PROVE it shrinks before committing: replacing a small prefix with a bounded summary envelope
   // can GROW the active set (codex repro), which would make overflow recovery worse and churn the
@@ -731,6 +767,10 @@ export async function maybeCompact(
     generation: priorSummaries.length + 1,
     summary_finish_reason: summaryFinish,
     summary_chars: summary.length,
+    // How many of the audit's misses the appendix carried (H3a). `identifiers_missing` above counts
+    // what the SUMMARIZER dropped; this is what the engine put back, so the difference is the true
+    // loss on the persisted row.
+    identifiers_appended: appended,
     // The RETAINED TAIL only. Measuring the whole active set (or including the new summary) lets
     // the prefix-to-summary reduction dominate and hides the tail change this is meant to score.
     tail_bytes_before: tail.reduce((n, r) => n + bytes(r.msg), 0),

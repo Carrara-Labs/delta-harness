@@ -499,8 +499,11 @@ describe("context-overflow retry (integration)", () => {
       if (typeof sys === "string" && sys.includes("compact an agent's working transcript"))
         return textResult("Goal: g\nProgress: p\nNext: n\nArtifacts: none");
       step++;
-      if (step <= 4) return toolCallResult("add", { a: 1, b: 1 }, `c${step}`); // build history
-      if (step === 5)
+      // Eight turns of history, not four: the summary envelope carries a fixed recovery line and
+      // a defanged appendix (H3, 2026-09-02), so a four-turn "history" is smaller than the summary
+      // that replaces it. A real overflow prompt is thousands of times larger than either.
+      if (step <= 8) return toolCallResult("add", { a: 1, b: 1 }, `c${step}`); // build history
+      if (step === 9)
         return {
           ok: false,
           model: "test/model",
