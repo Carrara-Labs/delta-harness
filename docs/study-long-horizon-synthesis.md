@@ -519,3 +519,27 @@ one time in five. This is the first confirmed improvement of the build, and it i
 production transcripts without a battery. It is inert until agents call `recall`, which they did
 zero times in 45 battery-0 runs; the recovery footer in slice 3 exists to change that, and battery 1
 counts the calls.
+
+### 9.5 Replay: anchors and the summarizer model do not move closed-book recall, 2026-09-02
+
+Same cached questions, the engine's real `maybeCompact` re-run on each cut (`RECALL_REPLAY=1`).
+
+| summary produced by | gen 1 closed-book correct | gen 2 |
+|---|---|---|
+| original 0.2.16 row (haiku, numbers-and-paths audit) | 25% | 0% |
+| slice 3 code, haiku (anchor index + appendix) | 19% | 0% |
+| slice 3 code, sonnet as summarizer | 21% | 8% |
+
+Haiku dropped 39 to 47 of 48 anchors on every cut and the appendix restored them; sonnet dropped
+fewer (1 of 32 on one cut) and it still did not answer more questions. The reading: the questions
+ask for facts spread across a 300 KB region, and a 350-word summary holds about 3% of it whatever
+writes it. An identifier list preserves names, not the relations a question needs, and a stronger
+model cannot fit twelve arbitrary facts into 350 words either. Two consequences:
+
+1. Closed-book recall of arbitrary region facts is capacity-bound. The path that scales is the
+   recovery arm (section 9.4: 53% with the ranked search), plus a summary that keeps STRUCTURE
+   (entities, decisions, what is left) so the agent knows what to recall. The prompt-v2 replay
+   (an Entities table, re-distill merge) tests the structure half.
+2. The eval should also score what the AGENT itself surfaced (facts in assistant and user rows), not
+   only tool-result trivia. That is the subset a continuation actually needs from the summary; the
+   rest is what `recall` is for. Added as `RECALL_TRUSTED_ONLY=1`.
