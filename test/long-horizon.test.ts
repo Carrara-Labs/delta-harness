@@ -61,7 +61,9 @@ describe("H5: Anthropic cache diagnosis on the wire", () => {
   test("opt in with null on a first call: header + field travel together", async () => {
     script = () => stream({ diagnostics: null });
     const r = await chat(cfg(), { ...hi, diagnosticsPrevId: null });
-    expect(lastHeaders?.get("anthropic-beta")).toBe(CACHE_DIAGNOSIS_BETA);
+    // The literal, not the exported constant: a wrong production value must fail here (codex P3).
+    expect(lastHeaders?.get("anthropic-beta")).toBe("cache-diagnosis-2026-04-07");
+    expect(CACHE_DIAGNOSIS_BETA).toBe("cache-diagnosis-2026-04-07");
     expect(lastBody.diagnostics).toEqual({ previous_message_id: null });
     expect(r.ok && r.cacheMiss).toEqual({ reason: "none" });
   });
@@ -787,13 +789,15 @@ describe("slice 3 follow-up: the pinned ask is not harvested as anchors", () => 
       { sessionId: "s" },
       { recentBudgetTokens: 100, anchorRunId: "r" },
     );
-    for (let i = 14; i < 28; i++)
+    // Only a FEW rows after the first cut, so the prior summary sits inside the last-14 window the
+    // harvest reads (the case codex reproduced): it must still be stripped of the pinned ask.
+    for (let i = 14; i < 18; i++)
       db.query(
         "INSERT INTO messages (run_id, session_id, msg, created_at) VALUES ('r','s',?,?)",
       ).run(
         JSON.stringify({
           role: "assistant",
-          content: `More on Maria Delgado, batch ${i}. ${"z".repeat(300)}`,
+          content: `More on Maria Delgado, batch ${i}. ${"z".repeat(900)}`,
         }),
         now,
       );

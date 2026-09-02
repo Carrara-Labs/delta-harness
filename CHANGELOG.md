@@ -14,8 +14,11 @@ model) plus an offline recall eval that re-runs the engine's own compaction on a
 production transcripts. Study and receipts: `docs/study-long-horizon-synthesis.md`.
 
 ### Upgrade
-Schema migration v15 to v16 (the recall index; backfilled once at boot, a few seconds on a
-100 MB database). One-way like v15: snapshot `/data` before upgrading a lane. No wire change unless `DELTA_CACHE_DIAGNOSIS=1`
+Schema migration v15 to v16 (the recall index; backfilled once at boot, about a second per
+100 MB). One-way like v15: snapshot `/data` before upgrading a lane, and stop the running daemon
+before starting the upgraded one on the same volume: the write lease lives inside the database,
+so a still-running writer can see a few seconds of `database schema is locked` during the rebuild.
+A machine replacement (the normal Fly upgrade) already sequences this. No wire change unless `DELTA_CACHE_DIAGNOSIS=1`
 is set (then the Anthropic-native wire adds the `cache-diagnosis-2026-04-07` beta header and a
 `diagnostics.previous_message_id` field). Compaction summaries gain a bounded appendix, two
 deterministic ledgers and a one-line recovery footer.

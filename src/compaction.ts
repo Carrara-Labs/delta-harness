@@ -656,6 +656,8 @@ export async function maybeCompact(
       continue;
     }
     if (m.role === "tool") untrusted.push(typeof m.content === "string" ? m.content : "");
+    else if (isEngineSummaryRow(r.msg))
+      continue; // harvested via priorText, ask stripped (codex)
     else {
       if (typeof m.content === "string") said.push(m.content);
       for (const c of m.tool_calls ?? []) untrusted.push(c.function.arguments);
