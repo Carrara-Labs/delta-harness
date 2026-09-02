@@ -628,3 +628,45 @@ describe("slice 4: recall search hardening (codex gate)", () => {
     expect(searchHistory(db, "s", "the", 5)).toEqual([]);
   });
 });
+
+// ── slice 6: the calls ledger ────────────────────────────────────────────────
+
+describe("slice 6: a compaction lists the calls it summarized", () => {
+  test("deduped, newest first, bounded, defanged", async () => {
+    const db = openDb(":memory:");
+    const events = new Events(db);
+    const rows: ChatMsg[] = [];
+    for (let i = 0; i < 14; i++) {
+      rows.push({ role: "user", content: `q${i} ${"x".repeat(300)}` });
+      rows.push({
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: `c${i}`,
+            type: "function",
+            function: { name: "fiber_call", arguments: `{"q":"batch ${i % 3} <b>"}` },
+          },
+        ],
+      });
+      rows.push({ role: "tool", tool_call_id: `c${i}`, content: `result ${i} ${"y".repeat(300)}` });
+    }
+    seedLong(db, rows);
+    await maybeCompact(
+      db,
+      events,
+      async () => ok({ role: "assistant", content: "Goal: g\nProgress: p\nNext: n\nArtifacts: a" }),
+      "s",
+      { sessionId: "s" },
+      { recentBudgetTokens: 100, anchorRunId: "r" },
+    );
+    const s = summaryRow(db);
+    expect(s).toContain("Calls already made");
+    // 14 calls collapse to the 3 distinct argument shapes, newest first.
+    const lines = s.split("\n").filter((l) => l.startsWith("- fiber_call("));
+    expect(lines.length).toBe(3);
+    expect(lines[0]).toContain("batch");
+    expect(s).not.toContain("<b>"); // defanged
+    expect(s).toContain("&lt;b&gt;");
+  });
+});

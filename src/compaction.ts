@@ -345,6 +345,42 @@ function elideRowArgs(row: Row, cap: number): string {
   return changed ? JSON.stringify(m) : row.msg;
 }
 
+const CALLS_LEDGER_MAX = 40;
+const CALLS_LEDGER_CHARS = 2_500;
+const CALL_ARG_HEAD = 90;
+/** The calls a compaction summarized, as `tool(arguments-head)`, newest first, deduped, bounded
+ * (H6-shaped fix, 2026-09-02). Battery 1 at a 60k ceiling showed the failure this closes: after
+ * every cut the control agent re-ran the same `fiber_call` and `grep` searches it had run before
+ * the cut, because the summarizer's `Progress` prose did not say they were done. Deterministic
+ * like the artifacts ledger, so it does not depend on the summarizer; the arguments are the
+ * assistant's own text, but they are defanged at assembly with everything else. Pi carries the same
+ * class of fact (`<read-files>`) outside the summary for the same reason. */
+function collectCalls(rows: Row[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  let chars = 0;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    let m: ChatMsg & { tool_calls?: Array<{ function: { name: string; arguments: string } }> };
+    try {
+      m = JSON.parse((rows[i] as Row).msg) as typeof m;
+    } catch {
+      continue;
+    }
+    if (m.role !== "assistant" || !m.tool_calls?.length) continue;
+    for (const c of m.tool_calls) {
+      const head = c.function.arguments.replace(/\s+/g, " ").slice(0, CALL_ARG_HEAD);
+      const line = `${c.function.name}(${head}${c.function.arguments.length > CALL_ARG_HEAD ? "…" : ""})`;
+      if (seen.has(line)) continue;
+      if (out.length >= CALLS_LEDGER_MAX || chars + line.length + 3 > CALLS_LEDGER_CHARS)
+        return out;
+      seen.add(line);
+      out.push(line);
+      chars += line.length + 3;
+    }
+  }
+  return out;
+}
+
 /** Scan compacted rows for spilled-result paths → the unique set, bounded by count AND bytes.
  * These pointers otherwise die with the tool message compaction deactivates. */
 function collectArtifacts(rows: Row[]): string[] {
@@ -705,6 +741,10 @@ export async function maybeCompact(
   // list, so every full spilled result stays recoverable via read_file / recall after its
   // tool message is deactivated. Bounded + deduped so the ledger can't itself bloat context.
   const artifacts = collectArtifacts(prefix);
+  const calls = collectCalls(prefix);
+  const callsLedger = calls.length
+    ? `\n\nCalls already made in the compacted turns (newest first; recall a keyword to read a result back instead of re-running it):\n${defang(calls.map((c) => `- ${c}`).join("\n"))}`
+    : "";
   const ledger = artifacts.length
     ? `\n\nArtifacts (full results on disk — read_file the path, or recall a keyword):\n${artifacts.map((p) => `- ${p}`).join("\n")}`
     : "";
@@ -723,7 +763,7 @@ export async function maybeCompact(
     : "";
   const summaryContent =
     `${askBlock}The following is ${HISTORICAL_FRAMING}:\n` +
-    `<historical_context>\n[${prefix.length} earlier turns compacted]\n${defang(summary)}${idAppendix}${ledger}${recovery}\n</historical_context>${SUMMARY_END_MARKER}`;
+    `<historical_context>\n[${prefix.length} earlier turns compacted]\n${defang(summary)}${idAppendix}${ledger}${callsLedger}${recovery}\n</historical_context>${SUMMARY_END_MARKER}`;
 
   // PROVE it shrinks before committing: replacing a small prefix with a bounded summary envelope
   // can GROW the active set (codex repro), which would make overflow recovery worse and churn the
