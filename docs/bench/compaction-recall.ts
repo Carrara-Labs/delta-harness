@@ -35,6 +35,11 @@ const MAX_CUTS = Number(process.env.RECALL_MAX_CUTS ?? 20);
  * cut's reconstructed active set, with the production utility model, and score the fresh summary on
  * the same questions. This is how a prompt or anchor change is measured before a battery. */
 const REPLAY = process.env.RECALL_REPLAY === "1";
+/** RECALL_TRUSTED_ONLY=1: generate and ground questions from the agent's OWN rows (assistant and
+ * user) rather than tool results, i.e. facts the agent surfaced and a continuation would need from
+ * the summary. Tool-result trivia is what `recall` is for; scoring it closed-book measures the
+ * summary's capacity, not its judgment. */
+const TRUSTED_ONLY = process.env.RECALL_TRUSTED_ONLY === "1";
 const SUMMARY_MODEL = process.env.RECALL_SUMMARY_MODEL ?? "claude-haiku-4-5-20251001";
 const ONLY = (process.env.RECALL_SESSIONS ?? "").split(",").filter(Boolean);
 const cfg: ProviderConfig = {
@@ -206,16 +211,22 @@ const qcache: Record<string, string> = process.env.RECALL_QCACHE
 const results: CutResult[] = [];
 for (const cut of selected) {
   const regionText = cut.region.map(text).join("\n\n");
+  const genText = TRUSTED_ONLY
+    ? cut.region
+        .filter((r) => !r.msg.startsWith('{"role":"tool"'))
+        .map(text)
+        .join("\n\n")
+    : regionText;
   const tailText = cut.tail.map(text).join("\n\n");
   const summaryText = text(cut.summary);
   // Question generation from the REGION only. Cached by summary id so two arms, or two backends,
   // are scored on IDENTICAL questions (RECALL_QCACHE=<json file>).
-  const cacheKey = `${cut.session}:${cut.summary.id}`;
+  const cacheKey = `${cut.session}:${cut.summary.id}${TRUSTED_ONLY ? ":trusted" : ""}`;
   const gen =
     qcache[cacheKey] ??
     (await ask(
       "You write factual recall questions from an agent transcript. Output ONLY a JSON array of objects {q, a, span}: q = a short question about a specific fact in the transcript (a name, number, date, title, company, path, decision); a = the exact short answer (under 12 words); span = a VERBATIM substring of the transcript (under 200 characters) that contains the answer. Cover different parts of the transcript. No questions about the agent's tools or instructions.",
-      `Write ${N * 2} questions from this transcript:\n\n${clip(regionText, 300_000)}`,
+      `Write ${N * 2} questions from this transcript:\n\n${clip(genText, 300_000)}`,
       6000,
     ));
   if (!qcache[cacheKey]) {
@@ -228,7 +239,7 @@ for (const cut of selected) {
   );
   // Grounding (normalized, so whitespace and punctuation drift in the model's copy of the span
   // do not disqualify a real fact) + tripwire (answer must not sit in the retained tail).
-  const regionNorm = norm(regionText);
+  const regionNorm = norm(genText);
   const tailNorm = norm(tailText);
   // Grounded = the verbatim span is in the region and holds the answer, OR the answer itself is a
   // specific string (4+ chars) found in the region. The second clause tolerates a paraphrased span
