@@ -598,3 +598,31 @@ shows the agent re-running the same `fiber_call` and `grep` searches after each 
 all 23 of its runs finished in 5 to 18 turns; its heaviest, M6, still compacted 11 times in 18
 turns. Slice 5 (tail proportional to the ceiling) was written from this observation and rides
 lh-rc4 for battery 2.
+
+### 9.9 Battery 1, candidate arm complete (lh-rc3 = slices 1-4 at the 60k ceiling), 2026-09-02
+
+| tier | n | ok | cost p50 | wall p50 | turns | compactions / run | anchors missing / audited (appended) | reload tokens / run |
+|---|---|---|---|---|---|---|---|---|
+| simple | 10 | 10 | $0.99 | 2.0 min | 10.3 | 1.6 | 244 / 528 (220) | 41k |
+| medium | 8 | 8 | $1.27 | 3.2 min | 15.3 | 4.9 | 424 / 1283 (404) | 111k |
+| hard | 5 | 5 | $2.88 | 8.9 min | 22.4 | 8.6 | 523 / 1725 (507) | 217k |
+
+Against battery 0 at the 200k ceiling (same lane, same prompts): hard tier p50 $2.58 / 10.4 min /
+23 turns. The tight ceiling costs about 12% on the hard tier and nothing on wall time or turns,
+with 8.6 compactions per hard run instead of 0.2. Three readings:
+
+- **The reload is the cost of a compaction.** 217k tokens re-read per hard run at $15/M is most
+  of the run's spend; the summary calls are cents. At a tight ceiling, compacting less often is
+  the only economic lever, which is what slice 5 (proportional tail) does.
+- **The anchor appendix closes the identifier leak.** The summarizer dropped 30% of audited
+  anchors; the appendix carried 97% of those back, so the persisted row lost about 1%. Battery 0
+  measured 30 of 30 lost on the same lane.
+- **The control could not run at this ceiling.** 0.2.16's M1 took 62 turns, 25 compactions,
+  30.7 minutes and $9.29 for a 5-person shortlist the candidate finished in 11 turns and $0.85;
+  its H1 is on the same path. The difference between the arms is the summary envelope (anchors,
+  ledger, recovery footer), which is enough to stop the re-search spiral on its own.
+
+Still zero `recall` calls on the candidate (the control's runaway M1 made two). The footer is not
+enough; the calls ledger in slice 6 tells the model what it already ran, which is the more direct
+cue. Prefix digests matched on 221 of 221 comparable turns; the provider's `messages_changed`
+verdicts (87) are exactly the reload calls.
