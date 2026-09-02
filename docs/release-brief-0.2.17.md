@@ -1,6 +1,6 @@
 # Release brief - Harness 0.2.17 "the long run"
 
-Status: **STAGED 2026-09-02, all batteries complete, awaiting the tag.** Six review rounds with codex (every P1
+Status: **STAGED 2026-09-02, gated on Aperture's real-request twin battery (recent hard client prompts, 0.2.16 vs lh-rc14 = 5fcea59, every axis) before the tag.** Six review rounds with codex (every P1
 fixed), 1037 tests green, three twin-lane batteries on Aperture Quick Search plus an offline
 recall eval on production compactions. The study behind it: `docs/study-long-horizon-synthesis.md`
 (sections 9.1 to 9.12 are the measurements, in order).
