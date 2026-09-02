@@ -439,3 +439,36 @@ Five gaps codex found that the competitor teardowns support and the plan missed:
 
 Slice 1 itself passed codex's diff review after two P2 fixes: the diagnostics anchor now survives
 an id-less fallback call, and `cache_miss_reason` is re-allowlisted at the export boundary.
+
+---
+
+## 9. Results log (running)
+
+### 9.1 Recall eval baseline, 2026-09-02 (control lane bench-opus-c, 0.2.16 summaries)
+
+`docs/bench/compaction-recall.ts` on the lane's own `delta.db`: 7 real compactions, 83 grounded
+questions (verbatim-span grounded, tail tripwire), reader claude-sonnet-5, string-match judge.
+
+| generation | cuts | questions | closed-book correct | abstain | wrong | +recall (phrase LIKE) correct | recall hit rate |
+|---|---|---|---|---|---|---|---|
+| 1 | 5 | 59 | 22% | 54% | 24% | 32% | 7% |
+| 2 | 2 | 24 | 4% | 67% | 29% | 4% | 0% |
+
+Reading: a first-generation summary carries about one grounded fact in five; the first merge
+carries almost none. The phrase-LIKE `recall` found the answer in 7% of searches. Wrong answers
+(24 to 29%) are the reader confabulating from a summary that names an entity without its facts.
+This is the number every summary change must beat, on the same cached questions.
+
+### 9.2 Battery 0, control arm (bench-opus-c, 0.2.16, production config), 2026-09-02
+
+23 of 23 runs succeeded. Per tier: simple p50 $0.80 / 1.9 min / 11 turns; medium p50 $1.26 /
+3.9 min / 17 turns; hard p50 $2.98 / 8.9 min / 23 turns. Zero recall or todo calls in the whole
+battery. Only TWO compactions fired across all 23 runs (H4 once, M6 once at 37 turns), and the M6
+compaction dropped 25 of 30 audited identifiers.
+
+The finding is about the instrument: at the production ceiling (200k) with `DELTA_TOOL_ARG_MAX_BYTES`
+on, this corpus almost never compacts, so a twin battery at production config cannot measure
+compaction fidelity or the reload. Battery 1 therefore runs BOTH twins at `DELTA_COMPACT_AT_TOKENS=60000`
+(the same lever the 0.2.14 canary used), which turns every hard run into a three-to-five compaction
+run, the exact shape carrara's 30+ turn client runs have at the production ceiling. Env stays
+identical across the twins; only the image differs.
