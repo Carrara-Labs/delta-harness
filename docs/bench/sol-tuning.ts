@@ -6,7 +6,11 @@
 //   3. save confirmed → user-facing update message
 // Measured: per-call latency, output tokens (includes reasoning spend), cost, artifact
 // correctness (names + numbers survive), update length/quality proxy.
-import { type ChatMsg, chat, type ProviderConfig } from "/Users/nictouron/delta-harness/src/provider";
+import {
+  type ChatMsg,
+  chat,
+  type ProviderConfig,
+} from "/Users/nictouron/delta-harness/src/provider";
 
 const KEY = process.env.OPENAI_KEY ?? "";
 if (!KEY) throw new Error("OPENAI_KEY missing");
@@ -43,9 +47,28 @@ const TOOLS = [
 
 const SEARCH_RESULTS = JSON.stringify({
   results: [
-    { name: "Maren Kollberg", role: "CTO & co-founder", company: "Fjordlight Robotics", location: "Oslo", funding: "$48M Series B (2026-03-12, led by Northzone)", note: "ex-DeepMind robotics lead, 2019-2023" },
-    { name: "Fjordlight Robotics", employees: 112, founded: 2023, focus: "warehouse manipulation arms", customers: ["Zalando", "Boozt"], arr: "$9.4M ARR (Q2 2026)" },
-    { name: "Maren Kollberg — interview", source: "TechCrunch 2026-06-02", quote: "we ship a new gripper policy weekly", detail: "mentions 40% cycle-time reduction at the Zalando pilot" },
+    {
+      name: "Maren Kollberg",
+      role: "CTO & co-founder",
+      company: "Fjordlight Robotics",
+      location: "Oslo",
+      funding: "$48M Series B (2026-03-12, led by Northzone)",
+      note: "ex-DeepMind robotics lead, 2019-2023",
+    },
+    {
+      name: "Fjordlight Robotics",
+      employees: 112,
+      founded: 2023,
+      focus: "warehouse manipulation arms",
+      customers: ["Zalando", "Boozt"],
+      arr: "$9.4M ARR (Q2 2026)",
+    },
+    {
+      name: "Maren Kollberg — interview",
+      source: "TechCrunch 2026-06-02",
+      quote: "we ship a new gripper policy weekly",
+      detail: "mentions 40% cycle-time reduction at the Zalando pilot",
+    },
   ],
   irrelevant: [
     { name: "Maren Kolberg", note: "Norwegian biathlete, unrelated" },
@@ -58,7 +81,11 @@ const TASK =
 
 type CallStat = { ms: number; out: number; in: number; cacheRead: number; cost: number };
 
-async function runConfig(effort: string | undefined, verbosity: "low" | "medium" | "high" | undefined, label: string) {
+async function runConfig(
+  effort: string | undefined,
+  verbosity: "low" | "medium" | "high" | undefined,
+  label: string,
+) {
   const cfg: ProviderConfig = {
     baseUrl: "https://api.openai.com/v1",
     apiKey: KEY,
@@ -99,7 +126,8 @@ async function runConfig(effort: string | undefined, verbosity: "low" | "medium"
   if (!r1.ok) return { label, ok: false, error: r1.error };
   const c1 = r1.message.tool_calls?.[0];
   const call1Searches = r1.message.tool_calls?.length ?? 0;
-  if (!c1 || c1.function.name !== "qs_search") return { label, ok: false, error: `call1 did ${c1?.function.name ?? "no tool"}` };
+  if (!c1 || c1.function.name !== "qs_search")
+    return { label, ok: false, error: `call1 did ${c1?.function.name ?? "no tool"}` };
   // Parallel searches are normal — EVERY call_id must get a result or the next request 400s.
   messages.push(r1.message);
   for (const tc of r1.message.tool_calls ?? [])
@@ -120,7 +148,9 @@ async function runConfig(effort: string | undefined, verbosity: "low" | "medium"
       if (tc.function.name === "qs_save_artifact") {
         saved = true;
         try {
-          artifact = String((JSON.parse(tc.function.arguments) as { markdown?: string }).markdown ?? "");
+          artifact = String(
+            (JSON.parse(tc.function.arguments) as { markdown?: string }).markdown ?? "",
+          );
         } catch {}
         messages.push({ role: "tool", tool_call_id: tc.id, content: "saved: brief-fjordlight.md" });
       } else {
@@ -140,7 +170,10 @@ async function runConfig(effort: string | undefined, verbosity: "low" | "medium"
   const mustHave = ["Maren Kollberg", "48M", "Northzone", "DeepMind", "9.4M", "112"];
   const facts = mustHave.filter((f) => artifact.includes(f)).length;
   const distractor = artifact.includes("biathlete") || artifact.includes("lighting retailer");
-  const totals = stats.reduce((a, s) => ({ ms: a.ms + s.ms, out: a.out + s.out, cost: a.cost + s.cost }), { ms: 0, out: 0, cost: 0 });
+  const totals = stats.reduce(
+    (a, s) => ({ ms: a.ms + s.ms, out: a.out + s.out, cost: a.cost + s.cost }),
+    { ms: 0, out: 0, cost: 0 },
+  );
   return {
     label,
     effort: effort ?? "(default)",

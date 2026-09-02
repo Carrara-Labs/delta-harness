@@ -302,6 +302,25 @@ export const MIGRATIONS: string[] = [
   `
   CREATE INDEX IF NOT EXISTS messages_session_id ON messages(session_id, id);
   `,
+  // Long-horizon (2026-09-02): a real index for `recall`. Four review rounds of LIKE-scan designs
+  // ended at the same wall: any-term matching over a 5,000-row window of ~20KB rows is either a
+  // memory bound (materialize the window) or a CPU bound (one pass per term) on a 1-vCPU 512MB
+  // machine. FTS5 is neither: word-level, unicode-folded (diacritics removed), bm25-ranked, and
+  // O(log) per term. External-content over `messages` (no second copy of the text; the index
+  // holds tokens only), kept in step by triggers. The only writer that deletes message rows is
+  // the session wipe in queue.ts, covered by the delete trigger. Backfilled here in one pass.
+  `
+  CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+    msg, content='messages', content_rowid='id', tokenize='unicode61 remove_diacritics 2'
+  );
+  INSERT INTO messages_fts(messages_fts) VALUES ('rebuild');
+  CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts(rowid, msg) VALUES (new.id, new.msg);
+  END;
+  CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, msg) VALUES ('delete', old.id, old.msg);
+  END;
+  `,
 ];
 
 export function openDb(path: string): Database {
@@ -386,9 +405,9 @@ const SPILL_PATH = /saved to (\/[^\s;]+)/;
 // SCAN_WINDOW message ids in the session rather than an unbounded full-table scan. Far more
 // than any live window; older-than-that results aren't recoverable (documented, acceptable).
 const SCAN_WINDOW = 5000;
-/** Candidate rows materialized per search (newest first). ~20KB rows × 400 = 8MB, a bounded page
- * on a 512MB machine even when every term is common. */
-const SCAN_ROWS = 100;
+/** Candidate rows the index returns per search, best bm25 first. Bounded memory whatever the
+ * corpus: the index does the ranking, JS only renders snippets and dedupes. */
+const SCAN_ROWS = 60;
 /** Words that carry no recall signal; a search of only these returns nothing rather than everything.
  * Small on purpose: an unknown word is far likelier to be an identifier than a function word. */
 const STOPWORDS = new Set(
@@ -397,13 +416,15 @@ const STOPWORDS = new Set(
   ),
 );
 /** Query words, tokenized on word boundaries (the model writes "Maria Delgado, Acme"), stopwords
- * dropped, capped at 8 distinct terms. Shared by the transcript and the archive searches so a
- * multi-word query behaves the same on both (codex P2). */
+ * dropped, capped at 6 distinct terms. Shared by the index query, the JS ranking pass and the
+ * archive search so a multi-word query behaves the same everywhere (codex P2). */
+/** Case and diacritics folded, the same way the index tokenizer folds them, so the JS re-check on
+ * readable text agrees with what the index matched ("Martínez" answers "martinez"). */
+export const fold = (x: string): string => x.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 export function recallTerms(q: string): string[] {
   return [
     ...new Set(
-      q
-        .toLowerCase()
+      fold(q)
         .split(/[^\p{L}\p{M}\p{N}@._/%-]+/u)
         .map((w) => w.replace(/^[._/-]+|[._/-]+$/g, ""))
         .filter((w) => w.length >= 3 && !STOPWORDS.has(w)),
@@ -449,33 +470,29 @@ export function searchHistory(
       `SELECT COALESCE((SELECT id FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?), 0) - 1 AS floor`,
     )
     .get(sessionId, SCAN_WINDOW - 1) as { floor: number };
-  // A bounded page PER TERM (newest first), deduped, then ranked in JS. This is the only shape
-  // that guarantees every term a voice: a single coverage-ranked global page let 400 newer rows
-  // matching a common word starve the one older row carrying the rare one (codex, three rounds).
-  // Cost is CPU-bounded (one LIKE pass over the window per term, terms capped) rather than
-  // memory-bounded (at most terms × SCAN_ROWS rows materialized), which is the right trade on a
-  // 512 MB machine. SQLite's LOWER folds ASCII only, so non-ASCII case (Élodie vs ÉLODIE) is
-  // matched as typed and NFC/NFD are not unified; stated as a limit rather than paid for with a
-  // custom collation.
-  const stmt = db.query(
-    `SELECT m.id AS id, m.msg AS msg, m.active AS active, m.run_id AS run_id, r.seq AS seq
-     FROM messages m JOIN runs r ON r.id = m.run_id
-     WHERE m.session_id = ? AND m.id > ? AND LOWER(m.msg) LIKE ? ESCAPE '\\'
-     ORDER BY m.id DESC
-     LIMIT ?`,
-  );
-  const byId = new Map<number, { msg: string; active: number; run_id: string; seq: number }>();
-  for (const t of terms)
-    for (const r of stmt.all(sessionId, floor, `%${esc(t)}%`, SCAN_ROWS) as Array<{
-      id: number;
-      msg: string;
-      active: number;
-      run_id: string;
-      seq: number;
-    }>)
-      byId.set(r.id, r);
-  const rows = [...byId.entries()].sort((a, b) => b[0] - a[0]).map(([, r]) => r);
-  const ql = q.toLowerCase();
+  // The index answers "which rows carry ANY of these words", ranked by bm25 (rare words weigh
+  // more, so a common word cannot bury a rare one), bounded to SCAN_ROWS candidates and scoped to
+  // this session's newest SCAN_WINDOW rows. Each term is a quoted prefix token (`"delgad"*`), so
+  // a stem or a truncated identifier still hits; FTS quoting neutralizes query syntax. The JS pass
+  // below re-checks readable text, dedupes and renders the snippet exactly as before.
+  const match = terms.map((t) => `"${t.replace(/"/g, '""')}"*`).join(" OR ");
+  const rows = db
+    .query(
+      `SELECT m.msg AS msg, m.active AS active, m.run_id AS run_id, r.seq AS seq
+       FROM messages_fts f
+       JOIN messages m ON m.id = f.rowid
+       JOIN runs r ON r.id = m.run_id
+       WHERE messages_fts MATCH ? AND m.session_id = ? AND m.id > ?
+       ORDER BY bm25(messages_fts), m.id DESC
+       LIMIT ?`,
+    )
+    .all(match, sessionId, floor, SCAN_ROWS) as Array<{
+    msg: string;
+    active: number;
+    run_id: string;
+    seq: number;
+  }>;
+  const ql = fold(q);
   const seen = new Map<string, RecallHit & { score: number }>();
   /** Per (run_id, call_id): the query terms a VISIBLE hit already covers. The archive pass skips an
    * elided body only when every term it carries is already represented by that visible hit; a
@@ -494,7 +511,7 @@ export function searchHistory(
       continue;
     }
     const text = msgText(m);
-    const lower = text.toLowerCase();
+    const lower = fold(text);
     // Rank: a whole-phrase hit scores above any partial; otherwise the distinct terms present.
     const phraseIdx = lower.indexOf(ql);
     const hitTerms = terms.filter((t) => lower.includes(t));
@@ -507,7 +524,7 @@ export function searchHistory(
     // call on a multi-call assistant would let a match in call A suppress the archived body of
     // call B, which is a silent loss rather than a dedupe (codex P1).
     for (const c of m.tool_calls ?? []) {
-      const al = c.function.arguments.toLowerCase();
+      const al = fold(c.function.arguments);
       const argTerms = terms.filter((t) => al.includes(t));
       if (argTerms.length) cover(`${row.run_id}:${c.id}`, argTerms);
     }
@@ -564,7 +581,7 @@ function searchArchive(
   matched: Map<string, Set<string>>,
 ): RecallHit[] {
   const terms = recallTerms(query);
-  const ql = query.toLowerCase();
+  const ql = fold(query);
   const out: RecallHit[] = [];
   const emitted = new Set<string>(); // one hit per (run, call): two elided fields are one finding
   for (const ref of listArtifacts(db, sessionId)) {
@@ -582,7 +599,7 @@ function searchArchive(
       continue;
     }
     const text = typeof value === "string" ? value : (JSON.stringify(value) ?? "");
-    const lower = text.toLowerCase();
+    const lower = fold(text);
     // Same contract as the transcript pass: whole phrase first, else any term (codex P2).
     const phraseIdx = lower.indexOf(ql);
     const bodyTerms = terms.filter((t) => lower.includes(t));

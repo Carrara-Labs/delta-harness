@@ -19,8 +19,7 @@
  *   env: RECALL_MODEL (default claude-sonnet-5) · RECALL_N (questions per cut, default 12)
  *        RECALL_SESSIONS (comma list to restrict) · RECALL_MAX_CUTS (default 20)
  */
-import { Database } from "bun:sqlite";
-import { searchHistory } from "../../src/db";
+import { openDb, searchHistory } from "../../src/db";
 import { type ChatMsg, chat, type ProviderConfig } from "../../src/provider";
 
 const [dbPath, outPath = "compaction-recall.json"] = process.argv.slice(2);
@@ -62,7 +61,9 @@ type Row = {
   active: number;
   created_at: number;
 };
-const db = new Database(dbPath, { readonly: true });
+// Opened through the engine (NOT readonly): the copy is migrated to this checkout's schema so the
+// same `searchHistory` backend the daemon uses (now an FTS5 index) answers the recovery arm.
+const db = openDb(dbPath);
 
 const isSummary = (r: Row) => {
   try {

@@ -594,9 +594,14 @@ describe("slice 4: recall search hardening (codex gate)", () => {
     expect(recallTerms("the quokka and the wombat")).toEqual(["quokka", "wombat"]);
     expect(recallTerms("What is the")).toEqual([]);
     expect(recallTerms("a b c d e f g h i j k l m n o").length).toBe(0);
-    expect(
-      recallTerms("one two six ten eleven twelve dozen score gross more").length,
-    ).toBeLessThanOrEqual(8);
+    expect(recallTerms("one two six ten eleven twelve dozen score gross more")).toEqual([
+      "one",
+      "two",
+      "six",
+      "ten",
+      "eleven",
+      "twelve",
+    ]);
     expect(recallTerms("mail me at maria@acme.io")).toContain("maria@acme.io");
   });
 
@@ -649,6 +654,30 @@ describe("slice 4: recall search hardening (codex gate)", () => {
       ins.run(JSON.stringify({ role: "assistant", content: `candidate ${i} reviewed` }), 1, now);
     const hits = searchHistory(db, "s", "candidate rareword", 5);
     expect(hits.some((h) => h.snippet.includes("Rottnest"))).toBe(true);
+  });
+
+  test("the index folds case and diacritics and matches prefixes (FTS5)", () => {
+    const db = openDb(":memory:");
+    const now = Date.now();
+    db.query(
+      "INSERT INTO sessions (id, user_id, created_at, updated_at) VALUES ('s', NULL, ?, ?)",
+    ).run(now, now);
+    db.query(
+      "INSERT INTO runs (id, session_id, seq, status, request, created_at) VALUES ('r','s',1,'running','{}',?)",
+    ).run(now);
+    db.query(
+      "INSERT INTO messages (run_id, session_id, msg, active, created_at) VALUES ('r','s',?,0,?)",
+    ).run(
+      JSON.stringify({ role: "assistant", content: "ÉLODIE Delgado-Martínez joined Acme." }),
+      now,
+    );
+    expect(searchHistory(db, "s", "élodie", 5).length).toBe(1);
+    expect(searchHistory(db, "s", "delgad", 5).length).toBe(1); // prefix
+    expect(searchHistory(db, "s", "martinez", 5).length).toBe(1); // diacritics folded
+    expect(searchHistory(db, "s", "zzz", 5).length).toBe(0);
+    // The index follows the table: a wiped row is gone from search too.
+    db.query("DELETE FROM messages WHERE session_id = 's'").run();
+    expect(searchHistory(db, "s", "élodie", 5).length).toBe(0);
   });
 });
 

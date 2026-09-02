@@ -825,7 +825,7 @@ export async function maybeCompact(
   // keeps its own bound (LEDGER_MAX_PATHS / LEDGER_MAX_CHARS) outside the proportional budget.
   const artifacts = collectArtifacts(prefix);
   const ledger = artifacts.length
-    ? `\n\nArtifacts (full results on disk — read_file the path, or recall a keyword):\n${artifacts.map((p) => `- ${p}`).join("\n")}`
+    ? `\n\nArtifacts (full results on disk — read_file the path, or recall a keyword):\n${defang(artifacts.map((p) => `- ${p}`).join("\n"))}`
     : "";
   const recoveryFits = bytes(recovery) <= extrasLeft;
   if (recoveryFits) extrasLeft -= bytes(recovery);

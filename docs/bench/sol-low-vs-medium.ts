@@ -19,7 +19,11 @@ const TOOLS = [
     function: {
       name: "qs_search",
       description: "Search the web and databases for people, companies, funding, and news",
-      parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+      },
     },
   },
   {
@@ -53,14 +57,39 @@ const TASKS: Task[] = [
     ask: "Find the founder and current funding of Helix Dynamics, the robotics company in Munich. Save me a brief, then tell me what you found.",
     round1: JSON.stringify({
       results: [
-        { name: "Helix Dynamics", hq: "Munich", sector: "industrial robotics", founder: "Jonas Weber", note: "founded 2022; funding details not in this index — search funding databases" },
-        { name: "Helix Dynamics", hq: "Austin, TX", sector: "biotech", founder: "Julia Weber", funding: "$80M Series C (2025)", note: "gene-editing platform — DIFFERENT company, same name" },
+        {
+          name: "Helix Dynamics",
+          hq: "Munich",
+          sector: "industrial robotics",
+          founder: "Jonas Weber",
+          note: "founded 2022; funding details not in this index — search funding databases",
+        },
+        {
+          name: "Helix Dynamics",
+          hq: "Austin, TX",
+          sector: "biotech",
+          founder: "Julia Weber",
+          funding: "$80M Series C (2025)",
+          note: "gene-editing platform — DIFFERENT company, same name",
+        },
       ],
     }),
     round2: JSON.stringify({
       results: [
-        { company: "Helix Dynamics (Munich)", round: "$37M Series B", date: "2026-05-14", lead: "Index Ventures", source: "TechCrunch 2026-05-15" },
-        { company: "Helix Dynamics (Munich)", round: "$12M Series A", date: "2024-09-02", lead: "Speedinvest", source: "press release (older)" },
+        {
+          company: "Helix Dynamics (Munich)",
+          round: "$37M Series B",
+          date: "2026-05-14",
+          lead: "Index Ventures",
+          source: "TechCrunch 2026-05-15",
+        },
+        {
+          company: "Helix Dynamics (Munich)",
+          round: "$12M Series A",
+          date: "2024-09-02",
+          lead: "Speedinvest",
+          source: "press release (older)",
+        },
       ],
     }),
     mustHave: [["Jonas Weber"], ["37M", "37 million"], ["Index Ventures"]],
@@ -80,11 +109,28 @@ const TASKS: Task[] = [
     }),
     round2: JSON.stringify({
       results: [
-        { name: "Ferrite Labs", hq: "Copenhagen", arr: "$6.3M ARR (2026)", employees: 21, sector: "ML infrastructure" },
-        { name: "Ferrite Labs", hq: "Shenzhen", sector: "PCB manufacturing", employees: 400, note: "DIFFERENT company, same name" },
+        {
+          name: "Ferrite Labs",
+          hq: "Copenhagen",
+          arr: "$6.3M ARR (2026)",
+          employees: 21,
+          sector: "ML infrastructure",
+        },
+        {
+          name: "Ferrite Labs",
+          hq: "Shenzhen",
+          sector: "PCB manufacturing",
+          employees: 400,
+          note: "DIFFERENT company, same name",
+        },
       ],
     }),
-    mustHave: [["Ferrite"], ["300,000", "300k", "$300", "0.3M", "300 000"], ["Nordwind"], ["Cobalt"]],
+    mustHave: [
+      ["Ferrite"],
+      ["300,000", "300k", "$300", "0.3M", "300 000"],
+      ["Nordwind"],
+      ["Cobalt"],
+    ],
     mustFlag: [],
     mustNot: ["PCB", "Shenzhen manufacturing"],
     allowedMoney: ["14.2", "21", "6.3", "300", "161", "100", "0.3", "0.16", "0.1"],
@@ -94,17 +140,30 @@ const TASKS: Task[] = [
     ask: "What is Veldt Materials' current valuation, and who is their CFO? Save a brief, then tell me.",
     round1: JSON.stringify({
       results: [
-        { name: "Veldt Materials", article: "Sifted, Aug 2024", valuation: "$150M (as of Aug 2024)", ceo: "Tomas Veldkamp", note: "no CFO named in any filing" },
+        {
+          name: "Veldt Materials",
+          article: "Sifted, Aug 2024",
+          valuation: "$150M (as of Aug 2024)",
+          ceo: "Tomas Veldkamp",
+          note: "no CFO named in any filing",
+        },
       ],
       note: "for current data try recent news",
     }),
     round2: JSON.stringify({
       results: [
-        { name: "Veldt Materials", article: "TechEU, Mar 2026", detail: "raised an undisclosed round; valuation not disclosed", finance: "company site lists 'Head of Finance: Priya Nair' — no CFO title exists" },
+        {
+          name: "Veldt Materials",
+          article: "TechEU, Mar 2026",
+          detail: "raised an undisclosed round; valuation not disclosed",
+          finance: "company site lists 'Head of Finance: Priya Nair' — no CFO title exists",
+        },
       ],
     }),
     mustHave: [["Priya Nair"], ["150M", "150 million"]],
-    mustFlag: [["not disclosed", "undisclosed", "no CFO", "does not have a CFO", "no current valuation"]],
+    mustFlag: [
+      ["not disclosed", "undisclosed", "no CFO", "does not have a CFO", "no current valuation"],
+    ],
     mustNot: ["Tomas Veldkamp is the CFO", "CFO Tomas"],
     allowedMoney: ["150"],
   },
@@ -134,7 +193,13 @@ async function runOnce(task: Task, effort: "low" | "medium", rep: number): Promi
   let searchCalls = 0;
   const step = async () => {
     const t0 = performance.now();
-    const r = await chat(cfg, { messages, tools: TOOLS, cacheKey, maxTokens: 8000, reasoningEffort: effort });
+    const r = await chat(cfg, {
+      messages,
+      tools: TOOLS,
+      cacheKey,
+      maxTokens: 8000,
+      reasoningEffort: effort,
+    });
     if (r.ok) {
       ms += Math.round(performance.now() - t0);
       out += r.usage.output;
@@ -158,7 +223,9 @@ async function runOnce(task: Task, effort: "low" | "medium", rep: number): Promi
       if (tc.function.name === "qs_save_artifact") {
         saved = true;
         try {
-          artifact = String((JSON.parse(tc.function.arguments) as { markdown?: string }).markdown ?? "");
+          artifact = String(
+            (JSON.parse(tc.function.arguments) as { markdown?: string }).markdown ?? "",
+          );
         } catch {}
         messages.push({ role: "tool", tool_call_id: tc.id, content: `saved: brief-${task.id}.md` });
       } else {
@@ -180,11 +247,17 @@ async function runOnce(task: Task, effort: "low" | "medium", rep: number): Promi
   const all = `${artifact}\n${update}`;
 
   const factsHit = task.mustHave.filter((alts) => alts.some((a) => all.includes(a))).length;
-  const flagsHit = task.mustFlag.filter((alts) => alts.some((a) => all.toLowerCase().includes(a.toLowerCase()))).length;
+  const flagsHit = task.mustFlag.filter((alts) =>
+    alts.some((a) => all.toLowerCase().includes(a.toLowerCase())),
+  ).length;
   const leaks = task.mustNot.filter((m) => artifact.includes(m)).length;
   // Invention scan: $-amounts in the artifact whose numeric root is not in the allowed set.
-  const money = [...artifact.matchAll(/\$\s?([\d][\d.,]*)\s?(?:M|B|k|million|billion)?/gi)].map((m) => m[1] ?? "");
-  const invented = money.filter((v) => !task.allowedMoney.some((a) => (v ?? "").startsWith(a))).length;
+  const money = [...artifact.matchAll(/\$\s?([\d][\d.,]*)\s?(?:M|B|k|million|billion)?/gi)].map(
+    (m) => m[1] ?? "",
+  );
+  const invented = money.filter(
+    (v) => !task.allowedMoney.some((a) => (v ?? "").startsWith(a)),
+  ).length;
   return {
     task: task.id,
     effort,

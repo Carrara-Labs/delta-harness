@@ -626,3 +626,31 @@ Still zero `recall` calls on the candidate (the control's runaway M1 made two). 
 enough; the calls ledger in slice 6 tells the model what it already ran, which is the more direct
 cue. Prefix digests matched on 221 of 221 comparable turns; the provider's `messages_changed`
 verdicts (87) are exactly the reload calls.
+
+### 9.10 Candidate's own compactions (lh-rc3, battery 1), trusted-only recall, 2026-09-02
+
+15 cuts / 135 questions from bench-opus-d's battery-1 database (slice-3 summaries):
+
+| generation | cuts | closed-book correct | wrong | +recovery correct | recall hit rate |
+|---|---|---|---|---|---|
+| 1 | 7 | 43% | 25% | 57% | 65% |
+| 2 | 5 | 7% | 33% | 49% | 67% |
+| 3 | 2 | 20% | 35% | 55% | 75% |
+| 4 | 1 | 40% | 40% | 60% | 80% |
+
+Against the control lane's 0.2.16 summaries (30% / 45% / 0% closed-book at generations 1 / 2 / 3),
+the slice-3 summary is better at generation 1 and not distinguishable after, with a higher wrong
+rate (the appendix gives the reader names to confabulate around). The recovery arm holds 49 to 60%
+at every depth. Same conclusion as 9.5 and 9.7: the summary is capacity-bound, recovery is the
+lever, and the engine's job is to make the agent reach for it.
+
+### 9.11 Recall moves to an FTS5 index, 2026-09-02
+
+Four codex rounds on the scan-based search ended at the same wall: any-term matching over the
+session window is either memory-bound (materialize it) or CPU-bound (one LIKE pass per term,
+measured 318 to 472 ms warm on a laptop, worse on a shared 1-vCPU guest). `messages_fts`
+(external-content FTS5 over `messages`, unicode61 with diacritics removed, insert/delete
+triggers, migration v16, backfilled once) makes the search O(log) per term, bm25-ranked so a
+common word cannot bury a rare one, case- and accent-folded, prefix-matching. The JS pass that
+renders snippets and dedupes is unchanged. Migration v16 is one-way like v15: snapshot before
+upgrading a lane.
