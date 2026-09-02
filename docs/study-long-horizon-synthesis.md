@@ -472,3 +472,33 @@ compaction fidelity or the reload. Battery 1 therefore runs BOTH twins at `DELTA
 (the same lever the 0.2.14 canary used), which turns every hard run into a three-to-five compaction
 run, the exact shape carrara's 30+ turn client runs have at the production ceiling. Env stays
 identical across the twins; only the image differs.
+
+### 9.3 Battery 0, twin-vs-twin (A/A noise floor), 2026-09-02
+
+Both arms same model-visible behavior (control 0.2.16, candidate lh-rc1 = slice 1 telemetry only).
+45 of 45 runs succeeded. Neither lane called `recall` or `todo` once.
+
+| tier | control cost p50 / wall p50 / turns | candidate cost p50 / wall p50 / turns |
+|---|---|---|
+| simple (10) | $0.80 / 1.9 min / 11.1 | $0.63 / 1.9 min / 11.1 |
+| medium (8) | $1.69 / 3.9 min / 17.5 | $1.91 / 3.8 min / 18.9 |
+| hard (5) | $3.17 / 8.9 min / 25.4 | $2.58 / 10.4 min / 23.2 |
+
+That spread (up to about 25% per tier at n=5 to 10) is the noise floor every later comparison
+must beat.
+
+Instrument results on the candidate, 23 runs, 376 main-lane calls:
+- **The reload is now a number.** The call after each of the two compactions re-read 29,571 and
+  20,177 tokens (`turns_since_compaction = 0`, `cache_shortfall_tokens`). At $15/M input that is
+  roughly $0.45 and $0.30 per compaction on Opus, on top of the summary call.
+- **History is append-only in practice.** `history_prefix_hash` matched the previous turn's
+  `history_hash` on all 353 comparable turns. "We mutate history" is falsified for this workload.
+- **The provider agrees.** `cache_miss_reason` was `none` on 376 turns; the only two
+  `messages_changed` verdicts were the two compaction reloads, where the prefix really was rewritten.
+  No stationary-prefix miss over 100 tokens on the candidate. The shape-1 defect did not reproduce
+  here; it remains a Ferni and client-lane observation to chase with the same instruments.
+- Identifier audit on the two compactions (numbers and paths only, pre-slice-3): 30 of 30 and 29 of
+  30 missing.
+- Both lanes grew `DELTA.md` from 4.5 KB to 15.9 KB in one battery and each wrote its own
+  pending-lessons note (`notes/pending-delta-lessons.md`, `notes/lessons-inbox.md`): the self-file
+  wall workaround, reinvented on a fresh seed within a single battery.
