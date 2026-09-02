@@ -302,7 +302,9 @@ export const MIGRATIONS: string[] = [
   `
   CREATE INDEX IF NOT EXISTS messages_session_id ON messages(session_id, id);
   `,
-  // Long-horizon (2026-09-02): a real index for `recall`. Four review rounds of LIKE-scan designs
+  // Long-horizon (2026-09-02): a real index for `recall`. This migration has never shipped in a
+  // release, so its trigger set was completed in place rather than by a follow-up migration; the
+  // first published version carrying v16 carries all three triggers. Four review rounds of LIKE-scan designs
   // ended at the same wall: any-term matching over a 5,000-row window of ~20KB rows is either a
   // memory bound (materialize the window) or a CPU bound (one pass per term) on a 1-vCPU 512MB
   // machine. FTS5 is neither: word-level, unicode-folded (diacritics removed), bm25-ranked, and
@@ -431,6 +433,7 @@ export const fold = (x: string): string =>
     // tokenizer's `remove_diacritics 2` does; Greek, Hebrew and Arabic marks stay so the JS
     // re-check agrees with the index on those scripts too (codex P2).
     .replace(/([A-Za-z\u00C0-\u024F])\p{M}+/gu, "$1")
+    .replace(/\u017F/g, "s") // long s, folded by unicode61 too (codex P3)
     .normalize("NFC")
     .toLowerCase();
 export function recallTerms(q: string): string[] {

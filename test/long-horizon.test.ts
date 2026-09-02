@@ -680,6 +680,10 @@ describe("slice 4: recall search hardening (codex gate)", () => {
       "INSERT INTO messages (run_id, session_id, msg, active, created_at) VALUES ('r','s',?,0,?)",
     ).run(JSON.stringify({ role: "assistant", content: "Συνάντηση με τον Ανδρέα άλφα" }), now);
     expect(searchHistory(db, "s", "άλφα", 5).length).toBe(1);
+    db.query(
+      "INSERT INTO messages (run_id, session_id, msg, active, created_at) VALUES ('r','s',?,0,?)",
+    ).run(JSON.stringify({ role: "assistant", content: "the ſignal is clear" }), now);
+    expect(searchHistory(db, "s", "signal", 5).length).toBe(1); // long s folds on both sides
     // The index follows the table: an in-place rewrite (the breaker latch) and a wipe both land.
     const id = (
       db.query("SELECT id FROM messages WHERE msg LIKE '%ÉLODIE%'").get() as { id: number }
