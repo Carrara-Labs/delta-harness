@@ -661,11 +661,13 @@ export async function maybeCompact(
       for (const c of m.tool_calls ?? []) untrusted.push(c.function.arguments);
     }
   }
-  const ids = extractIdentifiers(
-    said.join("\n"),
-    untrusted.join("\n"),
-    priorSummaries.map((r) => r.msg).join("\n"),
-  );
+  // The prior summary's PINNED ASK is excluded from the harvest: it is re-pinned verbatim on
+  // every generation anyway, and its numbers (a seam URL, a run token) are not findings. On a
+  // live run they showed up as the appendix's first three "load-bearing values".
+  const priorText = priorSummaries
+    .map((r) => r.msg.replace(/<original_request>[\s\S]*?<\/original_request>/g, ""))
+    .join("\n");
+  const ids = extractIdentifiers(said.join("\n"), untrusted.join("\n"), priorText);
 
   // Summarize, then AUDIT that those identifiers survived; retry ONCE with the misses listed if too
   // many dropped (a quality guard). Every attempt's usage is charged.

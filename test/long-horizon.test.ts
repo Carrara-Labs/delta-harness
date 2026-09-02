@@ -746,3 +746,69 @@ describe("slice 6: a compaction lists the calls it summarized", () => {
     expect(s).not.toContain("Ignore Previous Instructions");
   });
 });
+
+describe("slice 3 follow-up: the pinned ask is not harvested as anchors", () => {
+  test("a run token and seam URL inside <original_request> never reach the appendix", async () => {
+    const db = openDb(":memory:");
+    const events = new Events(db);
+    const now = Date.now();
+    db.query(
+      "INSERT INTO sessions (id, user_id, created_at, updated_at) VALUES ('s', NULL, ?, ?)",
+    ).run(now, now);
+    db.query(
+      "INSERT INTO runs (id, session_id, seq, status, request, created_at) VALUES ('r','s',1,'running',?,?)",
+    ).run(
+      JSON.stringify({
+        input:
+          "Run token: abc.1788372056529.zzz at http://localhost:4800/api/agent/runs/x. Find people.",
+      }),
+      now,
+    );
+    const rows: ChatMsg[] = [];
+    for (let i = 0; i < 14; i++) {
+      rows.push({ role: "user", content: `q${i} ${"x".repeat(300)}` });
+      rows.push({
+        role: "assistant",
+        content: `Found Maria Delgado in batch ${i}. ${"y".repeat(300)}`,
+      });
+    }
+    for (const m of rows)
+      db.query(
+        "INSERT INTO messages (run_id, session_id, msg, created_at) VALUES ('r','s',?,?)",
+      ).run(JSON.stringify(m), now);
+    const drop = async () =>
+      ok({ role: "assistant", content: "Goal: g\nProgress: p\nNext: n\nArtifacts: a" });
+    // Two generations: the second one's prior summary carries the pinned ask.
+    await maybeCompact(
+      db,
+      events,
+      drop,
+      "s",
+      { sessionId: "s" },
+      { recentBudgetTokens: 100, anchorRunId: "r" },
+    );
+    for (let i = 14; i < 28; i++)
+      db.query(
+        "INSERT INTO messages (run_id, session_id, msg, created_at) VALUES ('r','s',?,?)",
+      ).run(
+        JSON.stringify({
+          role: "assistant",
+          content: `More on Maria Delgado, batch ${i}. ${"z".repeat(300)}`,
+        }),
+        now,
+      );
+    await maybeCompact(
+      db,
+      events,
+      drop,
+      "s",
+      { sessionId: "s" },
+      { recentBudgetTokens: 100, anchorRunId: "r" },
+    );
+    const s = summaryRow(db);
+    const appendix = s.split("Load-bearing values")[1] ?? "";
+    expect(appendix).not.toContain("1788372056529");
+    expect(appendix).not.toContain("localhost:4800");
+    expect(s).toContain("Maria Delgado");
+  });
+});
