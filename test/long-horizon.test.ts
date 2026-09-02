@@ -675,9 +675,33 @@ describe("slice 4: recall search hardening (codex gate)", () => {
     expect(searchHistory(db, "s", "delgad", 5).length).toBe(1); // prefix
     expect(searchHistory(db, "s", "martinez", 5).length).toBe(1); // diacritics folded
     expect(searchHistory(db, "s", "zzz", 5).length).toBe(0);
-    // The index follows the table: a wiped row is gone from search too.
-    db.query("DELETE FROM messages WHERE session_id = 's'").run();
+    // Non-Latin scripts keep their marks on both sides and still match each other.
+    db.query(
+      "INSERT INTO messages (run_id, session_id, msg, active, created_at) VALUES ('r','s',?,0,?)",
+    ).run(JSON.stringify({ role: "assistant", content: "Συνάντηση με τον Ανδρέα άλφα" }), now);
+    expect(searchHistory(db, "s", "άλφα", 5).length).toBe(1);
+    // The index follows the table: an in-place rewrite (the breaker latch) and a wipe both land.
+    const id = (
+      db.query("SELECT id FROM messages WHERE msg LIKE '%ÉLODIE%'").get() as { id: number }
+    ).id;
+    db.query("UPDATE messages SET msg = ? WHERE id = ?").run(
+      JSON.stringify({ role: "assistant", content: "Rewritten: Quokka only." }),
+      id,
+    );
     expect(searchHistory(db, "s", "élodie", 5).length).toBe(0);
+    expect(searchHistory(db, "s", "quokka", 5).length).toBe(1);
+    db.query("DELETE FROM messages WHERE session_id = 's'").run();
+    expect(searchHistory(db, "s", "quokka", 5).length).toBe(0);
+  });
+
+  test("the recall query plan starts with one index probe, never a per-row FTS scan", () => {
+    const db = openDb(":memory:");
+    const plan = db
+      .query(
+        `EXPLAIN QUERY PLAN SELECT m.msg FROM messages_fts f CROSS JOIN messages m ON m.id = f.rowid JOIN runs r ON r.id = m.run_id WHERE messages_fts MATCH ? AND m.session_id = ? AND m.id > ? ORDER BY bm25(messages_fts), m.id DESC LIMIT ?`,
+      )
+      .all('"x"*', "s", 0, 60) as { detail: string }[];
+    expect(plan[0]?.detail).toMatch(/^SCAN f VIRTUAL TABLE INDEX/);
   });
 });
 

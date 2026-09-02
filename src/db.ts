@@ -320,6 +320,10 @@ export const MIGRATIONS: string[] = [
   CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
     INSERT INTO messages_fts(messages_fts, rowid, msg) VALUES ('delete', old.id, old.msg);
   END;
+  CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE OF msg ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, msg) VALUES ('delete', old.id, old.msg);
+    INSERT INTO messages_fts(rowid, msg) VALUES (new.id, new.msg);
+  END;
   `,
 ];
 
@@ -420,7 +424,15 @@ const STOPWORDS = new Set(
  * archive search so a multi-word query behaves the same everywhere (codex P2). */
 /** Case and diacritics folded, the same way the index tokenizer folds them, so the JS re-check on
  * readable text agrees with what the index matched ("Martínez" answers "martinez"). */
-export const fold = (x: string): string => x.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+export const fold = (x: string): string =>
+  x
+    .normalize("NFD")
+    // Only marks that follow a LATIN base letter are stripped, which is exactly what the index
+    // tokenizer's `remove_diacritics 2` does; Greek, Hebrew and Arabic marks stay so the JS
+    // re-check agrees with the index on those scripts too (codex P2).
+    .replace(/([A-Za-z\u00C0-\u024F])\p{M}+/gu, "$1")
+    .normalize("NFC")
+    .toLowerCase();
 export function recallTerms(q: string): string[] {
   return [
     ...new Set(
@@ -478,9 +490,12 @@ export function searchHistory(
   const match = terms.map((t) => `"${t.replace(/"/g, '""')}"*`).join(" OR ");
   const rows = db
     .query(
+      // CROSS JOIN pins the plan: the index probe runs ONCE and drives the row lookups. Left to
+      // the planner, `messages_session_id` went first and the FTS probe re-ran per row: ~15s for
+      // one common term over a 100MB window (codex P1). Pinned by a query-plan test.
       `SELECT m.msg AS msg, m.active AS active, m.run_id AS run_id, r.seq AS seq
        FROM messages_fts f
-       JOIN messages m ON m.id = f.rowid
+       CROSS JOIN messages m ON m.id = f.rowid
        JOIN runs r ON r.id = m.run_id
        WHERE messages_fts MATCH ? AND m.session_id = ? AND m.id > ?
        ORDER BY bm25(messages_fts), m.id DESC
