@@ -404,7 +404,7 @@ export function recallTerms(q: string): string[] {
     ...new Set(
       q
         .toLowerCase()
-        .split(/[^\p{L}\p{N}@._/%-]+/u)
+        .split(/[^\p{L}\p{M}\p{N}@._/%-]+/u)
         .map((w) => w.replace(/^[._/-]+|[._/-]+$/g, ""))
         .filter((w) => w.length >= 3 && !STOPWORDS.has(w)),
     ),
@@ -449,22 +449,29 @@ export function searchHistory(
       `SELECT COALESCE((SELECT id FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?), 0) - 1 AS floor`,
     )
     .get(sessionId, SCAN_WINDOW - 1) as { floor: number };
-  const rows = db
-    .query(
-      `SELECT m.msg AS msg, m.active AS active, m.run_id AS run_id, r.seq AS seq
-       FROM messages m JOIN runs r ON r.id = m.run_id
-       WHERE m.session_id = ? AND m.id > ? AND (${terms.map(() => "LOWER(m.msg) LIKE ? ESCAPE '\\'").join(" OR ")})
-       ORDER BY m.id DESC
-       LIMIT ?`,
-    )
-    // Bounded materialization (codex P1): at most SCAN_ROWS candidate rows leave SQLite, newest
-    // first, so a term that matches everything costs one bounded page, not the whole window.
-    .all(sessionId, floor, ...terms.map((t) => `%${esc(t)}%`), SCAN_ROWS) as Array<{
-    msg: string;
-    active: number;
-    run_id: string;
-    seq: number;
-  }>;
+  // Bounded candidates PER TERM, then deduped and ranked in JS (codex P1): one global LIMIT
+  // ordered by recency let 400 recent hits of a common term hide the one old row carrying the
+  // rare one. Per-term pages cost at most terms × SCAN_ROWS rows and every term gets its say.
+  // SQLite's LOWER folds ASCII only, so non-ASCII case (Élodie vs ÉLODIE) is matched as typed;
+  // stated as a limit rather than paid for with a custom collation.
+  const stmt = db.query(
+    `SELECT m.id AS id, m.msg AS msg, m.active AS active, m.run_id AS run_id, r.seq AS seq
+     FROM messages m JOIN runs r ON r.id = m.run_id
+     WHERE m.session_id = ? AND m.id > ? AND LOWER(m.msg) LIKE ? ESCAPE '\\'
+     ORDER BY m.id DESC
+     LIMIT ?`,
+  );
+  const byId = new Map<number, { msg: string; active: number; run_id: string; seq: number }>();
+  for (const t of terms)
+    for (const r of stmt.all(sessionId, floor, `%${esc(t)}%`, SCAN_ROWS) as Array<{
+      id: number;
+      msg: string;
+      active: number;
+      run_id: string;
+      seq: number;
+    }>)
+      byId.set(r.id, r);
+  const rows = [...byId.entries()].sort((a, b) => b[0] - a[0]).map(([, r]) => r);
   const ql = q.toLowerCase();
   const seen = new Map<string, RecallHit & { score: number }>();
   /** (run_id, call_id) pairs a transcript hit already covers, so the archive pass can dedupe. */
@@ -490,7 +497,8 @@ export function searchHistory(
     // call on a multi-call assistant would let a match in call A suppress the archived body of
     // call B, which is a silent loss rather than a dedupe (codex P1).
     for (const c of m.tool_calls ?? [])
-      if (c.function.arguments.toLowerCase().includes(ql)) matched.add(`${row.run_id}:${c.id}`);
+      if (terms.some((t) => c.function.arguments.toLowerCase().includes(t)))
+        matched.add(`${row.run_id}:${c.id}`);
     const key =
       m.role === "tool"
         ? `tool:${row.run_id}:${(m as { tool_call_id: string }).tool_call_id}`

@@ -345,6 +345,12 @@ function elideRowArgs(row: Row, cap: number): string {
   return changed ? JSON.stringify(m) : row.msg;
 }
 
+/** Ceiling and share of the shed prefix that ALL engine-built extras may occupy together. */
+const EXTRAS_MAX_BYTES = 6_000;
+const EXTRAS_SHARE = 0.15;
+/** Floor so a small compaction still carries its spill pointers: the W1 ledger is recoverability,
+ * and a few paths are a few hundred bytes against a shrink gate measured on the whole set. */
+const EXTRAS_MIN_BYTES = 1_000;
 const CALLS_LEDGER_MAX = 40;
 const CALLS_LEDGER_CHARS = 2_500;
 const CALL_ARG_HEAD = 90;
@@ -355,11 +361,26 @@ const CALL_ARG_HEAD = 90;
  * like the artifacts ledger, so it does not depend on the summarizer; the arguments are the
  * assistant's own text, but they are defanged at assembly with everything else. Pi carries the same
  * class of fact (`<read-files>`) outside the summary for the same reason. */
+/** Builtins whose arguments are paths, queries or keywords the engine itself authored the schema
+ * for. Everything else (MCP tools, `code`, `spawn_subagent`) is listed by NAME and count only: a
+ * hostile tool result can make the model echo an instruction into its next call's arguments, and a
+ * ledger that reprints those verbatim would carry the injection past the summarizer (codex P1). */
+const CALLS_WITH_ARGS = new Set([
+  "read_file",
+  "grep",
+  "list_dir",
+  "recall",
+  "web_search",
+  "web_fetch",
+]);
+const CALLS_INSPECT_MAX = 400;
 function collectCalls(rows: Row[]): string[] {
   const seen = new Set<string>();
+  const counts = new Map<string, number>();
   const out: string[] = [];
   let chars = 0;
-  for (let i = rows.length - 1; i >= 0; i--) {
+  let inspected = 0;
+  for (let i = rows.length - 1; i >= 0 && inspected < CALLS_INSPECT_MAX; i--) {
     let m: ChatMsg & { tool_calls?: Array<{ function: { name: string; arguments: string } }> };
     try {
       m = JSON.parse((rows[i] as Row).msg) as typeof m;
@@ -368,15 +389,29 @@ function collectCalls(rows: Row[]): string[] {
     }
     if (m.role !== "assistant" || !m.tool_calls?.length) continue;
     for (const c of m.tool_calls) {
-      const head = c.function.arguments.replace(/\s+/g, " ").slice(0, CALL_ARG_HEAD);
-      const line = `${c.function.name}(${head}${c.function.arguments.length > CALL_ARG_HEAD ? "…" : ""})`;
+      inspected++;
+      const name = c.function.name;
+      if (!CALLS_WITH_ARGS.has(name)) {
+        counts.set(name, (counts.get(name) ?? 0) + 1);
+        continue;
+      }
+      // Slice FIRST, then normalize: a 100KB argument must cost 90 characters of work, not 100KB.
+      const raw = c.function.arguments;
+      const head = raw.slice(0, CALL_ARG_HEAD).replace(/\s+/g, " ");
+      const line = `${name}(${head}${raw.length > CALL_ARG_HEAD ? "…" : ""})`;
       if (seen.has(line)) continue;
-      if (out.length >= CALLS_LEDGER_MAX || chars + line.length + 3 > CALLS_LEDGER_CHARS)
-        return out;
+      if (out.length >= CALLS_LEDGER_MAX || chars + line.length + 3 > CALLS_LEDGER_CHARS) break;
       seen.add(line);
       out.push(line);
       chars += line.length + 3;
     }
+  }
+  // Name-and-count lines for the rest, most-called first, inside the same bounds.
+  for (const [name, n] of [...counts.entries()].sort((a, b) => b[1] - a[1])) {
+    const line = `${name} ×${n}`;
+    if (out.length >= CALLS_LEDGER_MAX || chars + line.length + 3 > CALLS_LEDGER_CHARS) break;
+    out.push(line);
+    chars += line.length + 3;
   }
   return out;
 }
@@ -614,17 +649,30 @@ export async function maybeCompact(
   // Load-bearing tokens the summary MUST keep — from the recent slice (new findings) and the prior
   // summary (carried-forward facts, harvested first so recent numbers can't crowd them out).
   // Rows are stripped at load (M1) — no opaque base64 digit-runs can reach the harvest.
+  // TRUSTED = what the assistant and user SAID (content fields). Tool-call ARGUMENTS are not
+  // trusted for name harvesting even though the assistant wrote them: a hostile tool result can
+  // make the model echo an instruction into its next call, and the appendix would reprint it
+  // (codex P1, caught by the slice-6 test). Arguments join the tool results as UNTRUSTED text,
+  // where only identifier-shaped classes are harvested.
   const recent = prefix.slice(-14);
-  const isToolRow = (r: Row) => r.msg.startsWith('{"role":"tool"');
+  const said: string[] = [];
+  const untrusted: string[] = [];
+  for (const r of recent) {
+    let m: ChatMsg & { tool_calls?: Array<{ function: { arguments: string } }> };
+    try {
+      m = JSON.parse(r.msg) as typeof m;
+    } catch {
+      continue;
+    }
+    if (m.role === "tool") untrusted.push(typeof m.content === "string" ? m.content : "");
+    else {
+      if (typeof m.content === "string") said.push(m.content);
+      for (const c of m.tool_calls ?? []) untrusted.push(c.function.arguments);
+    }
+  }
   const ids = extractIdentifiers(
-    recent
-      .filter((r) => !isToolRow(r))
-      .map((r) => r.msg)
-      .join("\n"),
-    recent
-      .filter(isToolRow)
-      .map((r) => r.msg)
-      .join("\n"),
+    said.join("\n"),
+    untrusted.join("\n"),
     priorSummaries.map((r) => r.msg).join("\n"),
   );
 
@@ -740,18 +788,43 @@ export async function maybeCompact(
   // rely on it — scan the compacted prefix for capAndSpill markers and append a machine-built
   // list, so every full spilled result stays recoverable via read_file / recall after its
   // tool message is deactivated. Bounded + deduped so the ledger can't itself bloat context.
-  const artifacts = collectArtifacts(prefix);
-  const calls = collectCalls(prefix);
-  const callsLedger = calls.length
-    ? `\n\nCalls already made in the compacted turns (newest first; recall a keyword to read a result back instead of re-running it):\n${defang(calls.map((c) => `- ${c}`).join("\n"))}`
-    : "";
-  const ledger = artifacts.length
-    ? `\n\nArtifacts (full results on disk — read_file the path, or recall a keyword):\n${artifacts.map((p) => `- ${p}`).join("\n")}`
-    : "";
   // H3b: advertise the recovery path IN the summary. `recall` existed for three releases and was
   // used in 3% of production runs; the model cannot reach for a tool the compacted context never
   // mentions. One fixed line, engine-authored, so it costs the same on every generation.
   const recovery = `\n\nRecovery: the ${prefix.length} compacted turns stay searchable; call recall with a name, number or keyword before redoing work.`;
+  // ONE byte budget for every engine-built extra (artifacts ledger, calls ledger, footer),
+  // measured AFTER defanging and proportional to what this compaction sheds: a fixed allowance
+  // could exceed a small prefix on its own and make the shrink gate refuse every compaction,
+  // including the forced overflow one (codex P1). Priority order = recovery value per byte.
+  const shedBytes = prefix.reduce((n, r) => n + bytes(r.msg), 0);
+  let extrasLeft = Math.min(
+    EXTRAS_MAX_BYTES,
+    Math.max(EXTRAS_MIN_BYTES, Math.floor(shedBytes * EXTRAS_SHARE)),
+  );
+  const fit = (header: string, lines: string[]): string => {
+    if (!lines.length) return "";
+    const kept: string[] = [];
+    let used = bytes(header);
+    for (const l of lines) {
+      const d = defang(`- ${l}\n`);
+      if (used + bytes(d) > extrasLeft) break;
+      kept.push(d);
+      used += bytes(d);
+    }
+    if (!kept.length) return "";
+    extrasLeft -= used;
+    return `${header}${kept.join("")}`.replace(/\n$/, "");
+  };
+  const ledger = fit(
+    "\n\nArtifacts (full results on disk — read_file the path, or recall a keyword):\n",
+    collectArtifacts(prefix),
+  );
+  const recoveryFits = bytes(recovery) <= extrasLeft;
+  if (recoveryFits) extrasLeft -= bytes(recovery);
+  const callsLedger = fit(
+    "\n\nCalls already made in the compacted turns (newest first; recall a keyword to read a result back instead of re-running it):\n",
+    collectCalls(prefix),
+  );
 
   // The summary message separates TRUSTED task semantics (the original ask, an operator input)
   // from UNTRUSTED historical data (a model-written summary over tool output that may carry an
@@ -763,7 +836,7 @@ export async function maybeCompact(
     : "";
   const summaryContent =
     `${askBlock}The following is ${HISTORICAL_FRAMING}:\n` +
-    `<historical_context>\n[${prefix.length} earlier turns compacted]\n${defang(summary)}${idAppendix}${ledger}${callsLedger}${recovery}\n</historical_context>${SUMMARY_END_MARKER}`;
+    `<historical_context>\n[${prefix.length} earlier turns compacted]\n${defang(summary)}${idAppendix}${ledger}${callsLedger}${recoveryFits ? recovery : ""}\n</historical_context>${SUMMARY_END_MARKER}`;
 
   // PROVE it shrinks before committing: replacing a small prefix with a bounded summary envelope
   // can GROW the active set (codex repro), which would make overflow recovery worse and churn the
