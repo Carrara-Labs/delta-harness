@@ -401,7 +401,23 @@ const CACHE_MISS_REASONS = new Set([
   "messages_changed",
   "previous_message_not_found",
   "unavailable",
+  "none",
+  "pending",
 ]);
+/** The closed set a `cache_miss_reason` attribute may carry, enforced at the EXPORT boundary as
+ * well as at the wire (codex): a custom `chat` implementation could hand the loop any string, and
+ * a safe-listed attribute must never become a free-text channel. The count is a magnitude
+ * indicator; anything but a finite non-negative integer is dropped, not exported. */
+export function normalizeCacheMiss(
+  cm: { reason: string; missedTokens?: number } | undefined,
+): { reason: string; missedTokens?: number } | undefined {
+  if (!cm) return undefined;
+  const reason = CACHE_MISS_REASONS.has(cm.reason) ? cm.reason : "unknown";
+  const t = cm.missedTokens;
+  return Number.isInteger(t) && (t as number) >= 0
+    ? { reason, missedTokens: t as number }
+    : { reason };
+}
 export function anthropicSupportsFast(model: string): boolean {
   return /^claude-opus-(5|4-8)(?=$|[.-])/.test(model);
 }

@@ -259,6 +259,46 @@ describe("H5: history digest names the segment nobody measured", () => {
     expect(ids).toEqual([null, "msg_1", "msg_2"]);
   });
 
+  test("a call served without an id (non-Anthropic fallback) keeps the last anchor instead of dropping it", async () => {
+    const ids: Array<string | null | undefined> = [];
+    let call = 0;
+    const deps = makeDeps(async (req: ChatRequest) => {
+      ids.push(req.diagnosticsPrevId);
+      call++;
+      if (call > 3) return textResult("done");
+      const r = ok({
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: `c${call}`,
+            type: "function",
+            function: { name: "add", arguments: '{"a":1,"b":2}' },
+          },
+        ],
+      });
+      if (!r.ok) return r;
+      // Call 2 is served by a provider that returns no id (and a free-text verdict, which must
+      // never leave the box as-is).
+      return call === 2
+        ? { ...r, cacheMiss: { reason: "totally custom", missedTokens: -3 } }
+        : { ...r, responseId: `msg_${call}` };
+    }, testTools());
+    deps.cacheDiagnosis = true;
+    const seen: Record<string, unknown>[] = [];
+    deps.events.on((e) => {
+      if (e.type === "model.call") seen.push(e.data as Record<string, unknown>);
+    });
+    const queue = new Queue(deps);
+    const done = await queue.wait(queue.enqueue({ input: "add" }).id);
+    expect(done.status).toBe("done");
+    // msg_1 survives the id-less call 2 and anchors call 3; call 4 then carries msg_3.
+    expect(ids).toEqual([null, "msg_1", "msg_1", "msg_3"]);
+    // The export boundary re-allowlists: unknown reason, invalid count dropped.
+    expect(seen[1]?.cache_miss_reason).toBe("unknown");
+    expect(seen[1]?.cache_missed_input_tokens).toBeUndefined();
+  });
+
   test("with the feature off the request never carries the field", async () => {
     const ids: Array<string | null | undefined> = [];
     const deps = makeDeps(async (req: ChatRequest) => {

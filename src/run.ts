@@ -32,6 +32,7 @@ import type {
 } from "./provider";
 import {
   KNOWN_EFFORTS,
+  normalizeCacheMiss,
   normalizeEffort,
   OVERFLOW,
   outputCapped,
@@ -1227,7 +1228,10 @@ export async function executeRun(
     lastInputTokens = result.usage.input;
     prevCallInput = result.usage.input;
     lastHistoryN = history.length; // the span the next turn digests for comparison
-    if (prevResponseId !== undefined) prevResponseId = result.responseId ?? null;
+    // Advance the anchor only on a response that carries an id. A call served by a non-Anthropic
+    // fallback has none; discarding the last native id there would throw away the next comparison
+    // for nothing, since appended turns still compare cleanly against an older fingerprint (codex).
+    if (prevResponseId !== undefined && result.responseId) prevResponseId = result.responseId;
     // Pair the real gross input with a byte-estimate of the SAME (final, post-compaction) request,
     // so next turn can project growth off a provider-measured anchor (S7). `history` is unchanged
     // between the send above and here (tool results are appended later in the loop).
@@ -1296,14 +1300,19 @@ export async function executeRun(
         // H1a: absent until a compaction commits in this process; 0 = the reload call itself.
         ...(turnsSinceCompaction >= 0 ? { turns_since_compaction: turnsSinceCompaction } : {}),
         // H5: the provider's own verdict on WHY the prefix missed, when diagnostics are on.
-        ...(result.cacheMiss
-          ? {
-              cache_miss_reason: result.cacheMiss.reason,
-              ...(result.cacheMiss.missedTokens !== undefined
-                ? { cache_missed_input_tokens: result.cacheMiss.missedTokens }
-                : {}),
-            }
-          : {}),
+        // Re-allowlisted HERE, at the export boundary, not only on the wire: a custom `chat` can
+        // hand the loop any string, and a safe-listed attribute must stay a closed enum (codex).
+        ...(() => {
+          const cm = normalizeCacheMiss(result.cacheMiss);
+          return cm
+            ? {
+                cache_miss_reason: cm.reason,
+                ...(cm.missedTokens !== undefined
+                  ? { cache_missed_input_tokens: cm.missedTokens }
+                  : {}),
+              }
+            : {};
+        })(),
       },
     );
     if (turnsSinceCompaction >= 0) turnsSinceCompaction++;
