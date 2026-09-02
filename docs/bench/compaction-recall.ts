@@ -31,6 +31,11 @@ if (!dbPath) {
 const MODEL = process.env.RECALL_MODEL ?? "claude-sonnet-5";
 const N = Number(process.env.RECALL_N ?? 12);
 const MAX_CUTS = Number(process.env.RECALL_MAX_CUTS ?? 20);
+/** RECALL_REPLAY=1: also re-run the ENGINE's compaction (src/compaction.ts, this checkout) on each
+ * cut's reconstructed active set, with the production utility model, and score the fresh summary on
+ * the same questions. This is how a prompt or anchor change is measured before a battery. */
+const REPLAY = process.env.RECALL_REPLAY === "1";
+const SUMMARY_MODEL = process.env.RECALL_SUMMARY_MODEL ?? "claude-haiku-4-5-20251001";
 const ONLY = (process.env.RECALL_SESSIONS ?? "").split(",").filter(Boolean);
 const cfg: ProviderConfig = {
   baseUrl: process.env.MODEL_BASE_URL ?? "https://api.anthropic.com/v1",
@@ -181,6 +186,15 @@ type CutResult = {
   closed: Arm;
   recovery: Arm;
   recallHitRate: number;
+  /** Closed-book on the summary the CURRENT engine code produces for the same cut (RECALL_REPLAY). */
+  replay?: Arm;
+  replayInfo?: {
+    summaryChars: number;
+    audited: number;
+    missing: number;
+    appended: number;
+    generation: number;
+  };
 };
 
 // ── 3. run ────────────────────────────────────────────────────────────────────
@@ -243,8 +257,85 @@ for (const cut of selected) {
         : "wrong";
   const closed: Arm = { correct: 0, abstain: 0, wrong: 0 };
   const recovery: Arm = { correct: 0, abstain: 0, wrong: 0 };
+  const replay: Arm = { correct: 0, abstain: 0, wrong: 0 };
+  let replayContext: string | null = null;
+  let replayInfo: CutResult["replayInfo"];
+  if (REPLAY) {
+    // Reconstruct the active set as the engine saw it: prior summary (if any), the region, and
+    // the retained tail rows, then let THIS checkout's maybeCompact cut it with the same tail
+    // budget and the production utility model. The pinned ask is lifted from the original row.
+    const { openDb } = await import("../../src/db");
+    const { Events } = await import("../../src/events");
+    const { maybeCompact } = await import("../../src/compaction");
+    const mem = openDb(":memory:");
+    const now = Date.now();
+    mem
+      .query("INSERT INTO sessions (id, user_id, created_at, updated_at) VALUES ('s', NULL, ?, ?)")
+      .run(now, now);
+    const ask0 =
+      summaryText.match(/<original_request>\n([\s\S]*?)\n<\/original_request>/)?.[1] ?? "";
+    mem
+      .query(
+        "INSERT INTO runs (id, session_id, seq, status, request, created_at) VALUES ('r','s',1,'running',?,?)",
+      )
+      .run(JSON.stringify({ input: ask0.replace(/&lt;/g, "<").replace(/&gt;/g, ">") }), now);
+    const prior = cut.prevSummaryId
+      ? (db.query("SELECT msg FROM messages WHERE id = ?").get(cut.prevSummaryId) as {
+          msg: string;
+        } | null)
+      : null;
+    const seedRows = [
+      ...(prior ? [prior.msg] : []),
+      ...cut.region.map((r) => r.msg),
+      ...cut.tail.map((r) => r.msg),
+    ];
+    for (const m of seedRows)
+      mem
+        .query("INSERT INTO messages (run_id, session_id, msg, created_at) VALUES ('r','s',?,?)")
+        .run(m, now);
+    const events = new Events(mem);
+    let ev: Record<string, unknown> | undefined;
+    events.on((e) => {
+      if (e.type === "compaction") ev = e.data as Record<string, unknown>;
+    });
+    const tailTokens = Math.ceil(cut.tail.reduce((n, r) => n + r.msg.length, 0) / 3);
+    const sumCfg: ProviderConfig = { ...cfg, models: [SUMMARY_MODEL] };
+    await maybeCompact(
+      mem,
+      events,
+      (req) => chat(sumCfg, req),
+      "s",
+      { sessionId: "s" },
+      {
+        recentBudgetTokens: tailTokens,
+        anchorRunId: "r",
+      },
+    );
+    const fresh = (
+      mem.query("SELECT msg FROM messages WHERE session_id='s' AND active=1 ORDER BY id").all() as {
+        msg: string;
+      }[]
+    )
+      .map((r) => JSON.parse(r.msg) as ChatMsg)
+      .map((m) => (typeof m.content === "string" ? m.content : ""))
+      .find((c) => c.includes("earlier turns compacted"));
+    if (fresh) {
+      replayContext = `You are continuing an agent's task after its context was compacted. Everything you know is below. Answer each question from this context only. If the context does not contain the answer, reply exactly UNKNOWN. Answer in under 15 words.\n\n=== COMPACTION SUMMARY ===\nUSER: ${fresh}\n\n=== RETAINED RECENT TURNS ===\n${clip(tailText, 100_000)}`;
+      replayInfo = {
+        summaryChars: fresh.length,
+        audited: Number(ev?.identifiers_audited ?? 0),
+        missing: Number(ev?.identifiers_missing ?? 0),
+        appended: Number(ev?.identifiers_appended ?? 0),
+        generation: Number(ev?.generation ?? 0),
+      };
+    } else
+      console.error(
+        `cut ${cut.session.slice(0, 13)}#${cut.gen}: replay produced no summary (${JSON.stringify(ev)})`,
+      );
+  }
   let hits = 0;
   for (const x of qs) {
+    if (replayContext) replay[judge(await ask(replayContext, x.q), x.a)]++;
     // Arm A: closed book. Same system prompt for every question, so the provider caches it.
     const a = await ask(context, x.q);
     closed[judge(a, x.a)]++;
@@ -280,28 +371,36 @@ for (const cut of selected) {
     closed,
     recovery,
     recallHitRate: qs.length ? hits / qs.length : 0,
+    ...(replayContext ? { replay, replayInfo } : {}),
   };
   results.push(res);
   console.error(
-    `${cut.session.slice(0, 13)} gen${cut.gen} n=${qs.length} closed ${closed.correct}/${closed.abstain}/${closed.wrong} recovery ${recovery.correct}/${recovery.abstain}/${recovery.wrong} recall-hit ${(res.recallHitRate * 100).toFixed(0)}%`,
+    `${cut.session.slice(0, 13)} gen${cut.gen} n=${qs.length} closed ${closed.correct}/${closed.abstain}/${closed.wrong} recovery ${recovery.correct}/${recovery.abstain}/${recovery.wrong} recall-hit ${(res.recallHitRate * 100).toFixed(0)}%${replayContext ? ` replay ${replay.correct}/${replay.abstain}/${replay.wrong} (ids ${replayInfo?.missing}/${replayInfo?.audited}+${replayInfo?.appended}, ${replayInfo?.summaryChars} chars)` : ""}`,
   );
 }
 
 // ── 4. report ─────────────────────────────────────────────────────────────────
-const byGen = new Map<number, { n: number; c: Arm; r: Arm; hits: number; cuts: number }>();
+const byGen = new Map<
+  number,
+  { n: number; c: Arm; r: Arm; p: Arm; pn: number; hits: number; cuts: number }
+>();
 for (const r of results) {
   const g = byGen.get(r.gen) ?? {
     n: 0,
     c: { correct: 0, abstain: 0, wrong: 0 },
     r: { correct: 0, abstain: 0, wrong: 0 },
+    p: { correct: 0, abstain: 0, wrong: 0 },
+    pn: 0,
     hits: 0,
     cuts: 0,
   };
   g.n += r.n;
   g.cuts++;
+  if (r.replay) g.pn += r.n;
   for (const k of ["correct", "abstain", "wrong"] as const) {
     g.c[k] += r.closed[k];
     g.r[k] += r.recovery[k];
+    if (r.replay) g.p[k] += r.replay[k];
   }
   g.hits += r.recallHitRate * r.n;
   byGen.set(r.gen, g);
@@ -310,13 +409,13 @@ const pct = (a: number, b: number) => (b ? `${((100 * a) / b).toFixed(0)}%` : "-
 const lines = [
   `# Compaction recall - ${dbPath} - model ${MODEL} - ${results.length} cuts, ${results.reduce((n, r) => n + r.n, 0)} questions`,
   "",
-  "| generation | cuts | questions | closed-book correct | abstain | wrong | +recovery correct | abstain | wrong | recall hit rate |",
-  "|---|---|---|---|---|---|---|---|---|---|",
+  "| generation | cuts | questions | closed-book correct | abstain | wrong | +recovery correct | abstain | wrong | recall hit rate | replay correct | abstain | wrong |",
+  "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
   ...[...byGen.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(
       ([g, v]) =>
-        `| ${g} | ${v.cuts} | ${v.n} | ${pct(v.c.correct, v.n)} | ${pct(v.c.abstain, v.n)} | ${pct(v.c.wrong, v.n)} | ${pct(v.r.correct, v.n)} | ${pct(v.r.abstain, v.n)} | ${pct(v.r.wrong, v.n)} | ${pct(v.hits, v.n)} |`,
+        `| ${g} | ${v.cuts} | ${v.n} | ${pct(v.c.correct, v.n)} | ${pct(v.c.abstain, v.n)} | ${pct(v.c.wrong, v.n)} | ${pct(v.r.correct, v.n)} | ${pct(v.r.abstain, v.n)} | ${pct(v.r.wrong, v.n)} | ${pct(v.hits, v.n)} | ${pct(v.p.correct, v.pn)} | ${pct(v.p.abstain, v.pn)} | ${pct(v.p.wrong, v.pn)} |`,
     ),
 ];
 const all = results.reduce(
