@@ -627,6 +627,29 @@ describe("slice 4: recall search hardening (codex gate)", () => {
     expect(hits.some((h) => h.snippet.includes("Rottnest"))).toBe(true);
     expect(searchHistory(db, "s", "the", 5)).toEqual([]);
   });
+
+  test("a common NON-stopword cannot starve the rare term either (per-term candidate pages)", () => {
+    const db = openDb(":memory:");
+    const now = Date.now();
+    db.query(
+      "INSERT INTO sessions (id, user_id, created_at, updated_at) VALUES ('s', NULL, ?, ?)",
+    ).run(now, now);
+    db.query(
+      "INSERT INTO runs (id, session_id, seq, status, request, created_at) VALUES ('r','s',1,'running','{}',?)",
+    ).run(now);
+    const ins = db.query(
+      "INSERT INTO messages (run_id, session_id, msg, active, created_at) VALUES ('r','s',?,?,?)",
+    );
+    ins.run(
+      JSON.stringify({ role: "assistant", content: "Rareword sighted at Rottnest." }),
+      0,
+      now,
+    );
+    for (let i = 0; i < 600; i++)
+      ins.run(JSON.stringify({ role: "assistant", content: `candidate ${i} reviewed` }), 1, now);
+    const hits = searchHistory(db, "s", "candidate rareword", 5);
+    expect(hits.some((h) => h.snippet.includes("Rottnest"))).toBe(true);
+  });
 });
 
 // ── slice 6: the calls ledger ────────────────────────────────────────────────

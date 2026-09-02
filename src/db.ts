@@ -388,7 +388,7 @@ const SPILL_PATH = /saved to (\/[^\s;]+)/;
 const SCAN_WINDOW = 5000;
 /** Candidate rows materialized per search (newest first). ~20KB rows × 400 = 8MB, a bounded page
  * on a 512MB machine even when every term is common. */
-const SCAN_ROWS = 400;
+const SCAN_ROWS = 100;
 /** Words that carry no recall signal; a search of only these returns nothing rather than everything.
  * Small on purpose: an unknown word is far likelier to be an identifier than a function word. */
 const STOPWORDS = new Set(
@@ -408,7 +408,7 @@ export function recallTerms(q: string): string[] {
         .map((w) => w.replace(/^[._/-]+|[._/-]+$/g, ""))
         .filter((w) => w.length >= 3 && !STOPWORDS.has(w)),
     ),
-  ].slice(0, 8);
+  ].slice(0, 6);
 }
 
 /** Search THIS session's message history — active AND compacted-out rows — for a keyword.
@@ -449,30 +449,32 @@ export function searchHistory(
       `SELECT COALESCE((SELECT id FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?), 0) - 1 AS floor`,
     )
     .get(sessionId, SCAN_WINDOW - 1) as { floor: number };
-  // ONE scan of the window, ranked IN SQL by how many terms a row carries, then recency, then a
-  // bounded page (codex, two rounds): a global recency-first LIMIT let 400 recent hits of a common
-  // term hide the one old row carrying the rare one, and per-term pages scanned the window once
-  // per term. Coverage-first ordering keeps the rare-term row on the page whatever the common
-  // term does, at one pass over at most SCAN_WINDOW rows. SQLite's LOWER folds ASCII only, so
-  // non-ASCII case (Élodie vs ÉLODIE) is matched as typed and NFC/NFD are not unified; stated as
-  // a limit rather than paid for with a custom collation.
-  const likes = terms.map(() => "(LOWER(m.msg) LIKE ? ESCAPE '\\')");
-  const pats = terms.map((t) => `%${esc(t)}%`);
-  const rows = db
-    .query(
-      `SELECT m.msg AS msg, m.active AS active, m.run_id AS run_id, r.seq AS seq,
-              (${likes.join(" + ")}) AS hits
-       FROM messages m JOIN runs r ON r.id = m.run_id
-       WHERE m.session_id = ? AND m.id > ? AND (${likes.join(" OR ")})
-       ORDER BY hits DESC, m.id DESC
-       LIMIT ?`,
-    )
-    .all(...pats, sessionId, floor, ...pats, SCAN_ROWS) as Array<{
-    msg: string;
-    active: number;
-    run_id: string;
-    seq: number;
-  }>;
+  // A bounded page PER TERM (newest first), deduped, then ranked in JS. This is the only shape
+  // that guarantees every term a voice: a single coverage-ranked global page let 400 newer rows
+  // matching a common word starve the one older row carrying the rare one (codex, three rounds).
+  // Cost is CPU-bounded (one LIKE pass over the window per term, terms capped) rather than
+  // memory-bounded (at most terms × SCAN_ROWS rows materialized), which is the right trade on a
+  // 512 MB machine. SQLite's LOWER folds ASCII only, so non-ASCII case (Élodie vs ÉLODIE) is
+  // matched as typed and NFC/NFD are not unified; stated as a limit rather than paid for with a
+  // custom collation.
+  const stmt = db.query(
+    `SELECT m.id AS id, m.msg AS msg, m.active AS active, m.run_id AS run_id, r.seq AS seq
+     FROM messages m JOIN runs r ON r.id = m.run_id
+     WHERE m.session_id = ? AND m.id > ? AND LOWER(m.msg) LIKE ? ESCAPE '\\'
+     ORDER BY m.id DESC
+     LIMIT ?`,
+  );
+  const byId = new Map<number, { msg: string; active: number; run_id: string; seq: number }>();
+  for (const t of terms)
+    for (const r of stmt.all(sessionId, floor, `%${esc(t)}%`, SCAN_ROWS) as Array<{
+      id: number;
+      msg: string;
+      active: number;
+      run_id: string;
+      seq: number;
+    }>)
+      byId.set(r.id, r);
+  const rows = [...byId.entries()].sort((a, b) => b[0] - a[0]).map(([, r]) => r);
   const ql = q.toLowerCase();
   const seen = new Map<string, RecallHit & { score: number }>();
   /** Per (run_id, call_id): the query terms a VISIBLE hit already covers. The archive pass skips an

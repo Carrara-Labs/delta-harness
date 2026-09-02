@@ -802,7 +802,7 @@ export async function maybeCompact(
     // The floor applies once there is something worth pointing at; a tiny prefix gets a tiny
     // allowance so the extras can never be what makes a small compaction fail to shrink (codex).
     Math.max(
-      shedBytes >= EXTRAS_MIN_BYTES * 8 ? EXTRAS_MIN_BYTES : 200,
+      shedBytes >= EXTRAS_MIN_BYTES * 8 ? EXTRAS_MIN_BYTES : 0,
       Math.floor(shedBytes * EXTRAS_SHARE),
     ),
   );
@@ -820,10 +820,13 @@ export async function maybeCompact(
     extrasLeft -= used;
     return `${header}${kept.join("")}`.replace(/\n$/, "");
   };
-  const ledger = fit(
-    "\n\nArtifacts (full results on disk — read_file the path, or recall a keyword):\n",
-    collectArtifacts(prefix),
-  );
+  // The artifacts ledger is recoverability, not an extra: a spill path exists only because a
+  // result over the inline cap was shed, so the prefix is never small when there is one, and it
+  // keeps its own bound (LEDGER_MAX_PATHS / LEDGER_MAX_CHARS) outside the proportional budget.
+  const artifacts = collectArtifacts(prefix);
+  const ledger = artifacts.length
+    ? `\n\nArtifacts (full results on disk — read_file the path, or recall a keyword):\n${artifacts.map((p) => `- ${p}`).join("\n")}`
+    : "";
   const recoveryFits = bytes(recovery) <= extrasLeft;
   if (recoveryFits) extrasLeft -= bytes(recovery);
   const callsLedger = fit(
