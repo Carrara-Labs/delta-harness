@@ -12,11 +12,11 @@ model) plus an offline recall eval that re-runs the engine's own compaction on a
 production transcripts. Study and receipts: `docs/study-long-horizon-synthesis.md`.
 
 ### Upgrade
-No schema migration; reversible from 0.2.13-0.2.16. No wire change unless `DELTA_CACHE_DIAGNOSIS=1`
+Schema migration v15 to v16 (the recall index; backfilled once at boot, a few seconds on a
+100 MB database). One-way like v15: snapshot `/data` before upgrading a lane. No wire change unless `DELTA_CACHE_DIAGNOSIS=1`
 is set (then the Anthropic-native wire adds the `cache-diagnosis-2026-04-07` beta header and a
 `diagnostics.previous_message_id` field). Compaction summaries gain a bounded appendix, two
-deterministic ledgers and a one-line recovery footer; the retained tail is unchanged at ceilings
-of 120k tokens and above.
+deterministic ledgers and a one-line recovery footer.
 
 ### Added
 - **The post-compaction reload is a number.** `model.call` carries `turns_since_compaction`
@@ -37,13 +37,12 @@ of 120k tokens and above.
 - **Calls ledger.** Each summary lists the tool calls it compacted (builtin arguments deduped
   newest first; MCP tools by name and count) so the agent does not re-run a search it already
   ran. Plus a fixed recovery line naming `recall`.
-- **Ranked recall.** `recall` matches any query word (word-boundary tokens, stopwords dropped,
-  bounded candidates per term), ranks by terms hit, whole-phrase first. On identical questions
-  from production compactions the recovery arm went from 21% to 53% correct (72% on facts the
-  agent itself surfaced).
-- **Proportional retained tail below 120k.** `retainedTailBudget` is min(remainder, max(6k, 20%
-  of the ceiling), 24k). At a 60k ceiling 0.2.16 compacted 25 times in 62 turns on a 5-person
-  shortlist ($9.29); the candidate finished it in 11 turns ($0.85).
+- **Indexed recall.** `recall` runs on an FTS5 index over the message table (migration v16:
+  external-content, insert/update/delete triggers, unicode61 with diacritics folded, bm25).
+  Any query word qualifies a row (function words dropped, prefix match), rare words outrank
+  common ones, whole-phrase hits first. On identical questions from production compactions the
+  recovery arm went from 21% to 52% correct (72% on facts the agent itself surfaced), at index
+  cost instead of a scan.
 - **Shadow loop guard.** `loop.repeat` is emitted when the same executed tool + arguments +
   result recurs three times in a row. Observation only, never changes execution.
 - **Compaction event enrichment.** `generation`, `summary_finish_reason`, `summary_chars`
