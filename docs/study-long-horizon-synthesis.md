@@ -577,8 +577,11 @@ control lane, 5 cuts scored so far, ranked search in the recovery arm.
 | 563c5654 gen 3 | 0 / 12 | 10 / 12 | 92% |
 | 973bf659 gen 1 | 4 / 11 | 8 / 11 | 55% |
 
-Closed-book stays at about a quarter; the recovery arm reaches 71% on the facts the agent wrote
-down itself, and 92% on the deeper generations where the summary alone is at zero. That is the
+Final, 8 cuts / 87 questions: closed-book 30% / 45% / 0% at generations 1 / 2 / 3; the recovery
+arm 72% / 68% / 83%; recall hit rate 70% / 73% / 92%. The replayed slice-3 summaries score 32% /
+27% / 17% closed-book, within noise of the originals. On the facts the agent wrote down itself,
+recovery answers about three questions in four at every depth, and best exactly where the summary
+alone is at zero. That is the
 long-horizon shape the build should optimize for: a summary that keeps structure and a recall path
 that reliably returns the fact. The remaining gap is that agents do not call `recall` (0 of 45 runs
 in battery 0, 0 of 23 candidate runs in battery 1 so far, recovery footer included).
