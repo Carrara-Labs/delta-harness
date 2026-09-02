@@ -449,33 +449,41 @@ export function searchHistory(
       `SELECT COALESCE((SELECT id FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?), 0) - 1 AS floor`,
     )
     .get(sessionId, SCAN_WINDOW - 1) as { floor: number };
-  // Bounded candidates PER TERM, then deduped and ranked in JS (codex P1): one global LIMIT
-  // ordered by recency let 400 recent hits of a common term hide the one old row carrying the
-  // rare one. Per-term pages cost at most terms × SCAN_ROWS rows and every term gets its say.
-  // SQLite's LOWER folds ASCII only, so non-ASCII case (Élodie vs ÉLODIE) is matched as typed;
-  // stated as a limit rather than paid for with a custom collation.
-  const stmt = db.query(
-    `SELECT m.id AS id, m.msg AS msg, m.active AS active, m.run_id AS run_id, r.seq AS seq
-     FROM messages m JOIN runs r ON r.id = m.run_id
-     WHERE m.session_id = ? AND m.id > ? AND LOWER(m.msg) LIKE ? ESCAPE '\\'
-     ORDER BY m.id DESC
-     LIMIT ?`,
-  );
-  const byId = new Map<number, { msg: string; active: number; run_id: string; seq: number }>();
-  for (const t of terms)
-    for (const r of stmt.all(sessionId, floor, `%${esc(t)}%`, SCAN_ROWS) as Array<{
-      id: number;
-      msg: string;
-      active: number;
-      run_id: string;
-      seq: number;
-    }>)
-      byId.set(r.id, r);
-  const rows = [...byId.entries()].sort((a, b) => b[0] - a[0]).map(([, r]) => r);
+  // ONE scan of the window, ranked IN SQL by how many terms a row carries, then recency, then a
+  // bounded page (codex, two rounds): a global recency-first LIMIT let 400 recent hits of a common
+  // term hide the one old row carrying the rare one, and per-term pages scanned the window once
+  // per term. Coverage-first ordering keeps the rare-term row on the page whatever the common
+  // term does, at one pass over at most SCAN_WINDOW rows. SQLite's LOWER folds ASCII only, so
+  // non-ASCII case (Élodie vs ÉLODIE) is matched as typed and NFC/NFD are not unified; stated as
+  // a limit rather than paid for with a custom collation.
+  const likes = terms.map(() => "(LOWER(m.msg) LIKE ? ESCAPE '\\')");
+  const pats = terms.map((t) => `%${esc(t)}%`);
+  const rows = db
+    .query(
+      `SELECT m.msg AS msg, m.active AS active, m.run_id AS run_id, r.seq AS seq,
+              (${likes.join(" + ")}) AS hits
+       FROM messages m JOIN runs r ON r.id = m.run_id
+       WHERE m.session_id = ? AND m.id > ? AND (${likes.join(" OR ")})
+       ORDER BY hits DESC, m.id DESC
+       LIMIT ?`,
+    )
+    .all(...pats, sessionId, floor, ...pats, SCAN_ROWS) as Array<{
+    msg: string;
+    active: number;
+    run_id: string;
+    seq: number;
+  }>;
   const ql = q.toLowerCase();
   const seen = new Map<string, RecallHit & { score: number }>();
-  /** (run_id, call_id) pairs a transcript hit already covers, so the archive pass can dedupe. */
-  const matched = new Set<string>();
+  /** Per (run_id, call_id): the query terms a VISIBLE hit already covers. The archive pass skips an
+   * elided body only when every term it carries is already represented by that visible hit; a
+   * body matching a term the visible arguments do not is new evidence, not a duplicate (codex P1). */
+  const matched = new Map<string, Set<string>>();
+  const cover = (key: string, ts: string[]) => {
+    const set = matched.get(key) ?? new Set<string>();
+    for (const t of ts) set.add(t);
+    matched.set(key, set);
+  };
   for (const row of rows) {
     let m: ChatMsg & { tool_calls?: AssistantToolCall[] };
     try {
@@ -492,13 +500,15 @@ export function searchHistory(
     const score = (phraseIdx >= 0 ? terms.length + 1 : 0) + hitTerms.length;
     const idx = phraseIdx >= 0 ? phraseIdx : lower.indexOf(hitTerms[0] as string);
     if (m.role === "tool")
-      matched.add(`${row.run_id}:${(m as { tool_call_id: string }).tool_call_id}`);
+      cover(`${row.run_id}:${(m as { tool_call_id: string }).tool_call_id}`, hitTerms);
     // Only the call whose VISIBLE arguments carry the term is covered by this hit. Marking every
     // call on a multi-call assistant would let a match in call A suppress the archived body of
     // call B, which is a silent loss rather than a dedupe (codex P1).
-    for (const c of m.tool_calls ?? [])
-      if (terms.some((t) => c.function.arguments.toLowerCase().includes(t)))
-        matched.add(`${row.run_id}:${c.id}`);
+    for (const c of m.tool_calls ?? []) {
+      const al = c.function.arguments.toLowerCase();
+      const argTerms = terms.filter((t) => al.includes(t));
+      if (argTerms.length) cover(`${row.run_id}:${c.id}`, argTerms);
+    }
     const key =
       m.role === "tool"
         ? `tool:${row.run_id}:${(m as { tool_call_id: string }).tool_call_id}`
@@ -549,7 +559,7 @@ function searchArchive(
   sessionId: string,
   query: string,
   limit: number,
-  matched: Set<string>,
+  matched: Map<string, Set<string>>,
 ): RecallHit[] {
   const terms = recallTerms(query);
   const ql = query.toLowerCase();
@@ -558,9 +568,6 @@ function searchArchive(
   for (const ref of listArtifacts(db, sessionId)) {
     if (out.length >= limit) break;
     if (emitted.has(`${ref.runId}:${ref.callId}`)) continue;
-    // Deduped against the transcript by (run_id, call_id): a term visible in a SURVIVING field of
-    // the same call already produced a live hit, and one call should yield one hit.
-    if (matched.has(`${ref.runId}:${ref.callId}`)) continue;
     const row = db
       .query("SELECT args FROM journal WHERE run_id = ? AND call_id = ?")
       .get(ref.runId, ref.callId) as { args: string } | null;
@@ -576,9 +583,13 @@ function searchArchive(
     const lower = text.toLowerCase();
     // Same contract as the transcript pass: whole phrase first, else any term (codex P2).
     const phraseIdx = lower.indexOf(ql);
-    const hit = terms.find((t) => lower.includes(t));
-    if (phraseIdx < 0 && hit === undefined) continue;
-    const idx = phraseIdx >= 0 ? phraseIdx : lower.indexOf(hit as string);
+    const bodyTerms = terms.filter((t) => lower.includes(t));
+    if (phraseIdx < 0 && !bodyTerms.length) continue;
+    // Deduped against the transcript by (run_id, call_id) AND by term: skipped only when the
+    // visible hit already covered every term this body carries (codex P1).
+    const covered = matched.get(`${ref.runId}:${ref.callId}`);
+    if (covered && bodyTerms.every((t) => covered.has(t))) continue;
+    const idx = phraseIdx >= 0 ? phraseIdx : lower.indexOf(bodyTerms[0] as string);
     emitted.add(`${ref.runId}:${ref.callId}`);
     const start = Math.max(0, idx - 400);
     const end = Math.min(text.length, idx + ql.length + 400);

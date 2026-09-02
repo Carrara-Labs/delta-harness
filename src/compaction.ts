@@ -389,7 +389,7 @@ function collectCalls(rows: Row[]): string[] {
     }
     if (m.role !== "assistant" || !m.tool_calls?.length) continue;
     for (const c of m.tool_calls) {
-      inspected++;
+      if (++inspected > CALLS_INSPECT_MAX) break;
       const name = c.function.name;
       if (!CALLS_WITH_ARGS.has(name)) {
         counts.set(name, (counts.get(name) ?? 0) + 1);
@@ -799,7 +799,12 @@ export async function maybeCompact(
   const shedBytes = prefix.reduce((n, r) => n + bytes(r.msg), 0);
   let extrasLeft = Math.min(
     EXTRAS_MAX_BYTES,
-    Math.max(EXTRAS_MIN_BYTES, Math.floor(shedBytes * EXTRAS_SHARE)),
+    // The floor applies once there is something worth pointing at; a tiny prefix gets a tiny
+    // allowance so the extras can never be what makes a small compaction fail to shrink (codex).
+    Math.max(
+      shedBytes >= EXTRAS_MIN_BYTES * 8 ? EXTRAS_MIN_BYTES : 200,
+      Math.floor(shedBytes * EXTRAS_SHARE),
+    ),
   );
   const fit = (header: string, lines: string[]): string => {
     if (!lines.length) return "";
