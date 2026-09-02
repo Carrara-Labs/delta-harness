@@ -110,6 +110,8 @@ function isEngineSummaryRow(msg: string): boolean {
 }
 
 const AUDIT_MAX = 60;
+/** What `summary_finish_reason` may carry off-box; anything else is `unknown`. */
+const FINISH_REASONS = new Set(["stop", "length", "tool_calls", "end_turn", "max_tokens"]);
 
 /** The anchor index (H3a, 2026-09-02). Harvest load-bearing tokens the summary must keep
  * verbatim, by CLASS with a budget per class so no one kind can crowd the others out: spill paths,
@@ -132,26 +134,35 @@ const ANCHOR_CLASSES: Array<{ re: RegExp; cap: number; byFrequency?: boolean }> 
   { re: /\b(?:19|20)\d{2}\b/g, cap: 6 }, // years
   { re: /\b\d[\d,.]{2,}\b/g, cap: 10 }, // numbers (≥3 digits, decimals/commas)
 ];
-function extractIdentifiers(recent: string, prior: string): string[] {
+/** `trusted` = the assistant's and user's own rows; `untrusted` = tool results. The NAME class is
+ * harvested from trusted text and the prior summary only: a tool result is attacker-influenced,
+ * and a three-word capitalized phrase is exactly the shape of an instruction ("Ignore Previous
+ * Instructions"), which the appendix would then reinsert verbatim after the summarizer dropped it
+ * (codex P1). Identifier-shaped classes (URLs, emails, slugs, years, numbers) cannot carry a
+ * sentence and are harvested from every row. Prior-summary matches are taken FIRST in every class
+ * so a burst of recent values can never evict a carried-forward fact (codex P2). */
+function extractIdentifiers(trusted: string, untrusted: string, prior: string): string[] {
   const out = new Set<string>();
   for (const cls of ANCHOR_CLASSES) {
     if (out.size >= AUDIT_MAX) break;
     let taken = 0;
     const take = (v: string) => {
-      if (taken >= cls.cap || out.size >= AUDIT_MAX || out.has(v)) return;
+      // Length-bounded at harvest, not only at the appendix: an over-long "value" is a blob, and
+      // letting it into `missing` would paste it whole into the retry feedback (codex P2).
+      if (taken >= cls.cap || out.size >= AUDIT_MAX || out.has(v) || v.length > IDS_MAX_ID_LEN)
+        return;
       out.add(v);
       taken++;
     };
+    for (const m of prior.matchAll(cls.re)) take(m[0]);
     if (cls.byFrequency) {
-      // Count across both spans, prior first on ties (carried facts win), recurring first.
       const counts = new Map<string, number>();
-      for (const text of [prior, recent])
-        for (const m of text.matchAll(cls.re)) counts.set(m[0], (counts.get(m[0]) ?? 0) + 1);
+      for (const m of trusted.matchAll(cls.re)) counts.set(m[0], (counts.get(m[0]) ?? 0) + 1);
       for (const [v] of [...counts.entries()].sort((a, b) => b[1] - a[1]))
         if ((counts.get(v) ?? 0) >= 2) take(v);
       for (const [v] of counts) take(v);
     } else {
-      for (const text of [prior, recent]) for (const m of text.matchAll(cls.re)) take(m[0]);
+      for (const text of [trusted, untrusted]) for (const m of text.matchAll(cls.re)) take(m[0]);
     }
   }
   return [...out];
@@ -557,10 +568,16 @@ export async function maybeCompact(
   const sysBase = hasPrior ? SUMMARIZE_UPDATE : SUMMARIZE_SYSTEM;
   // Load-bearing tokens the summary MUST keep — from the recent slice (new findings) and the prior
   // summary (carried-forward facts, harvested first so recent numbers can't crowd them out).
+  // Rows are stripped at load (M1) — no opaque base64 digit-runs can reach the harvest.
+  const recent = prefix.slice(-14);
+  const isToolRow = (r: Row) => r.msg.startsWith('{"role":"tool"');
   const ids = extractIdentifiers(
-    // Rows are stripped at load (M1) — no opaque base64 digit-runs can reach the harvest.
-    prefix
-      .slice(-14)
+    recent
+      .filter((r) => !isToolRow(r))
+      .map((r) => r.msg)
+      .join("\n"),
+    recent
+      .filter(isToolRow)
       .map((r) => r.msg)
       .join("\n"),
     priorSummaries.map((r) => r.msg).join("\n"),
@@ -570,6 +587,10 @@ export async function maybeCompact(
   // many dropped (a quality guard). Every attempt's usage is charged.
   let summaryRaw = "";
   let summaryFinish = "";
+  /** Every usable attempt, so a length retry can never REPLACE a better first candidate with a
+   * worse second one (codex P2): the persisted summary is the attempt with the fewest audit
+   * misses, shorter on a tie. */
+  const candidates: Array<{ raw: string; finish: string; missing: string[] }> = [];
   const sumUsage: Usage = {
     input: 0,
     output: 0,
@@ -583,7 +604,7 @@ export async function maybeCompact(
     const feedback =
       attempt === 0 || missing.length === 0
         ? ""
-        : `\n\nYour previous summary DROPPED these load-bearing values — reproduce EVERY one verbatim in the appropriate section: ${missing.join(", ")}`;
+        : `\n\nYour previous summary DROPPED these load-bearing values — reproduce EVERY one verbatim in the appropriate section: ${elide(missing.join(", "), IDS_APPENDIX_MAX)}`;
     const res = await chat({
       messages: [
         { role: "system", content: sysBase + feedback },
@@ -603,15 +624,22 @@ export async function maybeCompact(
     sumUsage.costUsd += res.usage.costUsd;
     const raw = res.message.content ?? "";
     if (!raw) break;
-    summaryRaw = raw;
-    summaryFinish = res.finishReason;
     missing = auditMissing(raw, ids);
+    candidates.push({ raw, finish: res.finishReason, missing });
     // A summary the model could not finish (`length` stop) is truncated at an arbitrary point,
     // usually inside `Next` or `Artifacts`, the sections that carry the future of the task. Pi
-    // rejects these outright; we retry once with the audit feedback and accept the second attempt
-    // whatever its stop, because a truncated summary still beats no summary on the overflow path.
-    if (summaryFinish === "length" && attempt === 0) continue;
+    // rejects these outright; we retry once with the audit feedback, then keep the better of the
+    // two, because a truncated summary still beats no summary on the overflow path.
+    if (res.finishReason === "length" && attempt === 0) continue;
     if (missing.length * 4 <= ids.length) break; // ≤25% dropped (strict) → accept
+  }
+  if (candidates.length) {
+    const best = [...candidates].sort(
+      (a, b) => a.missing.length - b.missing.length || a.raw.length - b.raw.length,
+    )[0] as (typeof candidates)[number];
+    summaryRaw = best.raw;
+    summaryFinish = best.finish;
+    missing = best.missing;
   }
   // No usable summary. If we DID bill an attempt (ok response, empty/short content), charge it but
   // don't commit; only a first-call failure (no usage) is a true null no-op (codex).
@@ -765,8 +793,11 @@ export async function maybeCompact(
     // summarizer's own finish reason (a `length` stop is a truncated summary that today is still
     // accepted, which the recall eval scores), and the persisted body size. All counters/enums.
     generation: priorSummaries.length + 1,
-    summary_finish_reason: summaryFinish,
-    summary_chars: summary.length,
+    // Closed enum at the export boundary: a custom provider's finish reason is free text (codex P1).
+    summary_finish_reason: FINISH_REASONS.has(summaryFinish) ? summaryFinish : "unknown",
+    // The PERSISTED row body (summary + appendix + ledger + footer + framing + pinned ask), which is
+    // what the model reads and what the shrink gate measured — not the bare model output.
+    summary_chars: summaryContent.length,
     // How many of the audit's misses the appendix carried (H3a). `identifiers_missing` above counts
     // what the SUMMARIZER dropped; this is what the engine put back, so the difference is the true
     // loss on the persisted row.

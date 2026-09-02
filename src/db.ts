@@ -423,9 +423,15 @@ export function searchHistory(
   ].slice(0, 8);
   if (!terms.length) terms.push(q.toLowerCase());
   const esc = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+  // The window is the newest SCAN_WINDOW rows OF THIS SESSION, not a span of global ids: ids are
+  // shared across sessions, so a busy sibling session could push this session's compacted rows
+  // out of a global-id window while they were the only rows here (codex P2). The recovery footer
+  // promises compacted rows stay searchable; this is what makes that true.
   const { floor } = db
-    .query("SELECT COALESCE(MAX(id), 0) - ? AS floor FROM messages WHERE session_id = ?")
-    .get(SCAN_WINDOW, sessionId) as { floor: number };
+    .query(
+      `SELECT COALESCE((SELECT id FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?), 0) - 1 AS floor`,
+    )
+    .get(sessionId, SCAN_WINDOW - 1) as { floor: number };
   const rows = db
     .query(
       `SELECT m.msg AS msg, m.active AS active, m.run_id AS run_id, r.seq AS seq
@@ -601,9 +607,15 @@ export function listArtifacts(
   sessionId: string,
   limit = ARTIFACT_MAX_CALLS,
 ): ArtifactRef[] {
+  // The window is the newest SCAN_WINDOW rows OF THIS SESSION, not a span of global ids: ids are
+  // shared across sessions, so a busy sibling session could push this session's compacted rows
+  // out of a global-id window while they were the only rows here (codex P2). The recovery footer
+  // promises compacted rows stay searchable; this is what makes that true.
   const { floor } = db
-    .query("SELECT COALESCE(MAX(id), 0) - ? AS floor FROM messages WHERE session_id = ?")
-    .get(SCAN_WINDOW, sessionId) as { floor: number };
+    .query(
+      `SELECT COALESCE((SELECT id FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?), 0) - 1 AS floor`,
+    )
+    .get(sessionId, SCAN_WINDOW - 1) as { floor: number };
   // `_` is a LIKE wildcard — escape it, or this matches far more than the marker. The id range and
   // the floor above both ride `messages_session_id(session_id, id)`, added for exactly this.
   const rows = db

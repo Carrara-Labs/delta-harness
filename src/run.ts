@@ -1840,21 +1840,22 @@ async function execCall(
   // false-positive shape (a poll tool legitimately returning "pending" three times) can be read
   // from telemetry BEFORE anyone decides whether a notice or a stop is warranted. Never changes
   // execution. The digest is salted like the prefix digests and carries no content.
-  const repeatKey = prefixDigest(
-    `${name} ${executedArgs ? JSON.stringify(executedArgs) : call.function.arguments} ${result}`,
-  );
-  breaker.recent.push(repeatKey);
-  if (breaker.recent.length > REPEAT_WINDOW) breaker.recent.shift();
-  if (
-    breaker.recent.length === REPEAT_WINDOW &&
-    breaker.recent.every((k) => k === repeatKey) &&
-    !resuming
-  )
-    events.emit("loop.repeat", spine, {
-      "gen_ai.tool.name": name,
-      repeats: REPEAT_WINDOW,
-      window: REPEAT_WINDOW,
-    });
+  // Only calls that EXECUTED through a registry tool enter the window: a rejected unknown name is
+  // model-controlled text and must never ride a safe-listed attribute (codex P1), and a replayed
+  // journal row or a resume did not execute, so it must not mutate the window either (codex P2).
+  if (tool && !resuming && journal?.status !== "done") {
+    const repeatKey = prefixDigest(
+      `${name} ${executedArgs ? JSON.stringify(executedArgs) : call.function.arguments} ${result}`,
+    );
+    breaker.recent.push(repeatKey);
+    if (breaker.recent.length > REPEAT_WINDOW) breaker.recent.shift();
+    if (breaker.recent.length === REPEAT_WINDOW && breaker.recent.every((k) => k === repeatKey))
+      events.emit("loop.repeat", spine, {
+        "gen_ai.tool.name": name,
+        repeats: REPEAT_WINDOW,
+        window: REPEAT_WINDOW,
+      });
+  }
 }
 
 /** D-9-min: a budget-exhausted run hands back what it already has — the plan and the artifact
