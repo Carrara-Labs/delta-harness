@@ -691,3 +691,19 @@ Opus keeps the identifiers by itself and still does not answer more region-wide 
 generation 1; its denser summary raises the reader's wrong rate. Generation 2 moved on one cut.
 Not enough to change the utility model at ten times the summary cost; worth a re-run on the
 trusted-only questions if a stronger summarizer is ever reconsidered.
+
+### 9.14 Sonnet 5 with the 700-word entity-table prompt, 2026-09-02
+
+| variant | gen 1 closed-book | gen 1 wrong | gen 2 (1 cut) |
+|---|---|---|---|
+| Haiku, production prompt | 19% | 27% | 0% |
+| Haiku, v2 prompt | 21% | 29% | 8% |
+| Sonnet, production prompt | 21% | 23% | 8% |
+| Opus, production prompt | 19% | 40% | 33% |
+| **Sonnet, v2 prompt** | **27%** | 33% | **42%** |
+
+The only variant that moves both generations the same way, and still within the noise of 48 plus
+12 questions. Prompt and model together buy about six points at generation 1; the capacity wall
+is real but not perfectly flat. Not shipped in 0.2.17: it would change the utility-lane cost on
+every compaction for a gain the eval cannot yet separate from noise. Candidate for the next
+cycle, scored on the trusted-only questions with more cuts before deciding.
