@@ -562,3 +562,36 @@ Prompt v2 makes haiku keep two to three times more anchors on its own (13 of 48 
 first cut vs 47) and produces longer summaries (8 to 14 KB), and still does not move closed-book on
 region-wide questions. Same conclusion as 9.5: this eval measures capacity. Whether v2 keeps what
 the agent itself surfaced is the trusted-only run (9.7).
+
+### 9.7 Trusted-only recall (facts the agent itself surfaced), 2026-09-02
+
+Questions generated from assistant and user rows only (`RECALL_TRUSTED_ONLY=1`), which is what a
+continuation actually needs from the summary; tool-result trivia is what `recall` is for. Same
+control lane, 5 cuts scored so far, ranked search in the recovery arm.
+
+| cut | closed-book correct | +recovery correct | recall hit rate |
+|---|---|---|---|
+| 214e31ad gen 1 | 0 / 12 | 8 / 12 | 67% |
+| 563c5654 gen 1 | 4 / 12 | 8 / 12 | 75% |
+| 563c5654 gen 2 | 6 / 12 | 8 / 12 | 92% |
+| 563c5654 gen 3 | 0 / 12 | 10 / 12 | 92% |
+| 973bf659 gen 1 | 4 / 11 | 8 / 11 | 55% |
+
+Closed-book stays at about a quarter; the recovery arm reaches 71% on the facts the agent wrote
+down itself, and 92% on the deeper generations where the summary alone is at zero. That is the
+long-horizon shape the build should optimize for: a summary that keeps structure and a recall path
+that reliably returns the fact. The remaining gap is that agents do not call `recall` (0 of 45 runs
+in battery 0, 0 of 23 candidate runs in battery 1 so far, recovery footer included).
+
+### 9.8 Battery 1 in progress: 0.2.16 thrashes at a tight ceiling, 2026-09-02
+
+At `DELTA_COMPACT_AT_TOKENS=60000`, the control's M1 (a 5-person shortlist) ran 53 turns, 21
+compactions and $7.72 in 28 minutes and was still running, against 14 turns and $1.23 for the same
+prompt at the 200k ceiling in battery 0. Every compaction reported the retained tail unchanged at
+55 to 71 KB: a flat 24k target is 40% of a 60k window, so the tail alone re-crosses the ceiling
+within two or three turns, and each summary generation is written over the last. The tool trace
+shows the agent re-running the same `fiber_call` and `grep` searches after each cut. The candidate
+(lh-rc3, no proportional tail yet) finished the same prompt in 11 turns with one compaction, and
+all 23 of its runs finished in 5 to 18 turns; its heaviest, M6, still compacted 11 times in 18
+turns. Slice 5 (tail proportional to the ceiling) was written from this observation and rides
+lh-rc4 for battery 2.
