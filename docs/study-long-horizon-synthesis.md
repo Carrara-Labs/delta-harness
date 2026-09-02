@@ -676,3 +676,18 @@ Two things at once, which is why codex insisted on one change per battery:
 Slice 5 is reverted. The retained tail stays a flat 24k, and the pre-existing `MATERIAL`
 shrink gate plus the ledgers are what carry a tight ceiling. The final battery runs rc12
 (slices 1-4 and 6, FTS5 recall, all gates) on the same lane.
+
+### 9.13 Opus 5 as the summarizer, 2026-09-02
+
+Same cached questions, `RECALL_SUMMARY_MODEL=claude-opus-5`, production prompt.
+
+| summarizer | anchors dropped | gen 1 closed-book | gen 1 wrong | gen 2 closed-book (1 cut) |
+|---|---|---|---|---|
+| Haiku 4.5 | 39 to 47 of 48 | 19% | 27% | 0% |
+| Sonnet 5 | 1 to 28 of 48 | 21% | 23% | 8% |
+| Opus 5 | 0 to 10 of 32 | 19% | 40% | 33% |
+
+Opus keeps the identifiers by itself and still does not answer more region-wide questions at
+generation 1; its denser summary raises the reader's wrong rate. Generation 2 moved on one cut.
+Not enough to change the utility model at ten times the summary cost; worth a re-run on the
+trusted-only questions if a stronger summarizer is ever reconsidered.
