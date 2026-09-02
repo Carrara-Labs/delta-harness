@@ -393,7 +393,7 @@ export async function executeRun(
   // binary, persistent schema reject) — quarantine it for the run instead of looping the model
   // (bc8e877e burned $3.50 retrying a missing CLI). In-memory per run; a resume re-arms it. See
   // the tally in execCall. `disabled` is subtracted in effectiveTools so it also survives re-search.
-  const breaker: Breaker = { disabled: new Set<string>(), fails: new Map(), turn: [] };
+  const breaker: Breaker = { disabled: new Set<string>(), fails: new Map(), turn: [], recent: [] };
   // Mutates memory only; persisted inside execCall's journal transaction so a
   // crash can never leave the active set ahead of the recorded tool result.
   const activate = (names: string[]) => {
@@ -1444,7 +1444,13 @@ type Breaker = {
    * consecutive turns this tool has failed the same way regardless of progress (the hard ceiling). */
   fails: Map<string, { err: string; n: number; gap?: number; attempts: number }>;
   turn: { name: string; callId: string; categorical: string | null; gap?: number }[];
+  /** H6 shadow (2026-09-02): digests of the last few executed calls (`tool + args + result`), so
+   * an exact repeat can be COUNTED. Observation only: nothing reads it to change execution. */
+  recent: string[];
 };
+/** How many consecutive identical calls make a `loop.repeat` observation (OpenClaw's guard fires
+ * at 3 in a 3-call window after a compaction; ours reports, never aborts). */
+const REPEAT_WINDOW = 3;
 const CATEGORICAL_TOOL_FAIL_LIMIT = 3;
 /** A self-write refusal resets the streak only if it closed a MATERIAL fraction of the gap — the
  * same discipline as compaction's `MATERIAL`, and for the same reason: progress must be measured by
@@ -1828,6 +1834,27 @@ async function execCall(
     insertMessage(db, run, { role: "tool", tool_call_id: call.id, content: result });
     persistActive(); // tool activations commit atomically with the result
   })();
+  // H6 shadow: count exact repeats (same tool, same executed arguments, same result). The failure
+  // this watches for is a compaction summary that erased "already tried", after which the model
+  // re-runs the same call and gets the same answer. Reported as an event so the prevalence and the
+  // false-positive shape (a poll tool legitimately returning "pending" three times) can be read
+  // from telemetry BEFORE anyone decides whether a notice or a stop is warranted. Never changes
+  // execution. The digest is salted like the prefix digests and carries no content.
+  const repeatKey = prefixDigest(
+    `${name} ${executedArgs ? JSON.stringify(executedArgs) : call.function.arguments} ${result}`,
+  );
+  breaker.recent.push(repeatKey);
+  if (breaker.recent.length > REPEAT_WINDOW) breaker.recent.shift();
+  if (
+    breaker.recent.length === REPEAT_WINDOW &&
+    breaker.recent.every((k) => k === repeatKey) &&
+    !resuming
+  )
+    events.emit("loop.repeat", spine, {
+      "gen_ai.tool.name": name,
+      repeats: REPEAT_WINDOW,
+      window: REPEAT_WINDOW,
+    });
 }
 
 /** D-9-min: a budget-exhausted run hands back what it already has — the plan and the artifact

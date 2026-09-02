@@ -87,6 +87,13 @@ const SAFE_ATTRS = new Set([
   // its magnitude estimate (a count, never content).
   "cache_miss_reason",
   "cache_missed_input_tokens",
+  // H6 shadow + compaction enrichment (2026-09-02): repeat counts, the summary generation index,
+  // the summarizer's finish reason (a provider enum) and the persisted summary size.
+  "repeats",
+  "window",
+  "generation",
+  "summary_finish_reason",
+  "summary_chars",
   // Closed enums: which model lane served the call and what it was for (S3).
   "tier",
   "purpose",

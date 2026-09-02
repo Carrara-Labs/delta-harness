@@ -544,6 +544,7 @@ export async function maybeCompact(
   // Summarize, then AUDIT that those identifiers survived; retry ONCE with the misses listed if too
   // many dropped (a quality guard). Every attempt's usage is charged.
   let summaryRaw = "";
+  let summaryFinish = "";
   const sumUsage: Usage = {
     input: 0,
     output: 0,
@@ -578,6 +579,7 @@ export async function maybeCompact(
     const raw = res.message.content ?? "";
     if (!raw) break;
     summaryRaw = raw;
+    summaryFinish = res.finishReason;
     missing = auditMissing(raw, ids);
     if (missing.length * 4 <= ids.length) break; // ≤25% dropped (strict) → accept
   }
@@ -723,6 +725,12 @@ export async function maybeCompact(
     reason: "committed",
     demoted_only: false,
     demoted: demotedAny,
+    // Which summary GENERATION this is for the session (1 = first cut, 2 = first merge...), the
+    // summarizer's own finish reason (a `length` stop is a truncated summary that today is still
+    // accepted, which the recall eval scores), and the persisted body size. All counters/enums.
+    generation: priorSummaries.length + 1,
+    summary_finish_reason: summaryFinish,
+    summary_chars: summary.length,
     // The RETAINED TAIL only. Measuring the whole active set (or including the new summary) lets
     // the prefix-to-summary reduction dominate and hides the tail change this is meant to score.
     tail_bytes_before: tail.reduce((n, r) => n + bytes(r.msg), 0),

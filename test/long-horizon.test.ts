@@ -112,7 +112,11 @@ async function longRun(turns: number, extra: Partial<ReturnType<typeof makeDeps>
   let call = 0;
   const deps = makeDeps(async (req: ChatRequest) => {
     const sys = req.messages[0]?.content;
-    if (typeof sys === "string" && sys.startsWith("You compact"))
+    // Both summarizer prompts: the first cut ("You compact") and every merge after it.
+    if (
+      typeof sys === "string" &&
+      (sys.startsWith("You compact") || sys.startsWith("You are UPDATING"))
+    )
       return ok({ role: "assistant", content: "Goal: g\nProgress: p\nNext: n\nArtifacts: a" });
     call++;
     const input = Math.round(req.messages.reduce((n, m) => n + JSON.stringify(m).length, 0) / 3);
@@ -309,4 +313,82 @@ describe("H5: history digest names the segment nobody measured", () => {
     await queue.wait(queue.enqueue({ input: "hi" }).id);
     expect(ids).toEqual([undefined]);
   });
+});
+
+describe("slice 2: shadow observations, no behavior change", () => {
+  test("loop.repeat fires on three identical tool+args+result calls and never touches execution", async () => {
+    let call = 0;
+    const deps = makeDeps(async () => {
+      call++;
+      if (call > 4) return textResult("done");
+      return ok({
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: `c${call}`,
+            type: "function",
+            function: { name: "add", arguments: '{"a":1,"b":2}' },
+          },
+        ],
+      });
+    }, testTools());
+    const repeats: Record<string, unknown>[] = [];
+    deps.events.on((e) => {
+      if (e.type === "loop.repeat") repeats.push(e.data as Record<string, unknown>);
+    });
+    const queue = new Queue(deps);
+    const done = await queue.wait(queue.enqueue({ input: "add" }).id);
+    // Four identical calls ran to completion: the run finished normally and every call executed.
+    expect(done.status).toBe("done");
+    expect(call).toBe(5);
+    // Observed at the third identical call and again at the fourth (the window keeps sliding).
+    expect(repeats.length).toBe(2);
+    expect(repeats[0]).toEqual({ "gen_ai.tool.name": "add", repeats: 3, window: 3 });
+  });
+
+  test("a changing argument is not a repeat", async () => {
+    let call = 0;
+    const deps = makeDeps(async () => {
+      call++;
+      if (call > 4) return textResult("done");
+      return ok({
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: `c${call}`,
+            type: "function",
+            function: { name: "add", arguments: `{"a":${call},"b":2}` },
+          },
+        ],
+      });
+    }, testTools());
+    let repeats = 0;
+    deps.events.on((e) => {
+      if (e.type === "loop.repeat") repeats++;
+    });
+    const queue = new Queue(deps);
+    await queue.wait(queue.enqueue({ input: "add" }).id);
+    expect(repeats).toBe(0);
+  });
+
+  test("compaction events carry the generation index, the summarizer's finish reason and the body size", async () => {
+    const { compactions } = await longRun(14);
+    const gens = compactions
+      .filter((c) => c.data.reason === "committed")
+      .map((c) => c.data.generation as number);
+    expect(gens.length).toBeGreaterThan(1);
+    // `generation` = how many engine summaries sat in the summarized PREFIX plus one, i.e. the
+    // merge depth. It starts at 1, never decreases, and reaches 2+ once a merge has happened. It
+    // is NOT the ordinal of the cut: a summary retained in the tail is not merged yet.
+    expect(gens[0]).toBe(1);
+    for (let i = 1; i < gens.length; i++)
+      expect(gens[i]).toBeGreaterThanOrEqual(gens[i - 1] as number);
+    expect(Math.max(...gens)).toBeGreaterThanOrEqual(2);
+    for (const c of compactions.filter((c) => c.data.reason === "committed")) {
+      expect(c.data.summary_finish_reason).toBe("stop");
+      expect(c.data.summary_chars as number).toBeGreaterThan(10);
+    }
+  }, 20_000);
 });
