@@ -31,8 +31,9 @@ outside the summary. None of the three recites a plan, none has a task object in
 and none has a long-horizon eval that actually runs. Our biggest exposures are self-inflicted and
 already known: the post-compaction re-cache is ~30% of spend on the QS lane with no attribute
 naming it, the history digest that would settle the shape-1 cache defect is unbuilt, argument
-elision is measured at -36% cost and switched off everywhere, and the long-horizon affordances we
-built are used in 6% (todo) and 3% (recall) of production runs.
+elision is measured at -36% cost and off by default (the bench-opus lanes have it on; client lanes
+unverified as of 2026-09-02), and the long-horizon affordances we built are used in 6% (todo) and
+3% (recall) of production runs.
 
 ---
 
@@ -108,9 +109,10 @@ Bottom line by theme:
 - Pruning is not tied to the cache. OpenClaw prunes tool results only after the provider cache TTL
   lapsed, when the next request rewrites the prefix anyway (`tool-result-truncation.ts:150-225`).
   On QS, every resumed conversation after 5 minutes is such a moment, and we do nothing with it.
-- `DELTA_TOOL_ARG_MAX_BYTES` is off by default with zero fleet adoption (`config.ts:299-301`).
-  Measured on the Aperture shape: -36.5% cost, 5 compactions to 0. Only carrara QS carries the
-  canary and it has not seen a heavy run since.
+- `DELTA_TOOL_ARG_MAX_BYTES` is off by default (`config.ts:299-301`). Measured on the Aperture
+  shape: -36.5% cost, 5 compactions to 0. Correction 2026-09-02: the four bench-opus lanes DO run
+  it at 4096 (Fly env read by the Aperture engineer); client lanes were not read, so adoption
+  outside the bench is unverified, not zero.
 - The summary call itself is uncached on the utility lane (Aperture R8: 82 summary calls, 0 cached).
   Small in dollars, but every compaction also pays a full cold read of a 60,000-char transcript.
 
@@ -384,3 +386,56 @@ Questions for them, in their own terms:
   runs by compaction count are all bench lanes)?
 - Have they seen anything W3-shaped on the OpenAI bench lane since 0.2.16? It gates the 0.2.17
   reasoning-context candidate and none of the above touches it.
+
+---
+
+## 8. Codex review of the plan (2026-09-02) and the revised order
+
+An adversarial pass over sections 5 and 6 by codex (gpt-5.6-sol), against the source. What it
+changed, in the order it matters:
+
+1. **One behavior change per battery.** Section 6 bundled telemetry, a default flip, summary
+   semantics, a loop guard, pruning and delegation into one release; a green battery could not
+   have attributed the result. The build now runs as: battery 0 = slice 1 (telemetry only, also
+   the A/A twin noise floor), then exactly one behavior slice per battery.
+2. **H1's measurement was wrong as written.** "Spend until `cached_tokens` recovers" never
+   terminates cleanly and counts normal work. The reload is simply the shortfall on the call with
+   `turns_since_compaction = 0` (min(prev, cur) minus cache read), which slice 1 now emits.
+3. **H1c is dropped.** Pruning at a cache-cold moment is not free: it still rewrites active
+   history, pays a fresh cache write, changes what the model sees, and can trigger the
+   documented redo behavior next to `elideRowArgs`.
+4. **H2 stays a canary, not a default flip after five runs.** The four bench-opus lanes already
+   run `DELTA_TOOL_ARG_MAX_BYTES=4096` (verified on their Fly env on 2026-09-02); client lanes
+   were not read, so "off everywhere" in section 4.1 was stale. Guardrails before any flip:
+   completion rate, duplicate side-effect calls, and an elided-argument echo count.
+5. **H4 moves first and gets stricter.** An LLM generating and judging its own questions is
+   self-confirming. The eval needs verbatim source spans from the summarized region, a tripwire
+   that discards anything answerable from the retained tail, an abstention option, a string-match
+   judge, and scoring per summary generation (1st, 2nd, 3rd cut in a session), not per cut alone.
+6. **H3 after H4, with per-class budgets and defanging.** Broader anchor classes (names, URLs,
+   quoted strings) break the appendix's current "no defang needed" assumption and can stuff it
+   with stale names across generations.
+7. **H6 ships shadow-only first.** A `would-have-fired` event, replayed against captured runs,
+   before any notice; never an abort, because a status or poll tool can legitimately return the
+   same result three times right after a compaction.
+8. **H8 loses the summary-to-plan seeding.** Promoting a summarizer's `Next` into recited text
+   amplifies a hallucinated or injected plan across every later turn. Keep only plan-to-summary
+   consistency (hand the todo to the summarizer as the authoritative `Next`).
+9. **H9 is out of this cycle.** It is a session-ownership feature, not a builtin.
+10. **H5 anchors are process-local.** A daemon restart mid-run resets the comparison; the
+    attributes say so by absence, and resume tests are owed before results are read.
+
+Five gaps codex found that the competitor teardowns support and the plan missed:
+
+- No end-to-end 40-turn, four-compaction soak scored on completion, drift, cost and recovery.
+- No rejection of length-truncated or structurally invalid summaries, and no static fallback
+  (Pi rejects length stops, Hermes falls back, OpenClaw cancels before persisting).
+- The advertised recovery footer needs a backend worthy of it: `searchHistory` is a bounded LIKE
+  with a 25-hit cap and an id window, so "use recall" can point at data it cannot retrieve.
+- No effectiveness check against the NEXT real provider usage after a compaction, and
+  `context_irreducible` still sends the oversized request.
+- No bounded pre-compaction durable-facts checkpoint (OpenClaw's once-per-cycle memory flush),
+  which is the other half of the self-file wall.
+
+Slice 1 itself passed codex's diff review after two P2 fixes: the diagnostics anchor now survives
+an id-less fallback call, and `cache_miss_reason` is re-allowlisted at the export boundary.

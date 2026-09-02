@@ -29,7 +29,7 @@ management, and multiple tasks. Then the same for our own engine, bluntly.
 5. Our biggest exposures are self-inflicted and known: the reload after a compaction is ~30% of
    spend on your lane with nothing naming it, the history digest and the cache-diagnosis opt-in
    from the 0.2.15 triage were never built, `DELTA_TOOL_ARG_MAX_BYTES` is measured at -36% cost
-   and switched off everywhere, and `todo` / `recall` appear in 6% / 3% of your runs.
+   and off by default (on for your bench-opus lanes, client lanes unverified), and `todo` / `recall` appear in 6% / 3% of your runs.
 
 ## Three things I saw in your data that I want you to confirm or correct
 
