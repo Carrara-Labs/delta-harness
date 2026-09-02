@@ -584,7 +584,7 @@ describe("codex diff-review fixes (0.2.16)", () => {
   });
 
   test("malformed persisted carry cannot throw the marker off the error-as-value path", async () => {
-    const cap = mockCapture(done);
+    const _cap = mockCapture(done);
     const r = await chat(
       {
         baseUrl: "https://api.openai.com/v1",

@@ -126,7 +126,7 @@ async function runConfig(
   if (!r1.ok) return { label, ok: false, error: r1.error };
   const c1 = r1.message.tool_calls?.[0];
   const call1Searches = r1.message.tool_calls?.length ?? 0;
-  if (!c1 || c1.function.name !== "qs_search")
+  if (c1?.function.name !== "qs_search")
     return { label, ok: false, error: `call1 did ${c1?.function.name ?? "no tool"}` };
   // Parallel searches are normal — EVERY call_id must get a result or the next request 400s.
   messages.push(r1.message);

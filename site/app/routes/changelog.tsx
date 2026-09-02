@@ -96,11 +96,39 @@ const kindLabel: Record<Kind, string> = {
 // exactly. Update this alongside the root CHANGELOG.md when a release ships.
 const releases: Release[] = [
   {
+    version: "0.2.17",
+    date: "September 2, 2026",
+    iso: "2026-09-02",
+    tagline: "The long run.",
+    latest: true,
+    note: "One theme: a run that has to keep working after its context is cut. Built as one measured slice per hypothesis on a twin-lane battery of real Quick Search work (Opus 5, real MCP tools, 23 pinned prompts, four batteries) plus an offline recall eval that re-runs the engine's own compaction on archived production transcripts. The finding that shaped it: a compaction summary is capacity-bound — a first-generation summary answers about one grounded question in four about the turns it replaced, whatever writes it — so the release invests in recovery and in telling the agent what it already did, not in longer prose. At a 60k ceiling 0.2.16 spent 62 turns and $9.29 on a 5-person shortlist, re-running the same searches after every cut; 0.2.17 finishes it in 11 turns for $0.85, and 92 of 92 candidate runs finished across the four batteries. Schema migration v16 (the recall index), one-way like v15: snapshot before upgrading.",
+    groups: [
+      {
+        kind: "added",
+        items: [
+          "**Indexed recall.** `recall` runs on a full-text index over the message table: any query word qualifies a row, rare words outrank common ones, whole-phrase hits first, case and Latin diacritics folded, prefix matching. On identical questions drawn from production compactions the recovery arm went from 21% to 52% correct, and to 72% on the facts the agent itself had written down.",
+          "**Anchor index and appendix.** The compaction audit harvests identifiers by class with a budget each — URLs, emails, slugs, recurring proper names from the agent's own text, years, numbers — and appends what the summarizer dropped, defanged and bounded. Measured on the battery: the summarizer dropped 30% of anchors and the appendix carried 97% of those back, against 30 of 30 lost per compaction before.",
+          "**Calls ledger and recovery footer.** Every summary lists the tool calls it compacted (builtin arguments deduped newest first, MCP tools by name and count) and ends with one line naming `recall`. This is the cue that makes agents recover instead of re-run: recall calls went from zero in 68 runs to 9 to 12 per 23-run battery.",
+          "**The reload is a number.** `model.call` carries `turns_since_compaction` and no longer suppresses `cache_shortfall_tokens` on the first call after a cut, so the re-read a compaction costs is one column: 20 to 30k tokens per cut at a 200k ceiling.",
+          "**History digest.** `history_n`, `history_hash` and `history_prefix_hash` split 'we mutated history' from 'we placed marks badly'. Measured byte-stable on 574 of 574 comparable turns, which retires that theory of the open cache defect.",
+          "**Anthropic cache diagnosis, opt-in.** `DELTA_CACHE_DIAGNOSIS=1` threads the previous response id through the main lane and lands the provider's verdict as `cache_miss_reason`. The only `messages_changed` verdicts in 599 turns were the compaction reloads.",
+          "**Shadow loop guard.** `loop.repeat` is emitted when the same executed tool, arguments and result recur three times in a row. Observation only.",
+        ],
+      },
+      {
+        kind: "changed",
+        items: [
+          "**Compaction events say more.** `generation`, `summary_finish_reason`, `summary_chars` (the persisted body) and `identifiers_appended`, so the difference between what the summarizer dropped and what the engine put back is one subtraction. A length-stopped summary is retried once and the better candidate kept.",
+          "**What was tried and not shipped.** A retained tail proportional to the ceiling thrashed a heavy run (92 turns, 55 compactions where the flat tail took 18 and 11) and is reverted; a stronger summarizer model and an entity-table prompt both replayed to the same closed-book recall as the production Haiku prompt, so the utility lane is unchanged.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.2.16",
     date: "August 19, 2026",
     iso: "2026-08-19",
     tagline: "OpenAI as a first-class citizen.",
-    latest: true,
     note: "The Responses wire worked, but it was a ported integration: the model's own reasoning was discarded every turn, the phase field that tells GPT-5.5+ an intermediate update apart from a final answer was dropped, none of the harness's cache-placement discipline applied there, and the 5.6 family was mispriced roughly four-fold. Every change is gated per backend and was proven on the live wire before it shipped: api.openai.com gets the full surface — verified across all three GPT-5.6 models (sol, terra, luna) with tool chains, reasoning round-trips, and a consistent ~7.7x cached-turn cost drop — while chatgpt.com and every other Responses-compatible endpoint receive requests byte-identical to 0.2.15 until a wire probe earns each field its place. The Anthropic and Chat wires are pinned unchanged by full-body-equality tests. No schema migration: reversible from 0.2.13 through 0.2.15.",
     groups: [
       {

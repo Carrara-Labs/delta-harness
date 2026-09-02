@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.17] - 2026-09-02
+
 Long-horizon work: compaction fidelity, recovery, and the instruments to see both. Built as one
 measured slice per hypothesis on a twin-lane battery (Aperture Quick Search, real MCP tools and
 model) plus an offline recall eval that re-runs the engine's own compaction on archived

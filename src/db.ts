@@ -475,7 +475,6 @@ export function searchHistory(
   // wins and a partial one is found instead of nothing. Each term is LIKE-escaped.
   const terms = recallTerms(q);
   if (!terms.length) return []; // an all-stopword query matches everything and ranks nothing
-  const esc = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
   // The window is the newest SCAN_WINDOW rows OF THIS SESSION, not a span of global ids: ids are
   // shared across sessions, so a busy sibling session could push this session's compacted rows
   // out of a global-id window while they were the only rows here (codex P2). The recovery footer

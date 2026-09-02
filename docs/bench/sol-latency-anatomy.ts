@@ -20,7 +20,7 @@ type CallAnatomy = {
   outputTokens: number;
   firstAction: string | null;
 };
-let current: CallAnatomy | null = null;
+let _current: CallAnatomy | null = null;
 const anatomies: CallAnatomy[] = [];
 
 const realFetch = globalThis.fetch;
@@ -40,7 +40,7 @@ globalThis.fetch = (async (
     outputTokens: 0,
     firstAction: null,
   };
-  current = a;
+  _current = a;
   anatomies.push(a);
   if (!res.body) return res;
   const [mine, theirs] = res.body.tee();

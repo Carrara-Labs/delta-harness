@@ -319,7 +319,7 @@ The concrete outcome that defines good work.
 Durable lessons worth carrying into every future run.
 ```
 
-The file is human-editable and agent-editable. The model can replace it through the `remember` tool. A content-changing overwrite is atomic and size-capped. When prior content exists, Delta records it in SQLite before retaining the newest 20 previous revisions. The first write and a same-content write do not create a revision. The Cockpit can compare and restore recorded revisions. The filesystem rename happens just before the database snapshot, so a process crash in that narrow interval can leave the new file in place without a revision for the immediately prior content.
+The file is human-editable and agent-editable. The model can replace it through the `remember` tool. A content-changing overwrite is atomic and size-capped; since 0.2.15 a refusal for size tells the agent exactly how many bytes over it is and hands back the current on-disk file as a merge base, so an over-cap save resolves in one informed retry instead of blind compression attempts that end in the repeat-failure breaker. When prior content exists, Delta records it in SQLite before retaining the newest 20 previous revisions. The first write and a same-content write do not create a revision. The Cockpit can compare and restore recorded revisions. The filesystem rename happens just before the database snapshot, so a process crash in that narrow interval can leave the new file in place without a revision for the immediately prior content.
 
 Important behavior:
 
@@ -530,8 +530,31 @@ For the Responses API:
 MODEL_BASE_URL=https://api.openai.com/v1
 MODEL_API=responses
 MODEL_API_KEY=your-openai-key
-DELTA_MODEL_PRIMARY=gpt-5
+DELTA_MODEL_PRIMARY=gpt-5.6-sol
 ```
+
+The GPT-5.6 family (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`) is fully supported and priced
+in the built-in table. Since 0.2.16, an `api.openai.com` Responses lane is a first-class
+integration, not a ported one:
+
+- **Reasoning carry.** The model's encrypted reasoning items are captured, persisted with the
+  message, and replayed verbatim on the next request — OpenAI's own guidance for consecutive tool
+  calls, and required for stateless (`store:false`) use of reasoning models. The assistant
+  `phase` field (GPT-5.5+) round-trips with them, so the model never re-reads an intermediate
+  update as a final answer. Both are stripped before any other wire and from compaction-retained
+  rows, so nothing outside this lane ever sees the sealed payload.
+- **Explicit prompt-cache breakpoints** (GPT-5.6+). The same placement engine that drives
+  Anthropic caching marks one stable point (caching instructions + tools + the first user
+  message) plus two rolling points, alongside the provider's implicit breakpoint. Cache writes
+  bill 1.25× on 5.6 and are metered from the nested `cache_write_tokens` usage field.
+- **`DELTA_TEXT_VERBOSITY`** (`low`/`medium`/`high` → `text.verbosity`) and
+  **`DELTA_REASONING_SUMMARY=auto`** (→ `reasoning.summary`, streams reasoning summaries to the
+  reasoning-delta consumer).
+
+These fields are **allowlisted to `openai.com` hosts**. Any other Responses-compatible endpoint —
+a proxy, the ChatGPT subscription backend — receives the same request surface as 0.2.15, because
+an unknown field is a legitimate `400` on a strict endpoint. A configured knob the lane cannot
+render is named at boot and in the `/v1/status` controls block rather than silently ignored.
 
 For an OpenAI-compatible Chat Completions endpoint, omit `MODEL_API`. Delta appends `/chat/completions` to `MODEL_BASE_URL`.
 
@@ -581,6 +604,13 @@ The harness requires the Responses wire, an endpoint-native model ID, an allowed
 
 Delta sends a `GET` to the broker with the optional bearer and a 15-second timeout. A usable JSON response contains non-empty `accessToken`, non-empty `accountId`, and an ISO `expiresAt` more than five minutes in the future. Delta caches the token and coalesces concurrent mints. A `401` or `403` invalidates it and permits one re-mint retry; `409` immediately advances to another provider; a `429` temporarily cools the shared credential and advances to a keyed provider.
 
+On this backend, `max_output_tokens` is never sent — the endpoint rejects it at any value, which would fail every sub-agent call with a billed 400 (fixed in 0.2.15; live-verified 3/3 children, with the pre-fix behavior reproducing 0/3 the same minute). One header note for a **static-key** Codex lane: `chatgpt-account-id` is a reserved header the subscription credential owns, so `MODEL_HEADERS` may not set it — the daemon refuses with `may not set the reserved header 'chatgpt-account-id'`. That refusal is correct and the backend does not require the header on the static-key path (verified both ways); if you hit it, remove the header rather than hunting for a config mistake that does not exist.
+
+The 0.2.16 Responses additions (reasoning carry, `phase`, explicit cache breakpoints, verbosity,
+reasoning summaries) are **not sent to this backend**: its parameter surface is undocumented and
+rejects fields it does not recognize, so each field joins only after a wire probe proves it —
+until then this backend receives requests byte-identical to 0.2.15.
+
 Subscription tokens are sent only to exact HTTPS hosts in `DELTA_BROKER_ALLOWED_HOSTS`, whose default is `chatgpt.com`. Add the real backend host explicitly when required. The broker URL must be HTTPS, except for loopback development. Configure a keyed provider in `DELTA_PROVIDERS` as a production fallback for broker exhaustion, authentication failure, or rate limiting. Subscription-route `cost_usd` is API-rate-equivalent consumption from Delta's price table, not the incremental subscription bill.
 
 ### Utility model and reasoning
@@ -593,7 +623,7 @@ Set a daemon default for extended reasoning:
 DELTA_REASONING_EFFORT=high
 ```
 
-Or override it for one run with `metadata.reasoning_effort`. Delta lowercases and trims the value. OpenRouter and Responses receive `reasoning.effort`; a directly compatible Chat Completions endpoint receives `reasoning_effort`. Native Anthropic picks the wire by model. Claude 4.6+ and every Claude 5 model use `thinking:{type:"adaptive"}` with `output_config.effort` — they reject the older `thinking:{type:"enabled"}` budget wire; on this path the OpenAI-only `none` and `minimal` map to `low` (an always-on reasoning model cannot disable thinking), and Delta raises the request's `max_tokens` by an effort-based headroom so adaptive thinking has room. Claude 4.5 and earlier keep the legacy budget wire, mapping `none`, `minimal`, `low`, `medium`, `high`, and `xhigh` to disabled, 1,024, 4,096, 8,192, 16,384, and 32,768 thinking tokens, with an unknown value using the 16,384-token mapping. Other providers validate their own accepted values and can return a clean `4xx`.
+Or override it for one run with `metadata.reasoning_effort`. Delta lowercases and trims the value. OpenRouter and Responses receive `reasoning.effort` (on an `openai.com` Responses lane, `DELTA_REASONING_SUMMARY=auto` rides the same object); a directly compatible Chat Completions endpoint receives `reasoning_effort`. Native Anthropic picks the wire by model. Claude 4.6+ and every Claude 5 model use `thinking:{type:"adaptive"}` with `output_config.effort` — they reject the older `thinking:{type:"enabled"}` budget wire; on this path the OpenAI-only `none` and `minimal` map to `low` (an always-on reasoning model cannot disable thinking), and Delta raises the request's `max_tokens` by an effort-based headroom so adaptive thinking has room. Claude 4.5 and earlier keep the legacy budget wire, mapping `none`, `minimal`, `low`, `medium`, `high`, and `xhigh` to disabled, 1,024, 4,096, 8,192, 16,384, and 32,768 thinking tokens, with an unknown value using the 16,384-token mapping. Other providers validate their own accepted values and can return a clean `4xx`.
 
 ## Run and call the agent
 
@@ -885,7 +915,7 @@ Override it as a whitespace-separated command:
 DELTA_CODE_CLI=claude --print
 ```
 
-The command runs with the workspace as its current directory and has no harness timeout. Delta splits `DELTA_CODE_CLI` on spaces without shell or quote parsing, so quoted arguments and executable paths containing spaces are unsupported. The default container does not install a coding CLI. Add one to the image and provision its credentials if the `code` tool is required. Delta's default asks Codex for its own `workspace-write` sandbox; a custom CLI receives no equivalent sandbox from Delta.
+The command runs with the workspace as its current directory and has no harness timeout. Since 0.2.15 the built-in default appends `--disable apps --disable plugins`: a delegated CLI signs in with its own account, and account connectors live server-side on that login — a session with no send-capable tool was demonstrated listing the operator's real inbox through a Gmail connector nothing on the host granted. The default requires codex-cli 0.146.0 or newer; an older binary resolves at boot and then rejects the flags on every call. A deployment that deliberately relies on a connector sets `DELTA_CODE_CLI` explicitly — the operator's value is used verbatim, never modified. Delta splits `DELTA_CODE_CLI` on spaces without shell or quote parsing, so quoted arguments and executable paths containing spaces are unsupported. The default container does not install a coding CLI. Add one to the image and provision its credentials if the `code` tool is required. Delta's default asks Codex for its own `workspace-write` sandbox; a custom CLI receives no equivalent sandbox from Delta.
 
 ### Subagents and `eval_n`
 
@@ -1154,7 +1184,7 @@ skills/
     rubric.md       # reference files, data, or scripts — read on demand
 ```
 
-Only each skill's `name` and `description` enter the prompt (progressive disclosure). The agent reads `SKILL.md` and any bundled files on demand with `read_file`, and runs bundled scripts with the `code` tool. Discovery is boot-time, direct-child-only, and rejects symlinks. Local skills are read-only in this release: reflection proposes improvements only to a backend that accepts writes (the MCP registry). `off` is fully invisible. Default `mcp` needs no change.
+Only each skill's `name` and `description` enter the prompt (progressive disclosure). The agent reads `SKILL.md` and any bundled files on demand with `read_file`, and runs bundled scripts with the `code` tool. Discovery is direct-child-only and rejects symlinks. Since 0.2.15 the index refreshes without a restart: each search re-checks every skill's `SKILL.md` (modification time and size) and re-scans when anything moved, so skills added, renamed, or re-described after boot are findable. Frontmatter descriptions may use YAML block scalars (`description: >` or `|`) — previously such a skill registered but could never be surfaced by search — and a description under ten characters logs a loud warning, because an unsearchable skill is a defect defined by its silence. Local skills are read-only in this release: reflection proposes improvements only to a backend that accepts writes (the MCP registry). `off` is fully invisible. Default `mcp` needs no change.
 
 ### Promotion to shared knowledge
 
@@ -1239,7 +1269,11 @@ DELTA_MAX_TOKENS=250000
 DELTA_MAX_COST_USD=1
 ```
 
-There is no environment setting for maximum steps. Profiles are defined in the engine.
+Since 0.2.15, `DELTA_MAX_STEPS` completes the third axis and, like the other two, can raise or lower the profile's value. Unlike them it is floored at 1 — a zero-step budget would fail every run before its first model call with an error the operator cannot diagnose. Fractions floor. Honest scoping: across the measured fleet the binding constraint is tokens (the maximum observed step count is 62 of 100), so this is a knob for deep-research shapes at high reasoning effort, not something a typical deployment needs.
+
+```dotenv
+DELTA_MAX_STEPS=200
+```
 
 ### What the budget measures
 
@@ -1264,6 +1298,10 @@ Without a known price, Delta warns and records zero model cost for that path. A 
 Budgets are hard loop guards against usage Delta records, checked between model calls. The final call, its parallel tools, or background reflection can move recorded usage past the nominal threshold before the next guard. They do not cap failed provider attempts without usage, a child with a missing or malformed usage marker, provider under-reporting, coding CLI or subscription-account spend, MCP or search API fees, cloud cost, or the current `eval_n` judge. Subscription calls record API-rate-equivalent cost rather than the subscription's actual marginal bill. Treat these values as one-call-granularity model-loop guards, not prepaid authorization or a complete spend limit.
 
 Environment overrides use JavaScript number conversion. An exported empty `DELTA_MAX_TOKENS` or `DELTA_MAX_COST_USD` becomes zero rather than unset. Validate all budget variables before starting the daemon.
+
+### What an exhausted run returns
+
+Since 0.2.15, a run that hits a budget ceiling hands back what it already has instead of a sentence of counters. `output_text` carries the current plan, the paths of every spill file and research artifact this run produced (enumerated from disk under the run's own id, so nothing stale or forged can enter), a note if a durable `DELTA.md` write already committed, and advice to narrow the question rather than repeat it. The whole handoff is bounded at 10 KiB and 20 paths per artifact family, and truncation is named rather than silent. An ephemeral (`store: false`) run gets no paths, because its artifacts are wiped the moment the run settles. The operator diagnostic — `budget exhausted: N/M steps, …` — lives in `runs.error` and the `error` telemetry event, as it always did; a consumer that previously string-matched the counters out of `output_text` must read `runs.error` instead. The run's status remains `failed`.
 
 ### Compaction
 
@@ -1335,7 +1373,7 @@ Delta is built to run for hours across dozens of tool calls without the active c
 
 Before every model call, the engine estimates the fully assembled request — system spine, tool schemas, ephemeral blocks, message history, and reserved output — using serialized byte size rather than a naive character count, and treating attached images as a fixed token reserve rather than their base64 length. If the estimate exceeds `DELTA_COMPACT_AT_TOKENS`, it compacts **before** sending, so a resumed or continued session cannot overflow on its first call. It also compacts when the previous call's real gross prompt size crossed the threshold, since cached tokens still occupy the model's window.
 
-Compaction is archive-safe. Older turns are summarized into a structured note and their message rows are marked inactive — never deleted or overwritten. The recent tail is kept verbatim, sized by a token budget rather than a fixed message count, and snapped to a turn boundary so an assistant tool call always travels with its result. The original request is pinned verbatim, read fresh from the run record, and the summary is wrapped in a trusted-request / untrusted-history envelope with an explicit end marker so a weak model cannot read the historical note as fresh instructions.
+Compaction is archive-safe. Older turns are summarized into a structured note and their message rows are marked inactive — never deleted or overwritten. The recent tail is kept verbatim, sized by a token budget rather than a fixed message count, and snapped to a turn boundary so an assistant tool call always travels with its result. The request being served is pinned verbatim — since 0.2.15 this is the compacting run's own request, read fresh from the run record and bound to the session, never the session's first request (on threaded sessions the first-run pin re-instructed the agent to do old work in 42 of 42 measured cases). The summary is wrapped in a trusted-request / untrusted-history envelope with an explicit end marker so a weak model cannot read the historical note as fresh instructions. Load-bearing identifiers (IDs, counts, paths, years) that the summarizer drops despite an audit-and-retry pass ride a machine-built appendix inside the summary's size cap, so compression can no longer silently lose the values a task turns on.
 
 The context window is one dial:
 
@@ -1374,15 +1412,21 @@ been dropped, and passing `artifact: {run_seq, call_id, field}` reads one back a
 
 Tight (60,000–90,000) is cheaper and lower latency and compacts more often. The default 120,000 is safe on any model with a 200,000-token window. Large (160,000+) keeps more continuity and performance and is safe to run because compaction is restorable — raise it only up to the model's real window minus output headroom.
 
+At a tight ceiling the retained tail stays a flat 24,000 tokens on purpose: measured at 60,000, a proportional 12,000-token tail could not hold two capped tool results and a heavy run compacted 55 times in 92 turns, where the flat tail plus the ledgers below finished the same prompt in 18 turns.
+
 ### The summary preserves facts across many generations
 
-When a prior summary is already present, the engine merges forward — it instructs the summarizer to preserve every prior fact and only add new ones, rather than lossily re-summarizing a summary each generation. After each summary it **audits** the result: it harvests load-bearing identifiers (numbers, years, and on-disk paths) from the recent turns and from the carried-forward summary, verifies the new summary reproduced them, and retries once with the misses named if more than a quarter were dropped. In practice a task that fires a dozen compactions keeps its numbers intact through every generation.
+When a prior summary is already present, the engine merges forward — it instructs the summarizer to preserve every prior fact and only add new ones, rather than lossily re-summarizing a summary each generation. After each summary it **audits** the result against an anchor index harvested by class with a budget each: URLs, email addresses, slugs, recurring proper names from the agent's own text, years, and numbers, plus everything the previous summary carried. What the summarizer dropped rides a machine-built, defanged appendix inside the summary's byte budget, and a summary the model could not finish (a `length` stop) is retried once with the better candidate kept. Measured on a 23-run battery: the summarizer dropped 30% of the audited anchors and the appendix carried 97% of those back, against 30 of 30 lost per compaction on the previous engine.
+
+Two deterministic ledgers ride every summary as well, because they do not depend on the summarizer at all: the spill paths of every large result the compaction covered, and the **calls it summarized** (builtin calls with their arguments, deduped and newest first; MCP tools by name and count). The second one exists because the most expensive failure on a long run is not a lost fact but a repeated search: after a cut the agent re-runs what it already ran. One fixed line at the end names `recall` as the way to read an earlier result back instead.
+
+What a summary cannot do is hold a whole region of work. On real production compactions, a first-generation summary answers about one grounded question in four about the turns it replaced and a second-generation one almost none, whatever writes it: a 350-word note over 300 KB of transcript is a capacity limit, not a prompt problem. The design bet is therefore structure in the summary and a recovery path that works, not a longer summary.
 
 ### Recovering what scrolled out
 
 Two tools let an agent reach past the live window:
 
-- `recall` searches this conversation's earlier turns, including ones compacted out of the active window, by keyword. It returns the matching finding — the whole message when it is reasonably sized, not a fragment — along with the on-disk path of any large result that was spilled. Searches are scoped to the current session; a caller cannot search another session's transcript.
+- `recall` searches this conversation's earlier turns, including ones compacted out of the active window. It runs on a full-text index over the message table (case and Latin diacritics folded, prefix matching), any word of the query qualifies a row (function words are dropped), rare words outrank common ones, and a whole-phrase match ranks first, so "Maria Delgado at Acme" finds the row that says "Maria Delgado, Acme Robotics". It returns the matching finding — the whole message when it is reasonably sized, not a fragment — along with the on-disk path of any large result that was spilled. On identical questions drawn from production compactions, this search answered 53% where the old whole-phrase match answered 21%, and 72% on the facts the agent itself had written down. Searches are scoped to the newest 5,000 rows of the current session (an index probe, not a scan); a caller cannot search another session's transcript.
 - Tool results larger than the inline cap are spilled to a file under `.delta/spill`, and compaction records every spill path in an artifact ledger inside the summary, so a large result is always one `read_file` away.
 
 An agent can also keep its own working plan with the `todo` tool. The plan is re-injected every turn as an ephemeral block that survives compaction, because it is rebuilt from a per-session store rather than living in the message history. It is the cheapest way to hold a running list of findings across a long run, and the tool tells the agent when the plan outgrows its budget so it can offload longer notes to a workspace file instead of silently losing them.
@@ -1593,11 +1637,12 @@ The stream carries run lifecycle, turn boundaries, model and tool calls, context
 | Event | Key attributes | Notes |
 | --- | --- | --- |
 | `run.finished` | `status`; `gen_ai.usage.{input,output,cached,total}_tokens`; `gen_ai.usage.cost_usd` | Aggregate per run. Always present. No model id here. |
-| `model.call` | `gen_ai.request.model`, `gen_ai.provider`, `gen_ai.response.finish_reasons`, per-call usage + `gen_ai.usage.cost_usd`, `latency_ms`, `wall_ms`, `cache_hit_pct`, `cache_shortfall_tokens`, `spine_bytes`, `spine_hash`, `tools_bytes`, `tools_hash`, `tools_n`, `self_bytes`, `history_bytes`, `ephemeral_bytes`, `tier`, `purpose`, `gen_ai.request.effort`, `speed`, `fallback` | One per **model call**, not per turn: since 0.2.13 it also covers the utility model, so filter `tier = 'main'` wherever you count turns. The listed attributes are in the default safe subset. `tool_calls` (names requested) is capture-gated. The `*_hash` digests are salted per daemon process, so they are comparable within one process lifetime and not across a restart; compare `*_bytes` across restarts. |
+| `model.call` | `gen_ai.request.model`, `gen_ai.provider`, `gen_ai.response.finish_reasons`, per-call usage + `gen_ai.usage.cost_usd`, `latency_ms`, `wall_ms`, `cache_hit_pct`, `cache_shortfall_tokens`, `spine_bytes`, `spine_hash`, `tools_bytes`, `tools_hash`, `tools_n`, `self_bytes`, `history_bytes`, `history_n`, `history_hash`, `history_prefix_hash`, `ephemeral_bytes`, `turns_since_compaction`, `tool_calls_n`, `cache_miss_reason`, `cache_missed_input_tokens`, `tier`, `purpose`, `gen_ai.request.effort`, `speed`, `fallback` | One per **model call**, not per turn: since 0.2.13 it also covers the utility model, so filter `tier = 'main'` wherever you count turns. The listed attributes are in the default safe subset. `tool_calls` (names requested) is capture-gated. `turns_since_compaction` is 0 on the first call after a compaction, where `cache_shortfall_tokens` is the reload that compaction cost (it used to be suppressed there). `history_prefix_hash` digests the first `history_n`-of-the-previous-call messages, so equality with the previous call's `history_hash` proves the history prefix was byte-stable. `cache_miss_reason` (`none`, `pending`, `model_changed`, `system_changed`, `tools_changed`, `messages_changed`, `previous_message_not_found`, `unavailable`, `unknown`) appears only with `DELTA_CACHE_DIAGNOSIS=1` on the Anthropic-native wire. The `*_hash` digests are salted per daemon process, so they are comparable within one process lifetime and not across a restart; compare `*_bytes` across restarts. |
 | `model.fallback` | `gen_ai.request.model` (configured primary), `gen_ai.response.model` (served), `gen_ai.provider`, `retries` | Fires only when a call is served by a model other than the configured primary — the failover cascade won. Also sets `fallback: true` on that `model.call` and prints a `FALLBACK` stderr marker. |
 | `tool.call` / `tool.result` | `gen_ai.tool.name`, call id, `is_error`, `error.class`, interrupted state | `error.class` is a low-cardinality class (`self_cap`, `self_conflict`, `self_spine_echo`, `self_empty`, `self_unavailable`, `self_protected`, `timeout`, `transient`, `categorical`; absent when nothing fits). The 200-char `error.message` snippet rides only with capture on. |
 | `self.pressure` | `bytes`, `cap`, `elided` | Fires once per run when `DELTA.md` no longer fits its budget — elided in the prompt (over cap, identity partly dropped) or over 90% of the cap (every `remember` is about to bounce). Pairs with a loud stderr line. |
-| `compaction` | `summary_tokens`, `summary_cost_usd`, `compacted_turns`, `kept`, `merged` | The cost of context management. |
+| `compaction` | `summary_tokens`, `summary_cost_usd`, `compacted_turns`, `kept`, `merged`, `reason`, `shrank`, `demoted`, `generation`, `summary_finish_reason`, `summary_chars`, `identifiers_audited`, `identifiers_missing`, `identifiers_appended` | The cost and fidelity of context management. `identifiers_missing` is what the summarizer dropped; `identifiers_appended` is what the engine put back, so the difference is the true loss on the persisted row. `generation` is the merge depth (1 = first cut). |
+| `loop.repeat` | `gen_ai.tool.name`, `repeats`, `window` | Observation only: the same executed tool, arguments and result recurred three times in a row. Never changes execution; count it after a compaction to see whether a summary erased "already tried". |
 | `error` | `error.type` (e.g. `budget`, `context_irreducible`), `message` | Error-as-value; the daemon does not crash. |
 | `recall`, `hydrate`, `reflection`, `run.{enqueued,started,resumed,cancelled}` | lifecycle + learning-loop counters | — |
 
@@ -1959,7 +2004,7 @@ The daemon starts neutral and unwedgeable: the `safe` tool floor, no MCP servers
 
 Since 0.2.8, safe mode is observable and self-aware. `GET /v1/status` reports `safe_mode: true`, so an edge client (a channel gateway's `/safemode` or `/status`) can confirm it without reading the boot log. The agent is also told: in a safe-mode boot the system spine drops the configured agent name and states that the persona, policy, and learned self-file are not loaded, so the agent does not present as its configured identity or role-play one from earlier conversation history. To demonstrate this cleanly, pair a safe-mode restart with a fresh conversation so no prior identity carries over.
 
-**Read current model, provider, tier, and budget (`GET /v1/status`).** A secret-free, seam-token-gated endpoint returns the running agent's version, tier, `safe_mode`, model, provider, reasoning effort, budget ceilings, and MCP server names — no keys. Since 0.2.8 the model view also names the `provider` in human terms (`anthropic-native`, `openai-native`, `openrouter`, `codex-sign-in`) with a `provider_chain` for the failover cascade, and `reasoning_effort` always resolves (an unset effort reports `default` rather than being omitted). It backs edge tooling such as a channel gateway's `/model`, `/provider`, and `/status` commands.
+**Read current model, provider, tier, and budget (`GET /v1/status`).** A secret-free, seam-token-gated endpoint returns the running agent's version, tier, `safe_mode`, model, provider, reasoning effort, budget ceilings, and MCP server names — no keys. Since 0.2.15 it also reports tool usability in three states, because the operator's next action differs for each: `tools.registered` (in the live registry, read per request), `tools.unusable` (registered, but a live precondition says a call fails right now — a missing `EXA_API_KEY`, for example; this heals the moment a credential lands in the environment or the vault, no restart), and `tools.omitted` (never registered this boot, each with a reason — no vault, an unresolvable code CLI, sub-agent depth, missing control-plane wiring, or an allowlist name that matches nothing; fix the configuration and restart). Names and engine-authored reasons only, never values. The daemon also prints one stderr line at boot when anything is omitted or unusable. The allowlist remains a ceiling, not a guarantee — but the gap between the two is no longer silent. Since 0.2.8 the model view also names the `provider` in human terms (`anthropic-native`, `openai-native`, `openrouter`, `codex-sign-in`) with a `provider_chain` for the failover cascade, and `reasoning_effort` always resolves (an unset effort reports `default` rather than being omitted). It backs edge tooling such as a channel gateway's `/model`, `/provider`, and `/status` commands. Since 0.2.16 the model view also carries a `controls` block — `speed`, `cache_ttl`, `text_verbosity`, `reasoning_summary`, and `unmapped`, the list of configured knobs the primary lane's wire or host cannot render (the boot line and this field share one computation, so they can never disagree).
 
 ## Security model
 
@@ -2082,6 +2127,7 @@ The values below are the current public operating surface. Unless noted otherwis
 | `DELTA_BIND` | all interfaces | Bind host. `delta dev` defaults it to `127.0.0.1`. |
 | `DELTA_DB` | `data/delta.db` | SQLite path. Container default is `/data/delta.db`. |
 | `DELTA_WORKSPACE` | `workspace` | Agent bundle and working-file root. Container default is `/data/workspace`. |
+| `DELTA_SCRATCH_DIR` | the workspace | Root for engine-written per-run intermediates: spilled tool results (`.delta/spill/`), research artifacts (`.delta/research/`), and the model's per-run scratchpad (`scratch/<run-id>/`, wiped every run). Point it at machine-local disposable storage when the workspace is git-tracked or human-browsed. File tools accept it as a second confined root; pre-existing artifacts under the workspace keep resolving. A value containing the daemon DB or the workspace is refused back to the workspace with a warning. Since 0.2.15. |
 | `DELTA_AGENT_ID` | unset | Stable identity for memory and telemetry. Set it in every real deployment. |
 | `DELTA_BUILD` | unset | Build or commit identifier returned by `/healthz`. |
 | `DELTA_LEASE_HOLDER` | `FLY_MACHINE_ID`, then hostname | Override the machine-scoped writer identity. Usually leave unset. |
@@ -2107,7 +2153,9 @@ The values below are the current public operating surface. Unless noted otherwis
 | `DELTA_FIRST_BYTE_MS` | `30000` | Deadline for connect + first response header on a model call - the phase a dead socket after a VM resume otherwise hangs in. `0` disables. |
 | `DELTA_CACHE_TTL` | unset | `1h` keeps the stable prefix (system spine + tools) in the Anthropic prompt cache for an hour instead of five minutes. Faster, cheaper turn 1 for an agent serving several runs an hour; 1h cache writes bill double, so it stays opt-in. |
 | `DELTA_PROMPT_CACHE_KEY` | auto | `1` forces the OpenAI `prompt_cache_key` routing field on the OpenAI-compatible wire, `0` suppresses it. Unset auto-detects from the host: it is sent to OpenRouter and OpenAI, and withheld from everything else, because an unknown top-level field is a legitimate `400` on a strict endpoint. Set `1` only for a proxy you have verified accepts it. |
-| `DELTA_SPEED` | unset | `fast` requests Anthropic fast mode (research preview) on the native wire, for Opus 5 / Opus 4.8 only — the request carries `speed: "fast"` and its beta header, and the server-reported served speed lands on `model.call` telemetry. Byte-identical to unset when off; any other model runs standard. **2× token pricing** — set a matching `DELTA_MODEL_PRICES` before enabling, or cost and the `maxCostUsd` budget guard undercount by half. |
+| `DELTA_SPEED` | unset | `fast` requests Anthropic fast mode (research preview) on the native wire, for Opus 5 / Opus 4.8 only — the request carries `speed: "fast"` and its beta header, and the server-reported served speed lands on `model.call` telemetry. Byte-identical to unset when off; any other model runs standard. **2× token pricing** — set a matching `DELTA_MODEL_PRICES` before enabling, or cost and the `maxCostUsd` budget guard undercount by half. On a non-Anthropic lane it is not mapped, and since 0.2.16 the boot line and `/v1/status` say so. |
+| `DELTA_TEXT_VERBOSITY` | unset | `low`, `medium`, or `high` → `text.verbosity` on an `openai.com` Responses lane (GPT-5.x output-length dial). Reported as unmapped anywhere it cannot render. |
+| `DELTA_REASONING_SUMMARY` | unset | `auto` → `reasoning.summary` on an `openai.com` Responses lane: the backend streams reasoning summaries, which land on the reasoning-delta consumer. Reported as unmapped anywhere it cannot render. |
 | `DELTA_VISION` | auto | `1` forces vision support; `0` disables it. |
 | `DELTA_VISION_MODELS` | built-in regex | Custom regular expression for automatic vision detection. |
 
@@ -2127,7 +2175,7 @@ The values below are the current public operating surface. Unless noted otherwis
 |---|---|---|
 | `EXA_API_KEY` | unset | Enables `web_search`. |
 | `DELTA_FETCH_ALLOW_PRIVATE` | off | `1` allows `web_fetch` to private addresses. Local development only. |
-| `DELTA_CODE_CLI` | Codex command | Space-separated coding CLI command. No shell parsing is performed. |
+| `DELTA_CODE_CLI` | Codex command with connectors disabled | Space-separated coding CLI command; no shell parsing. The 0.2.15 default appends `--disable apps --disable plugins` (needs codex-cli >= 0.146.0); an explicit value is used verbatim. |
 | `DELTA_SUBAGENT_DEPTH` | `0` | Internal depth guard. Top-level agents should keep `0`. |
 | `DELTA_MCP_SERVERS` | `[]` | JSON array of HTTP or stdio MCP servers. |
 | `DELTA_MCP_REFRESH_URL` | unset | Rotating MCP token endpoint. |
@@ -2162,6 +2210,7 @@ The values below are the current public operating surface. Unless noted otherwis
 | `DELTA_PINNED_TOOLS` | unset | Comma-separated tools kept resident from step one, intersected with the resolved allow-list. |
 | `DELTA_SAFE_MODE` | unset | `1` boots a neutral recovery agent: `safe` floor, no MCP, no self-write, no reflection, workspace prompt layers skipped. Ignores the two variables above. |
 | `DELTA_SKILLS` | `mcp` | Capability backend: `mcp` (registry, unchanged), `local` (workspace `skills/` folders, use-only), or `off` (fully invisible). |
+| `DELTA_MAX_STEPS` | profile value | Optional step-budget override, raise or lower; floored at 1. Since 0.2.15. |
 | `DELTA_MAX_TOKENS` | profile value | Optional lower fresh-token cap. |
 | `DELTA_MAX_COST_USD` | profile value | Optional lower model-cost cap. |
 | `DELTA_COMPACT_AT_TOKENS` | `120000` | Previous-input threshold for automatic compaction. |
@@ -2277,7 +2326,7 @@ A custom policy over `DELTA_POLICY_MAX_TOKENS` is a fatal configuration error. T
 
 ### The `code` tool returns an executable error
 
-The standard container does not include Codex or Claude Code. Install the selected CLI, confirm it is on `PATH`, set `DELTA_CODE_CLI`, and provision its home-directory authentication. Delta does not parse shell quoting, so use an executable path and arguments without spaces.
+The standard container does not include Codex or Claude Code. Install the selected CLI, confirm it is on `PATH`, set `DELTA_CODE_CLI`, and provision its home-directory authentication. Since 0.2.15 a missing CLI is loud rather than silent: the boot log and `GET /v1/status` name `code` as omitted with the reason. Delta does not parse shell quoting, so use an executable path and arguments without spaces.
 
 ### A subagent cannot call the model or tools
 

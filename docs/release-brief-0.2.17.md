@@ -1,6 +1,6 @@
 # Release brief - Harness 0.2.17 "the long run"
 
-Status: **STAGED 2026-09-02, final battery running.** Six review rounds with codex (every P1
+Status: **STAGED 2026-09-02, all batteries complete, awaiting the tag.** Six review rounds with codex (every P1
 fixed), 1037 tests green, three twin-lane batteries on Aperture Quick Search plus an offline
 recall eval on production compactions. The study behind it: `docs/study-long-horizon-synthesis.md`
 (sections 9.1 to 9.12 are the measurements, in order).
@@ -39,7 +39,7 @@ budgets are byte-identical to 0.2.16.
 | 0 | 200k | 0.2.16 | slice 1 (telemetry only) | A/A noise floor: up to 25% per tier at n=5-10; 45/45 succeeded |
 | 1 | 60k | 0.2.16 | slices 1-4 | control ran away (stopped early at the spend flag); candidate 23/23, within 12% of its 200k cost |
 | 2 | 60k | (same lane, sequential) | slices 1-6 | ledger works (12 recall calls), reload halved; proportional tail thrashed M6, reverted |
-| 3 | 60k | (same lane, sequential) | final (slices 1-4, 6, FTS5) | TBD |
+| 3 | 60k | (same lane, sequential) | final (slices 1-4, 6, FTS5) | 23/23; hard p50 $2.19 (best of four); per-prompt swings at n=1 exceed image differences |
 
 ## Still open, honestly
 
