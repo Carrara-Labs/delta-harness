@@ -18,7 +18,15 @@ Schema migration v15 to v16 (the recall index; backfilled once at boot, about a 
 100 MB). One-way like v15: snapshot `/data` before upgrading a lane, and stop the running daemon
 before starting the upgraded one on the same volume: the write lease lives inside the database,
 so a still-running writer can see a few seconds of `database schema is locked` during the rebuild.
-A machine replacement (the normal Fly upgrade) already sequences this. No wire change unless `DELTA_CACHE_DIAGNOSIS=1`
+A machine replacement (the normal Fly upgrade) already sequences this.
+
+**Known trap, any version, found during this release's gate:** exported telemetry ids are
+`<daemon uuid>:<events row id>`, and a collector dedupes on that id. Restoring a lane's volume
+from an older snapshot resets the row counter below what the collector has already ingested, so
+every event after the restore is dropped as a duplicate with no error on either side; the daemon
+logs look healthy. After ANY volume restore, advance the `events` sequence past the collector's
+last id for that daemon (`UPDATE sqlite_sequence SET seq = <collector max + margin> WHERE name =
+'events'`), or start from an empty database. An engine-side guard is on the list for 0.2.18. No wire change unless `DELTA_CACHE_DIAGNOSIS=1`
 is set (then the Anthropic-native wire adds the `cache-diagnosis-2026-04-07` beta header and a
 `diagnostics.previous_message_id` field). Compaction summaries gain a bounded appendix, two
 deterministic ledgers and a one-line recovery footer.

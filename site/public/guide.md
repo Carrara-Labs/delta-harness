@@ -1532,6 +1532,8 @@ The bundled browser UI does not store or attach bearer tokens. For remote use, p
 
 ## Telemetry and events
 
+> **Restoring a volume blinds the exporter until the row counter catches up.** Exported ids are `<daemon uuid>:<events row id>` and a collector dedupes on them. A database restored from an older snapshot re-issues ids the collector has already seen, so its events are dropped as duplicates, silently. After any restore, advance the `events` sequence past the collector's last id for that daemon, or start the lane from an empty database.
+
 Delta emits one correlated event stream and gives you three ways to consume it. Two are free and built in; the third ships events off the box to a collector you run.
 
 1. **Local, always on** — every durable event is written to the local SQLite `events` table.

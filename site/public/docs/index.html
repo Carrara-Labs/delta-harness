@@ -2654,6 +2654,9 @@ been dropped, and passing <code>artifact: {run_seq, call_id, field}</code> reads
 </ul>
 <p>The bundled browser UI does not store or attach bearer tokens. For remote use, put a trusted same-origin proxy in front of the daemon. It must authenticate the operator, inject the inspect bearer for <code>/v1/dev/*</code>, and inject the control bearer for Cockpit task and upload requests. Loopback is checked from the immediate socket peer, so a same-host reverse proxy makes remote traffic appear local. Never rely on tokenless loopback inspection behind a proxy; set a distinct inspect token or disable inspection, and block <code>/dev</code> plus <code>/v1/dev/*</code> unless the operator is authenticated.</p>
 <h3 id="guide-telemetry-and-events">Telemetry and events<a class="heading-link" href="#guide-telemetry-and-events" aria-label="Link to this section">#</a></h3>
+<blockquote>
+<p><strong>Restoring a volume blinds the exporter until the row counter catches up.</strong> Exported ids are <code>&lt;daemon uuid&gt;:&lt;events row id&gt;</code> and a collector dedupes on them. A database restored from an older snapshot re-issues ids the collector has already seen, so its events are dropped as duplicates, silently. After any restore, advance the <code>events</code> sequence past the collector's last id for that daemon, or start the lane from an empty database.</p>
+</blockquote>
 <p>Delta emits one correlated event stream and gives you three ways to consume it. Two are free and built in; the third ships events off the box to a collector you run.</p>
 <ol>
 <li><strong>Local, always on</strong> - every durable event is written to the local SQLite <code>events</code> table.</li>
