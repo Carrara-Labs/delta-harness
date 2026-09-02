@@ -543,3 +543,22 @@ model cannot fit twelve arbitrary facts into 350 words either. Two consequences:
 2. The eval should also score what the AGENT itself surfaced (facts in assistant and user rows), not
    only tool-result trivia. That is the subset a continuation actually needs from the summary; the
    rest is what `recall` is for. Added as `RECALL_TRUSTED_ONLY=1`.
+
+### 9.6 Replay: prompt v2 (Entities table, re-distill merge), 2026-09-02
+
+Same cached questions. Prompt v2 replaces the four-section contract with Goal / Entities (one line
+per person or company with role, organization, location, link, finding) / Progress / Next /
+Artifacts, 700 words, and a merge prompt that updates lines in place and drops only duplicated or
+superseded text. Replayed with haiku from the `exp/summary-v2` worktree.
+
+| summary produced by | gen 1 closed-book | gen 2 | anchors dropped by the model |
+|---|---|---|---|
+| original 0.2.16 | 25% | 0% | n/a |
+| slice 3 code, haiku | 19% | 0% | 39 to 47 of 48 |
+| slice 3 code, sonnet | 21% | 8% | 1 to 28 of 48 |
+| prompt v2, haiku | 21% | 8% | 13 to 33 of 48 |
+
+Prompt v2 makes haiku keep two to three times more anchors on its own (13 of 48 dropped on the
+first cut vs 47) and produces longer summaries (8 to 14 KB), and still does not move closed-book on
+region-wide questions. Same conclusion as 9.5: this eval measures capacity. Whether v2 keeps what
+the agent itself surfaced is the trusted-only run (9.7).
