@@ -75,6 +75,18 @@ const SAFE_ATTRS = new Set([
   "self_bytes",
   "history_bytes",
   "ephemeral_bytes",
+  // H5 (2026-09-02): the history segment gets the same salted-digest treatment as spine/tools,
+  // plus the message count that says whether a prefix comparison was possible at all.
+  "history_n",
+  "history_hash",
+  "history_prefix_hash",
+  // H1a: engine-authored counters that label a compaction's reload call and a turn's burst width.
+  "turns_since_compaction",
+  "tool_calls_n",
+  // H5: the provider's cache-diagnosis verdict, normalized to a closed enum in provider.ts, and
+  // its magnitude estimate (a count, never content).
+  "cache_miss_reason",
+  "cache_missed_input_tokens",
   // Closed enums: which model lane served the call and what it was for (S3).
   "tier",
   "purpose",

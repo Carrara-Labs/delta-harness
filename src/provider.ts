@@ -75,6 +75,16 @@ export type ModelResult =
       latencyMs: number;
       /** Which provider in the cascade served this turn (§C / G1c). */
       provider?: string;
+      /** The provider's response id (Anthropic `message.id`): the next call's diagnostics anchor. */
+      responseId?: string;
+      /** Anthropic cache-diagnosis verdict for THIS request, normalized to a closed set: `none`
+       * (compared, no divergence, or nothing to compare on a first call), `pending` (the
+       * comparison had not finished when the response started), the provider's own
+       * `model_changed | system_changed | tools_changed | messages_changed |
+       * previous_message_not_found | unavailable`, or `unknown` for any value outside that set.
+       * Present only when `diagnosticsPrevId` was sent. `missedTokens` rides the `*_changed`
+       * verdicts: the provider's estimate of how much prefix fell after the divergence. */
+      cacheMiss?: { reason: string; missedTokens?: number };
     }
   | {
       ok: false;
@@ -316,6 +326,12 @@ export type ChatRequest = {
    * a thinking token budget, so the effort is mapped to one. Absent → the provider's
    * own default (no reasoning field is sent). */
   reasoningEffort?: ReasoningEffort;
+  /** Anthropic cache diagnostics (beta `cache-diagnosis-2026-04-07`): the previous response's id
+   * to compare prompt prefixes against, or `null` to opt in on a conversation's first call.
+   * ABSENT = feature off, and the wire sends neither the beta header nor the field, so every
+   * request stays byte-identical to today. Read by the Anthropic-native wire only; the other
+   * wires ignore it. */
+  diagnosticsPrevId?: string | null;
 };
 
 /** A reasoning/thinking effort. Deliberately a bare string, NOT a fixed enum: the OpenAI docs state
@@ -373,6 +389,19 @@ const ADAPTIVE_EFFORT_ALIAS: Record<string, string> = { none: "low", minimal: "l
  * same provider config, so an unsupported model must never see it. A future dated/minor Opus
  * 5 slug still matches; anything else runs standard. */
 export const FAST_MODE_BETA = "fast-mode-2026-02-01";
+/** Anthropic cache diagnostics: the API fingerprints each request by response id and, given the
+ * previous id, names the FIRST segment that diverged (model / system / tools / messages). Hashes
+ * only, ZDR-eligible, best-effort (never fails a request), Claude API only. Sent only when the
+ * caller passes `diagnosticsPrevId`, so it is opt-in per request, not per config. */
+export const CACHE_DIAGNOSIS_BETA = "cache-diagnosis-2026-04-07";
+const CACHE_MISS_REASONS = new Set([
+  "model_changed",
+  "system_changed",
+  "tools_changed",
+  "messages_changed",
+  "previous_message_not_found",
+  "unavailable",
+]);
 export function anthropicSupportsFast(model: string): boolean {
   return /^claude-opus-(5|4-8)(?=$|[.-])/.test(model);
 }
@@ -1360,6 +1389,8 @@ async function streamAnthropic(
   // before fetch (a hung broker must not escape the timeout; codex #6).
   const sig = withTimeout(req.signal, timeoutMs, idle);
   let emitted = false;
+  let responseId: string | undefined;
+  let cacheMiss: { reason: string; missedTokens?: number } | undefined;
   const { system, msgs } = toAnthropic(req.messages, cfg.cacheTtl, req.ephemeralCount);
   // A9: the native wire wants a bare DASHED id ("claude-opus-4-8") — strip any provider prefix
   // and translate dotted versions, for EVERY model (primary AND fallback), not just the utility
@@ -1416,6 +1447,11 @@ async function streamAnthropic(
       input_schema: t.function.parameters,
     }));
   }
+  // Cache diagnostics ride only when asked for: the field and its beta header travel together,
+  // and a request that never carried them is byte-identical to before this existed.
+  const diag = req.diagnosticsPrevId !== undefined;
+  if (diag) body.diagnostics = { previous_message_id: req.diagnosticsPrevId };
+  const betas = [...(fast ? [FAST_MODE_BETA] : []), ...(diag ? [CACHE_DIAGNOSIS_BETA] : [])];
 
   let auth: { token: string; headers?: Record<string, string> };
   try {
@@ -1442,7 +1478,7 @@ async function streamAnthropic(
         "content-type": "application/json",
         "x-api-key": auth.token,
         "anthropic-version": "2023-06-01",
-        ...(fast ? { "anthropic-beta": FAST_MODE_BETA } : {}),
+        ...(betas.length ? { "anthropic-beta": betas.join(",") } : {}),
         ...auth.headers,
       },
       body: JSON.stringify(body),
@@ -1491,17 +1527,39 @@ async function streamAnthropic(
       } catch {
         continue;
       }
-      if (ev.type === "message_start" && ev.message?.usage) {
-        // Anthropic's input_tokens EXCLUDES cache reads and creations — normalize to GROSS
-        // (codex P1): with rolling breakpoints most prompt tokens are cache traffic, so raw
-        // input_tokens ≈ 0 would understate cost, weaken budgets, and never trip compaction.
+      if (ev.type === "message_start" && ev.message) {
+        if (typeof ev.message.id === "string") responseId = ev.message.id;
+        // The diagnosis verdict arrives on message_start too. Four provider states, one closed
+        // enum here (an off-box attribute must never carry a free-form server string):
+        // field absent → we did not ask (leave undefined) · null → nothing diverged, or a first
+        // call with nothing to compare · {cache_miss_reason:null} → still computing · else the
+        // provider's own type, allowlisted.
+        if (diag && "diagnostics" in ev.message) {
+          const d = ev.message.diagnostics;
+          if (d === null) cacheMiss = { reason: "none" };
+          else if (d?.cache_miss_reason === null) cacheMiss = { reason: "pending" };
+          else if (d?.cache_miss_reason) {
+            const r = d.cache_miss_reason;
+            cacheMiss = {
+              reason: r.type && CACHE_MISS_REASONS.has(r.type) ? r.type : "unknown",
+              ...(typeof r.cache_missed_input_tokens === "number"
+                ? { missedTokens: r.cache_missed_input_tokens }
+                : {}),
+            };
+          }
+        }
         const u = ev.message.usage;
-        usage.cacheRead = u.cache_read_input_tokens ?? 0;
-        usage.cacheWrite = u.cache_creation_input_tokens ?? 0;
-        usage.input = (u.input_tokens ?? 0) + usage.cacheRead + usage.cacheWrite;
-        // Closed set only — this string is exported off-box as a telemetry attribute,
-        // so an unexpected server value must not become a high-cardinality leak.
-        if (u.speed === "fast" || u.speed === "standard") usage.speed = u.speed;
+        if (u) {
+          // Anthropic's input_tokens EXCLUDES cache reads and creations — normalize to GROSS
+          // (codex P1): with rolling breakpoints most prompt tokens are cache traffic, so raw
+          // input_tokens ≈ 0 would understate cost, weaken budgets, and never trip compaction.
+          usage.cacheRead = u.cache_read_input_tokens ?? 0;
+          usage.cacheWrite = u.cache_creation_input_tokens ?? 0;
+          usage.input = (u.input_tokens ?? 0) + usage.cacheRead + usage.cacheWrite;
+          // Closed set only — this string is exported off-box as a telemetry attribute,
+          // so an unexpected server value must not become a high-cardinality leak.
+          if (u.speed === "fast" || u.speed === "standard") usage.speed = u.speed;
+        }
       } else if (ev.type === "content_block_start" && ev.content_block?.type === "tool_use") {
         calls.push({
           id: ev.content_block.id ?? "",
@@ -1568,6 +1626,8 @@ async function streamAnthropic(
     finishReason,
     usage,
     latencyMs: Math.round(performance.now() - start),
+    ...(responseId ? { responseId } : {}),
+    ...(cacheMiss ? { cacheMiss } : {}),
   };
 }
 
@@ -1575,6 +1635,10 @@ type AnthropicEvent = {
   type: string;
   index?: number;
   message?: {
+    id?: string;
+    diagnostics?: null | {
+      cache_miss_reason: null | { type?: string; cache_missed_input_tokens?: number };
+    };
     usage?: {
       input_tokens?: number;
       cache_read_input_tokens?: number;

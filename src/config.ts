@@ -126,6 +126,10 @@ export type Config = {
   /** Ceiling on a succeeded call's stored ARGUMENTS before structural elision (0.2.12).
    * 0 disables. `DELTA_TOOL_ARG_MAX_BYTES`. */
   toolArgCap: number;
+  /** `DELTA_CACHE_DIAGNOSIS=1`: ask the Anthropic-native wire to label every cache miss with the
+   * segment that diverged (beta, hashes only, best-effort). Off by default: it adds a beta header
+   * and a request field, so it is a wire change an operator opts into, not a silent upgrade. */
+  cacheDiagnosis: boolean;
   /** Cheap model for auxiliary calls (compaction/reflection/judging). Empty string disables
    * the lane (everything rides the main cascade). */
   utilityModel: string;
@@ -476,6 +480,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     toolTimeoutMs,
     toolResultCap,
     toolArgCap,
+    cacheDiagnosis: env.DELTA_CACHE_DIAGNOSIS === "1",
     // Auxiliary-call model (Sprint 2): compaction summaries, reflection, eval_n judging are
     // summarize/pick tasks — haiku does them at 1/2–1/5 the price. DELTA_UTILITY_MODEL=""
     // disables the lane. Falls back to the main cascade per-call on any failure.

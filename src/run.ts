@@ -209,6 +209,9 @@ export type Deps = {
    * Bounds the single biggest cause of a mid-run context-window overflow. */
   toolResultCap?: number;
   toolArgCap?: number;
+  /** `DELTA_CACHE_DIAGNOSIS`: thread the previous response id through every main-lane call so
+   * the Anthropic wire labels each cache miss with the segment that diverged. Off = no wire change. */
+  cacheDiagnosis?: boolean;
   /** Cockpit true-to-life capture (DELTA_CAPTURE_CALLS): snapshot the exact assembled
    * request (system spine + full messages + tool schemas) and response for each model
    * call into the `calls` table, so the dev UI can show precisely what the model saw.
@@ -726,6 +729,26 @@ export async function executeRun(
   // only: 0 means "no anchor from this process yet" (fresh run OR resume), which degrades the
   // pre-send gate to its prior behavior. Reset to 0 whenever lastInputTokens is (post-compaction).
   let lastEstimate = 0;
+  // Long-horizon instruments (H1a/H5, 2026-09-02). Three per-run counters that make a compaction's
+  // reload cost and a cache miss's cause readable from telemetry alone, without joining events on
+  // timestamps. All process-local: a resumed run starts them over, which is stated on the
+  // attributes rather than papered over.
+  //  · prevCallInput: the last call's gross input, deliberately NOT reset by compaction (unlike
+  //    lastInputTokens, whose job is the pre-send projection). The shortfall computed against it on
+  //    the first post-compaction call IS the reload: min(prev, cur) - cacheRead = everything the
+  //    rewritten prompt had to re-write. It used to be suppressed there as "meaningless", which
+  //    left 30.6% of one lane's spend without a single attribute naming it.
+  //  · turnsSinceCompaction: -1 until a compaction commits in this process, then 0 on the first
+  //    call after it, 1, 2, ... so the reload is a one-column group-by.
+  //  · lastHistoryN: how many stored messages the last request carried, so the next turn can digest
+  //    exactly that span and compare it to the previous turn's whole-history digest. 0 after a
+  //    compaction (no comparable span) and on the first call.
+  let prevCallInput = 0;
+  let turnsSinceCompaction = -1;
+  let lastHistoryN = 0;
+  // Diagnostics anchor: undefined = feature off (the wire sees nothing), null = opt in with no
+  // previous id (first call), else the previous response's id. Per run, like the other anchors.
+  let prevResponseId: string | null | undefined = deps.cacheDiagnosis ? null : undefined;
   // One context-overflow rescue per turn: reset after each successful call, so a recoverable
   // "prompt too long" triggers a forced compaction + retry instead of a terminal failure.
   let overflowRetried = false;
@@ -978,6 +1001,8 @@ export async function executeRun(
           history = activeSessionMessages(db, run.session_id); // re-fetch the shrunken history
           lastInputTokens = 0; // the gross backstop measured the pre-compaction prompt; reset it
           lastEstimate = 0; // and its paired byte-anchor — the next call re-establishes both
+          turnsSinceCompaction = 0; // the next call is the reload; label it
+          lastHistoryN = 0; // history was rewritten: no span is comparable to the last request
           // `last_input` is already 0 on disk: maybeCompact cleared it INSIDE the rewrite
           // transaction (S5), so a crash between the two can no longer resume with a compacted
           // history and a pre-compaction anchor. Usage stays here — it is monotonic, so a replayed
@@ -1003,14 +1028,19 @@ export async function executeRun(
       ? await expandImageMarkers([...history], resolve(deps.workspace), scratchRoot)
       : history;
     const messages: ChatMsg[] = [{ role: "system", content: system }, ...withImages, ...ephemeral];
-    // S1: prefix identity, measured on the EXACT values about to be sent. Only the two segments
-    // ahead of history get a digest — they are the only ones that can mutate at constant length.
-    // History is append-only except for two writers that now announce themselves (compaction's own
-    // event, and the breaker latch's in-place row rewrite at ~:1381), and ephemeral rides behind the
-    // breakpoints. Both are sized, not digested: digesting history would cost a full ~1MB
-    // serialization every turn to answer a question two events already answer.
-    // Sized on the PRE-expansion history, matching estimateTokens — expanded base64 would swamp the
-    // number with a separately-tracked axis.
+    // S1: prefix identity, measured on the EXACT values about to be sent. The spine and tools get
+    // a digest because they can mutate at constant length. History is digested too (H5,
+    // 2026-09-02): "append-only" was an assertion, never a measurement, and every stationary-prefix
+    // miss on the fleet pointed at the one segment nothing digested. A digest of the WHOLE history
+    // moves every turn and answers nothing, so two digests: `history_hash` over everything sent now
+    // (next turn's anchor) and `history_prefix_hash` over only the first `lastHistoryN` messages,
+    // directly comparable to the previous turn's `history_hash`. Equal = the prefix was byte-stable
+    // and a miss is placement; different = we mutated history. `history_n` tells a suppressed
+    // comparison from a matching one. The cost objection that kept this out (a ~1MB serialization
+    // per turn) was measured false: `msgBytes` already pays the stringify, and the hash adds 0.07ms.
+    // Sized and digested on the PRE-expansion history, matching estimateTokens — expanded base64
+    // would swamp the number with a separately-tracked axis.
+    const parts = history.map((m) => JSON.stringify(m));
     const prefix = {
       spine_bytes: utf8(system),
       spine_hash: prefixDigest(system),
@@ -1029,6 +1059,11 @@ export async function executeRun(
       tools_n: specs.length,
       self_bytes: self.bytes,
       history_bytes: msgBytes(history),
+      history_n: history.length,
+      history_hash: prefixDigest(parts.join("\n")),
+      ...(lastHistoryN > 0 && lastHistoryN <= history.length
+        ? { history_prefix_hash: prefixDigest(parts.slice(0, lastHistoryN).join("\n")) }
+        : {}),
       ephemeral_bytes: msgBytes(ephemeral),
     };
     const turn = stepCount + 1;
@@ -1046,6 +1081,9 @@ export async function executeRun(
       // clock), so a prefix ending in one can never match the next request.
       ephemeralCount: ephemeral.length,
       ...(reasoningEffort ? { reasoningEffort } : {}),
+      // H5: the previous response id, so the Anthropic wire can name what diverged. `undefined`
+      // when the feature is off keeps the request byte-identical (the spread adds nothing).
+      ...(prevResponseId !== undefined ? { diagnosticsPrevId: prevResponseId } : {}),
       // Stream text deltas as ephemeral events (SSE consumers see them live;
       // not persisted). Cheap no-op when nobody is listening.
       onDelta: (text) => events.stream("output_text.delta", { ...spine, turn }, { delta: text }),
@@ -1119,6 +1157,8 @@ export async function executeRun(
           if (cu.shrank) {
             lastInputTokens = 0;
             lastEstimate = 0;
+            turnsSinceCompaction = 0;
+            lastHistoryN = 0;
             // Already 0 on disk — cleared inside the rewrite transaction (S5).
             events.emit(
               "error",
@@ -1176,11 +1216,18 @@ export async function executeRun(
     // that cached perfectly. Floored at 0 for the same reason. Pi's harness derived the identical
     // `min(prev, current) - cacheRead` independently, which is the strongest evidence available
     // that the shape is right (`docs/research/competitor-cache-instrumentation-2026-08-10.md`).
+    //
+    // H1a (2026-09-02): anchored on `prevCallInput`, which compaction does NOT reset, so the first
+    // post-compaction call reports its reload instead of nothing. `turns_since_compaction` on the
+    // same event says which reading a row is. Only a run's genuine first call has no anchor.
     const shortfall =
-      lastInputTokens > 0
-        ? Math.max(0, Math.min(lastInputTokens, result.usage.input) - result.usage.cacheRead)
+      prevCallInput > 0
+        ? Math.max(0, Math.min(prevCallInput, result.usage.input) - result.usage.cacheRead)
         : undefined;
     lastInputTokens = result.usage.input;
+    prevCallInput = result.usage.input;
+    lastHistoryN = history.length; // the span the next turn digests for comparison
+    if (prevResponseId !== undefined) prevResponseId = result.responseId ?? null;
     // Pair the real gross input with a byte-estimate of the SAME (final, post-compaction) request,
     // so next turn can project growth off a provider-measured anchor (S7). `history` is unchanged
     // between the send above and here (tool results are appended later in the loop).
@@ -1243,8 +1290,23 @@ export async function executeRun(
         ...(result.usage.speed ? { speed: result.usage.speed } : {}),
         ...(fellBack ? { fallback: true } : {}),
         tool_calls: result.message.tool_calls?.map((c) => c.function.name) ?? [],
+        // Burst width as a bounded scalar, so the NEXT turn's shortfall can be joined to how many
+        // results landed before it without exporting tool names (shipping-list, 0.2.14 notes).
+        tool_calls_n: result.message.tool_calls?.length ?? 0,
+        // H1a: absent until a compaction commits in this process; 0 = the reload call itself.
+        ...(turnsSinceCompaction >= 0 ? { turns_since_compaction: turnsSinceCompaction } : {}),
+        // H5: the provider's own verdict on WHY the prefix missed, when diagnostics are on.
+        ...(result.cacheMiss
+          ? {
+              cache_miss_reason: result.cacheMiss.reason,
+              ...(result.cacheMiss.missedTokens !== undefined
+                ? { cache_missed_input_tokens: result.cacheMiss.missedTokens }
+                : {}),
+            }
+          : {}),
       },
     );
+    if (turnsSinceCompaction >= 0) turnsSinceCompaction++;
     if (fellBack)
       events.emit(
         "model.fallback",
