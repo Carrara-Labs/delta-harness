@@ -785,3 +785,26 @@ self-files and notes back on both lanes; d stays on rc14 (v16, events sequence a
 collector's high-water) and moves to the published 0.2.17 image once tagged, so no volume
 restore and no blind lane.
 
+### 9.17 The `remember` self-conflicts are the previous run's tail, 2026-09-02
+
+The engineer's gate readout listed 11 and 18 "DELTA.md was updated by another run" refusals on
+serial lanes with, by the app's telemetry, no second writer. Read from the lane databases (both
+pulled read-only): every refusal hands back the raw on-disk file, and in the gate window the first
+refusal of a run equals the immediately previous run's landed content in 11 of 11 cases (c 4 of 4,
+d 7 of 7, sha-matched). Every one of those runs started before its predecessor's engine
+`finished_at`: overlaps of 12 to 482 s (c 4 of 10 transitions, d 9 of 12). The agent's `remember`
+is its last act, 10 to 15 s before the run ends and after the host's finish call, so the next
+prompt's run has already read DELTA.md and its first write conflicts. Runs with no overlap never
+conflicted. The guard is correct (a lost update was prevented each time); the cost is one turn and
+one reread per overlap. Not release-specific: same shape on both arms.
+
+The larger waste in the same window is the over-cap refusal ("DELTA.md would be 16xxx bytes,
+cap 16000"): 14 on c and 13 on d against 6 and 7 conflicts, each a full 16 KB rewrite turn
+thrown away, with the self-files at 15.8 to 16.0 KB. That is the self-file wall, and it lengthens
+the tail, which widens the overlap.
+
+Follow-ups (back-burner 12): host side, wait for the engine run's end rather than the finish
+call, or remember before finishing; engine side, name the writer (run id, landed time) and both
+hashes in the conflict and a `self.conflict` event, and steer `remember` toward appended lessons
+so the 0.2.16 append-append auto-merge absorbs the case without a turn.
+
