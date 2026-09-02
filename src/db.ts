@@ -386,6 +386,30 @@ const SPILL_PATH = /saved to (\/[^\s;]+)/;
 // SCAN_WINDOW message ids in the session rather than an unbounded full-table scan. Far more
 // than any live window; older-than-that results aren't recoverable (documented, acceptable).
 const SCAN_WINDOW = 5000;
+/** Candidate rows materialized per search (newest first). ~20KB rows × 400 = 8MB, a bounded page
+ * on a 512MB machine even when every term is common. */
+const SCAN_ROWS = 400;
+/** Words that carry no recall signal; a search of only these returns nothing rather than everything.
+ * Small on purpose: an unknown word is far likelier to be an identifier than a function word. */
+const STOPWORDS = new Set(
+  "the and for with that this from are was were has have had not but you your our their they them who what when where which how all any into over under about after before than then there here its it's been being does did done can could would should will just also very more most some such only same each both out off up down per via".split(
+    " ",
+  ),
+);
+/** Query words, tokenized on word boundaries (the model writes "Maria Delgado, Acme"), stopwords
+ * dropped, capped at 8 distinct terms. Shared by the transcript and the archive searches so a
+ * multi-word query behaves the same on both (codex P2). */
+export function recallTerms(q: string): string[] {
+  return [
+    ...new Set(
+      q
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}@._/%-]+/u)
+        .map((w) => w.replace(/^[._/-]+|[._/-]+$/g, ""))
+        .filter((w) => w.length >= 3 && !STOPWORDS.has(w)),
+    ),
+  ].slice(0, 8);
+}
 
 /** Search THIS session's message history — active AND compacted-out rows — for a keyword.
  * The engine behind the `recall` tool (W1): it makes a result that scrolled out of the live
@@ -413,15 +437,8 @@ export function searchHistory(
   // to be in the archive. Now every word of 3+ chars is a term; a row qualifies on ANY term and
   // ranks by how many distinct terms it carries, then by recency, so a whole-phrase hit still
   // wins and a partial one is found instead of nothing. Each term is LIKE-escaped.
-  const terms = [
-    ...new Set(
-      q
-        .toLowerCase()
-        .split(/\s+/)
-        .filter((w) => w.length >= 3),
-    ),
-  ].slice(0, 8);
-  if (!terms.length) terms.push(q.toLowerCase());
+  const terms = recallTerms(q);
+  if (!terms.length) return []; // an all-stopword query matches everything and ranks nothing
   const esc = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
   // The window is the newest SCAN_WINDOW rows OF THIS SESSION, not a span of global ids: ids are
   // shared across sessions, so a busy sibling session could push this session's compacted rows
@@ -437,9 +454,12 @@ export function searchHistory(
       `SELECT m.msg AS msg, m.active AS active, m.run_id AS run_id, r.seq AS seq
        FROM messages m JOIN runs r ON r.id = m.run_id
        WHERE m.session_id = ? AND m.id > ? AND (${terms.map(() => "LOWER(m.msg) LIKE ? ESCAPE '\\'").join(" OR ")})
-       ORDER BY m.id DESC`,
+       ORDER BY m.id DESC
+       LIMIT ?`,
     )
-    .all(sessionId, floor, ...terms.map((t) => `%${esc(t)}%`)) as Array<{
+    // Bounded materialization (codex P1): at most SCAN_ROWS candidate rows leave SQLite, newest
+    // first, so a term that matches everything costs one bounded page, not the whole window.
+    .all(sessionId, floor, ...terms.map((t) => `%${esc(t)}%`), SCAN_ROWS) as Array<{
     msg: string;
     active: number;
     run_id: string;
@@ -523,6 +543,7 @@ function searchArchive(
   limit: number,
   matched: Set<string>,
 ): RecallHit[] {
+  const terms = recallTerms(query);
   const ql = query.toLowerCase();
   const out: RecallHit[] = [];
   const emitted = new Set<string>(); // one hit per (run, call): two elided fields are one finding
@@ -544,8 +565,12 @@ function searchArchive(
       continue;
     }
     const text = typeof value === "string" ? value : (JSON.stringify(value) ?? "");
-    const idx = text.toLowerCase().indexOf(ql);
-    if (idx < 0) continue;
+    const lower = text.toLowerCase();
+    // Same contract as the transcript pass: whole phrase first, else any term (codex P2).
+    const phraseIdx = lower.indexOf(ql);
+    const hit = terms.find((t) => lower.includes(t));
+    if (phraseIdx < 0 && hit === undefined) continue;
+    const idx = phraseIdx >= 0 ? phraseIdx : lower.indexOf(hit as string);
     emitted.add(`${ref.runId}:${ref.callId}`);
     const start = Math.max(0, idx - 400);
     const end = Math.min(text.length, idx + ql.length + 400);

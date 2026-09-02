@@ -583,3 +583,48 @@ describe("slice 5: the retained-tail target scales with the ceiling below 120k",
     expect(retainedTailBudget(8_000, 5_000, 4_000)).toBe(0); // remainder still caps everything
   });
 });
+
+// ── slice 4 hardening: tokenizer, stopwords, bounded fetch, archive parity ───────────────
+
+import { recallTerms, searchHistory } from "../src/db";
+
+describe("slice 4: recall search hardening (codex gate)", () => {
+  test("terms tokenize on word boundaries, drop stopwords, cap at 8; all-stopword query yields nothing", () => {
+    expect(recallTerms("Maria Delgado, Acme")).toEqual(["maria", "delgado", "acme"]);
+    expect(recallTerms("the quokka and the wombat")).toEqual(["quokka", "wombat"]);
+    expect(recallTerms("What is the")).toEqual([]);
+    expect(recallTerms("a b c d e f g h i j k l m n o").length).toBe(0);
+    expect(
+      recallTerms("one two six ten eleven twelve dozen score gross more").length,
+    ).toBeLessThanOrEqual(8);
+    expect(recallTerms("mail me at maria@acme.io")).toContain("maria@acme.io");
+  });
+
+  test("a common word cannot bury the rare one: 'the quokka' still finds the old quokka row", () => {
+    const db = openDb(":memory:");
+    const now = Date.now();
+    db.query(
+      "INSERT INTO sessions (id, user_id, created_at, updated_at) VALUES ('s', NULL, ?, ?)",
+    ).run(now, now);
+    db.query(
+      "INSERT INTO runs (id, session_id, seq, status, request, created_at) VALUES ('r','s',1,'running','{}',?)",
+    ).run(now);
+    const ins = db.query(
+      "INSERT INTO messages (run_id, session_id, msg, active, created_at) VALUES ('r','s',?,?,?)",
+    );
+    ins.run(
+      JSON.stringify({ role: "assistant", content: "The quokka lives on Rottnest Island." }),
+      0,
+      now,
+    );
+    for (let i = 0; i < 40; i++)
+      ins.run(
+        JSON.stringify({ role: "assistant", content: `the weather on day ${i} was the usual` }),
+        1,
+        now,
+      );
+    const hits = searchHistory(db, "s", "the quokka", 5);
+    expect(hits.some((h) => h.snippet.includes("Rottnest"))).toBe(true);
+    expect(searchHistory(db, "s", "the", 5)).toEqual([]);
+  });
+});
