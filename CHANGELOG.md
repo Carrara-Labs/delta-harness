@@ -6,6 +6,53 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+Long-horizon work: compaction fidelity, recovery, and the instruments to see both. Built as one
+measured slice per hypothesis on a twin-lane battery (Aperture Quick Search, real MCP tools and
+model) plus an offline recall eval that re-runs the engine's own compaction on archived
+production transcripts. Study and receipts: `docs/study-long-horizon-synthesis.md`.
+
+### Upgrade
+No schema migration; reversible from 0.2.13-0.2.16. No wire change unless `DELTA_CACHE_DIAGNOSIS=1`
+is set (then the Anthropic-native wire adds the `cache-diagnosis-2026-04-07` beta header and a
+`diagnostics.previous_message_id` field). Compaction summaries gain a bounded appendix, two
+deterministic ledgers and a one-line recovery footer; the retained tail is unchanged at ceilings
+of 120k tokens and above.
+
+### Added
+- **The post-compaction reload is a number.** `model.call` carries `turns_since_compaction`
+  (0 = the first call after a cut) and no longer suppresses `cache_shortfall_tokens` on that
+  call, so the re-read a compaction costs is one column: 20k to 30k tokens per cut on Opus at a
+  200k ceiling, 217k per hard run at a 60k one. Also `tool_calls_n` per call.
+- **History digest.** `history_n`, `history_hash` and `history_prefix_hash` (over the first
+  `history_n` messages of the previous call) split "we mutated history" from "we placed marks
+  badly". Measured: byte-stable on 574 of 574 comparable turns across two batteries.
+- **Anthropic cache diagnosis, opt-in.** `DELTA_CACHE_DIAGNOSIS=1` threads the previous response
+  id through the main lane; the verdict lands as `cache_miss_reason` (closed enum) and
+  `cache_missed_input_tokens`. The only `messages_changed` verdicts in 599 turns were the
+  compaction reloads.
+- **Anchor index.** The compaction audit harvests by class with a budget each (URLs, emails,
+  slugs, recurring proper names from the agent's own text, years, numbers; 60 total) and appends
+  what the summarizer dropped, defanged, inside a byte budget. On the battery the summarizer
+  dropped 30% of anchors and the appendix carried 97% of those back.
+- **Calls ledger.** Each summary lists the tool calls it compacted (builtin arguments deduped
+  newest first; MCP tools by name and count) so the agent does not re-run a search it already
+  ran. Plus a fixed recovery line naming `recall`.
+- **Ranked recall.** `recall` matches any query word (word-boundary tokens, stopwords dropped,
+  bounded candidates per term), ranks by terms hit, whole-phrase first. On identical questions
+  from production compactions the recovery arm went from 21% to 53% correct (72% on facts the
+  agent itself surfaced).
+- **Proportional retained tail below 120k.** `retainedTailBudget` is min(remainder, max(6k, 20%
+  of the ceiling), 24k). At a 60k ceiling 0.2.16 compacted 25 times in 62 turns on a 5-person
+  shortlist ($9.29); the candidate finished it in 11 turns ($0.85).
+- **Shadow loop guard.** `loop.repeat` is emitted when the same executed tool + arguments +
+  result recurs three times in a row. Observation only, never changes execution.
+- **Compaction event enrichment.** `generation`, `summary_finish_reason`, `summary_chars`
+  (persisted body), `identifiers_appended`. A `length`-stopped summary is retried once and the
+  better candidate kept.
+- **Bench tooling.** `docs/bench/compaction-recall.ts`: the recall eval, with replay mode
+  (`RECALL_REPLAY=1` re-runs this checkout's compaction on each archived cut) and a
+  trusted-only question mode.
+
 ## [0.2.16] - 2026-08-19
 
 OpenAI as a first-class citizen. The Responses wire worked but was a ported integration: we
