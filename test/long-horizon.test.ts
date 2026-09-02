@@ -569,3 +569,17 @@ describe("H3: the anchor index carries names, links and emails the summary dropp
     expect(repeats).toBe(0);
   });
 });
+
+// ── slice 5: proportional retained tail under a tight ceiling ─────────────────────────────
+
+import { RECENT_TOKENS_DEFAULT, retainedTailBudget } from "../src/compaction";
+
+describe("slice 5: the retained-tail target scales with the ceiling below 120k", () => {
+  test("unchanged at 120k and above, proportional below, floored", () => {
+    expect(retainedTailBudget(200_000, 15_000, 4_000)).toBe(RECENT_TOKENS_DEFAULT);
+    expect(retainedTailBudget(120_000, 15_000, 4_000)).toBe(RECENT_TOKENS_DEFAULT);
+    expect(retainedTailBudget(60_000, 15_000, 4_000)).toBe(12_000);
+    expect(retainedTailBudget(20_000, 5_000, 4_000)).toBe(6_000); // floor beats 4k
+    expect(retainedTailBudget(8_000, 5_000, 4_000)).toBe(0); // remainder still caps everything
+  });
+});
