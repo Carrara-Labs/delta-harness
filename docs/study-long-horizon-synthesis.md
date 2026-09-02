@@ -707,3 +707,28 @@ The only variant that moves both generations the same way, and still within the 
 is real but not perfectly flat. Not shipped in 0.2.17: it would change the utility-lane cost on
 every compaction for a gain the eval cannot yet separate from noise. Candidate for the next
 cycle, scored on the trusted-only questions with more cuts before deciding.
+
+### 9.15 Battery 3 (lh-rc12: slices 1-4 and 6, FTS5 recall), and the four-battery view, 2026-09-02
+
+| battery / image | hard cost p50 / mean / wall p50 / turns / compactions | medium cost p50 / mean / turns | simple cost p50 | recall calls | ok |
+|---|---|---|---|---|---|
+| b0 / rc1 @200k (slice 1 only) | $3.94 / $3.89 / 10.4 min / 25.0 / 1.2 | $1.91 / $2.62 / 18.9 | $0.63 | 0 | 23/23 |
+| b1 / rc3 @60k | $2.88 / $3.41 / 8.9 min / 22.4 / 8.6 | $1.27 / $1.97 / 15.3 | $0.99 | 1 | 23/23 |
+| b2 / rc6 @60k (+ledger, +proportional tail) | $3.45 / $3.35 / 15.2 min / 28.6 / 6.8 | $1.50 / $2.83 / 24.6 | $0.82 | 12 | 23/23 |
+| b3 / rc12 @60k (+FTS5, tail reverted) | $2.19 / $4.17 / 7.7 min / 23.6 / 9.8 | $1.89 / $3.35 / 22.4 | $0.73 | 9 | 23/23 |
+| 0.2.16 @60k (control, stopped early) | M1 alone: 62 turns / 25 compactions / $9.29 | | | 2 | 3 runs, then stopped |
+
+What the four batteries can and cannot say:
+
+- **Can:** every candidate image finishes every prompt at a ceiling where 0.2.16 spirals; the
+  simple tier is flat across all images (noise floor); the calls ledger is what makes agents
+  call `recall` (0 to 1 before it, 9 to 12 after); the anchor appendix carries back 97 to 100% of
+  what the summarizer drops on every battery.
+- **Cannot:** rank rc3 vs rc6 vs rc12. Per-prompt swings at one run each are larger than any
+  between-image difference (H1 48 to 12 turns, M7 17 to 42, M6 92 to 36). The heavy prompts
+  (H4, M6, M7) churn on every candidate to varying degrees, and the churn is a policy behavior
+  (verify every row), not a summary defect: the H4 summary mid-churn had all 12 companies
+  resolved and "Next: save". A run-count of five per prompt would be needed to rank images by
+  cost, at roughly $200 per image; the recall eval ranks the recall change already.
+- The one defect the battery surfaced in a live summary, the pinned ask's run token and seam URL
+  in the appendix, is fixed in the release candidate (ad977cb).
