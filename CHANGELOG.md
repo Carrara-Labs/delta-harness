@@ -18,7 +18,10 @@ Schema migration v15 to v16 (the recall index; backfilled once at boot, about a 
 100 MB). One-way like v15: snapshot `/data` before upgrading a lane, and stop the running daemon
 before starting the upgraded one on the same volume: the write lease lives inside the database,
 so a still-running writer can see a few seconds of `database schema is locked` during the rebuild.
-A machine replacement (the normal Fly upgrade) already sequences this.
+A machine replacement (the normal Fly upgrade) already sequences this. Any v15 volume upgrades
+directly, so 0.2.13 through 0.2.16 need no intermediate step (drilled from a 0.2.15-created
+database and from a real 1,700-message lane). A v16 volume will not boot under an older binary,
+which is why the snapshot comes first.
 
 **Known trap, any version, found during this release's gate:** exported telemetry ids are
 `<daemon uuid>:<events row id>`, and a collector dedupes on that id. Restoring a lane's volume
