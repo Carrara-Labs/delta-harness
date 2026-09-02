@@ -502,3 +502,20 @@ Instrument results on the candidate, 23 runs, 376 main-lane calls:
 - Both lanes grew `DELTA.md` from 4.5 KB to 15.9 KB in one battery and each wrote its own
   pending-lessons note (`notes/pending-delta-lessons.md`, `notes/lessons-inbox.md`): the self-file
   wall workaround, reinvented on a fresh seed within a single battery.
+
+### 9.4 Recall search A/B on identical questions (H3-recovery, slice 4), 2026-09-02
+
+Same 8 archived cuts, same cached questions (`RECALL_QCACHE`), same reader. Only `searchHistory`
+differs: the 0.2.16 phrase `LIKE` (worktree at b123852) vs the ranked word-level search (01f26df).
+
+| arm | closed-book correct | +recovery correct | recall hit rate |
+|---|---|---|---|
+| phrase LIKE (0.2.16) | 16% | 21% | 17 / 14 / 0 / 0 % on the four gen-1 cuts |
+| ranked word-level | 20% | 53% | 75 / 67 / 33 / 33 % on the same cuts |
+
+Closed-book differs by reader noise only (same summaries, same questions). The recovery arm gains
+32 points: when the model reaches for `recall`, it now finds the fact about half the time instead of
+one time in five. This is the first confirmed improvement of the build, and it is measured on real
+production transcripts without a battery. It is inert until agents call `recall`, which they did
+zero times in 45 battery-0 runs; the recovery footer in slice 3 exists to change that, and battery 1
+counts the calls.
