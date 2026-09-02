@@ -654,3 +654,25 @@ triggers, migration v16, backfilled once) makes the search O(log) per term, bm25
 common word cannot bury a rare one, case- and accent-folded, prefix-matching. The JS pass that
 renders snippets and dedupes is unchanged. Migration v16 is one-way like v15: snapshot before
 upgrading a lane.
+
+### 9.12 Battery 2 (lh-rc6 = slices 1-6, same lane, 60k), 2026-09-02
+
+| tier | b1 (rc3) cost p50 / wall / turns / compactions | b2 (rc6) cost p50 / wall / turns / compactions | reload tokens per run b1 to b2 | recall calls b1 to b2 |
+|---|---|---|---|---|
+| simple | $0.99 / 2.0 min / 10.3 / 1.6 | $0.82 / 2.1 min / 11.9 / 1.2 | 41k to 14k | 0 to 0 |
+| medium | $1.27 / 3.2 min / 15.3 / 4.9 | $1.50 / 4.6 min / 24.6 / 9.1 | 111k to 125k | 1 to 5 |
+| hard | $2.88 / 8.9 min / 22.4 / 8.6 | $3.45 / 15.2 min / 28.6 / 6.8 | 217k to 117k | 0 to 7 |
+
+Two things at once, which is why codex insisted on one change per battery:
+
+- **The calls ledger makes the agent reach for `recall`**: 12 calls in 23 runs against 1 in the
+  previous battery and 0 in the 45 runs of battery 0. The reload per hard run halved.
+- **The proportional tail thrashed a heavy run.** M6 (company list grouped by stage) ran 92 turns,
+  55 compactions, 42 minutes and $12.38; the same prompt took 18 turns and 11 compactions on
+  rc3 with the flat 24k tail. At a 60k ceiling a 12k tail cannot hold two capped tool results
+  (20k each), so a tool-heavy turn re-crosses the ceiling immediately. The control's thrash in
+  battery 1 was cured by the ledgers and anchors, not by tail size.
+
+Slice 5 is reverted. The retained tail stays a flat 24k, and the pre-existing `MATERIAL`
+shrink gate plus the ledgers are what carry a tight ceiling. The final battery runs rc12
+(slices 1-4 and 6, FTS5 recall, all gates) on the same lane.

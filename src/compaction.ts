@@ -32,20 +32,11 @@ export function retainedTailBudget(
   // The ceiling-derived remainder is a CAP (never keep more than is left), the flat constant is the
   // TARGET (never keep more than we need). Deriving the target FROM the trigger is what made
   // compaction land at ~99% of budget and re-fire on the next turn.
-  // Proportional under a tight ceiling (2026-09-02): a flat 24k tail is 12% of a 200k window but
-  // 40% of a 60k one, and at 60k the control lane compacted 11 times in 33 turns with the tail
-  // reported unchanged at 55 to 71 KB every time, re-firing every two or three turns. Hermes
-  // keeps 2.5% of the window, Pi 10%. 20% of the ceiling reaches the 24k cap at exactly 120k, the
-  // engine's own default, so every deployment at or above it is byte-identical; only ceilings
-  // below 120k get a smaller tail, floored so the two-unit continuity floor still has room.
   return Math.min(
     Math.max(0, ceilingTokens - fixedTokens - summaryReserveTokens),
-    Math.max(RECENT_TOKENS_FLOOR, Math.floor(ceilingTokens * RECENT_TOKENS_SHARE)),
     RECENT_TOKENS_DEFAULT,
   );
 }
-const RECENT_TOKENS_SHARE = 0.2;
-const RECENT_TOKENS_FLOOR = 6_000;
 /** Versioned sentinel opening a DEMOTED tool result, so a later compaction returns the row
  *  byte-identical instead of re-stubbing it (codex: idempotence must be explicit, not inferred). */
 const DEMOTED_MARK = "[delta:demoted/1]";
