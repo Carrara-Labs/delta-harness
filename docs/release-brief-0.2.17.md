@@ -1,9 +1,10 @@
 # Release brief - Harness 0.2.17 "the long run"
 
-Status: **STAGED 2026-09-02, gated on Aperture's real-request twin battery (recent hard client prompts, 0.2.16 vs lh-rc14 = 5fcea59, every axis) before the tag.** Six review rounds with codex (every P1
-fixed), 1037 tests green, three twin-lane batteries on Aperture Quick Search plus an offline
-recall eval on production compactions. The study behind it: `docs/study-long-horizon-synthesis.md`
-(sections 9.1 to 9.12 are the measurements, in order).
+Status: **GATE PASSED 2026-09-02 (Aperture real-request twin battery, 0.2.16 vs 5fcea59, every axis flat or better), awaiting Nic's go to tag.** Six review rounds with codex (every P1
+fixed), 1037 tests green, three twin-lane batteries on Aperture Quick Search, an offline
+recall eval on production compactions, and the release gate on real client prompts. The study
+behind it: `docs/study-long-horizon-synthesis.md` (sections 9.1 to 9.16 are the measurements,
+in order; 9.16 is the gate).
 
 ## What it is
 
@@ -40,11 +41,17 @@ budgets are byte-identical to 0.2.16.
 | 1 | 60k | 0.2.16 | slices 1-4 | control ran away (stopped early at the spend flag); candidate 23/23, within 12% of its 200k cost |
 | 2 | 60k | (same lane, sequential) | slices 1-6 | ledger works (12 recall calls), reload halved; proportional tail thrashed M6, reverted |
 | 3 | 60k | (same lane, sequential) | final (slices 1-4, 6, FTS5) | 23/23; hard p50 $2.19 (best of four); per-prompt swings at n=1 exceed image differences |
+| gate | 200k (production) | 0.2.16 | 5fcea59 (the tag) | 8 real client prompts, 22/22; cost -14%, turns -14%, wall -3%, first tool flat; identifiers lost 72 to 0 net; blind judge 9 to 2; rule failures 5 to 2; the runaway shape live: $10.47 / 68 turns vs $4.04 / 24 |
 
 ## Still open, honestly
 
 - Agents call `recall` when the summary tells them what they already ran, not otherwise; the
-  cue is the ledger, and it is one line. A spine-level norm was not tested.
+  cue is the ledger, and it is one line. A spine-level norm was not tested. At the production
+  ceiling the gate's two compactions came too late in their runs for the cue to matter (0 recall
+  calls in 11 runs); the 60k batteries are the evidence for it.
+- `remember` self-conflicts ("updated by another run") on a serial lane, on both arms (11 and
+  18 per 11 runs). The engine's reflection loop never writes DELTA.md, so the writer is another
+  run or the host; the engine should name the writer in the conflict. Next cycle.
 - The stationary-prefix cache miss did not reproduce on either lane in three batteries; the
   instruments are now in the fleet's events for the day it does on a client lane.
 - Research children (H7) wait on the host-side read-only annotation; the child contract is not in

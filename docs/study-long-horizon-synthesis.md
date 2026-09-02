@@ -732,3 +732,56 @@ What the four batteries can and cannot say:
   cost, at roughly $200 per image; the recall eval ranks the recall change already.
 - The one defect the battery surfaced in a live summary, the pinned ask's run token and seam URL
   in the appendix, is fixed in the release candidate (ad977cb).
+
+### 9.16 The release gate: real client prompts, twin lanes, every axis, 2026-09-02
+
+Run by the Aperture engineer (report and per-run data in
+`ai-recruiter/docs/research/qs-gate-0217-2026-09-02/`). Design: 8 hard prompts paraphrased from
+client rooms of the previous three weeks (3 opener + follow-up pairs in one room, 5 standalone),
+one prompt at a time on both twins, production config (200k ceiling, no cache diagnosis), self-files
+at T0. Arms: `0216` = ghcr 0.2.16 on lane c, `rc14` = 5fcea59 (the commit to tag) on lane d.
+22 of 22 runs succeeded. Spend about $78 of model plus a few dollars of judge.
+
+| axis | 0.2.16 | rc14 | read |
+| --- | --- | --- | --- |
+| cost, total (p50) | $38.94 ($3.01) | $33.41 ($3.00) | -14% total, flat p50 |
+| wall, total (p50) | 108.5 min (7.6) | 104.8 min (8.8) | -3% total, p50 +17% inside the twin floor |
+| time to first tool, p50 | 9.9 s | 9.9 s | flat |
+| turns, total | 263 | 227 | -14% |
+| tool calls, total | 522 | 517 | flat |
+| input tokens, total | 25.8M | 21.3M | -17% |
+| compactions | 4 | 2 | |
+| identifiers lost net | 72 of 119 | 0 (53 dropped, 53 appended) | the appendix works live |
+| reload on the first post-compaction call | not measured on 0.2.16 | 58.7k, 50.1k input tokens | the cost of a cut at 200k, now visible |
+| blind pairwise judge (Opus 5, random A/B) | 2 | 9 | no ties |
+| rule failures | 5 | 2 | both arms' failures are product-layer (geography, count) |
+| tool.rejected | 0 | 0 | |
+| artifact rows, total | 318 | 361 | |
+
+The runaway shape reproduced live at the production ceiling on H3: 0.2.16 ran 68 turns, 2
+compactions, 30.0 min, $10.47 (run 5ed4aeef); rc14 ran 24 turns, 1 compaction, 9.5 min, $4.04
+(run 9f1b48c4) on the same prompt. The judge scored the control 4 vs 3 on rigor for that pair,
+so the control bought a slightly tighter list for 2.6x the money. The pattern behind the control's
+judge losses: on G2, G3 follow-up and H2 it stopped and asked clarifying questions instead of
+delivering (H2 saved no artifact); rc14 delivered on all 11.
+
+Not gating, named:
+
+- `recall` was not called once by rc14 in 11 runs (the control called it twice, both after its
+  compaction). Both rc14 compactions came late: H3's was one call before the end; H2's summary
+  led into saving. At the production ceiling the ledger cue has no room to act. The 60k
+  batteries remain the evidence for the ledger.
+- Tool errors 6 to 16 by the report's count: 18 vs 11 `remember` self-conflicts (fleet-wide
+  and on both arms: "DELTA.md was updated by another run since you read it" on a serial lane),
+  three transient seam timeouts on rc14 (`qs_start`, `qs_say`, `qs_context`, one each, the 60 s
+  MCP client timeout; `src/mcp.ts` is byte-identical to 0.2.16, so not an engine change), one
+  422 on `qs_save_artifact` the agent fixed and resent as designed.
+- Judge flags on rc14 that are product-layer: geography drift outside the named towns on G1
+  follow-up and H3, boilerplate evidence strings on H1, two name/slug mismatches. The control
+  shows the same classes.
+
+Verdict from the engineer: passes on every axis, tag it. Restore after the gate: pre-study
+self-files and notes back on both lanes; d stays on rc14 (v16, events sequence above the
+collector's high-water) and moves to the published 0.2.17 image once tagged, so no volume
+restore and no blind lane.
+
