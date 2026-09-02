@@ -407,8 +407,22 @@ export function searchHistory(
   const q = (query ?? "").trim().slice(0, 200);
   if (!q) return [];
   const n = Math.max(1, Math.min(Math.floor(limit) || 10, 25));
-  // Escape LIKE wildcards so a query containing % or _ can't broaden the match.
-  const esc = q.replace(/[\\%_]/g, (c) => `\\${c}`);
+  // Word-level, ranked (2026-09-02). The phrase LIKE this replaced required the whole query to
+  // appear contiguously: "Maria Delgado Acme" missed a row that said "Maria Delgado, at Acme".
+  // The recall eval on real compactions scored that backend at a 0-25% hit rate on facts known
+  // to be in the archive. Now every word of 3+ chars is a term; a row qualifies on ANY term and
+  // ranks by how many distinct terms it carries, then by recency, so a whole-phrase hit still
+  // wins and a partial one is found instead of nothing. Each term is LIKE-escaped.
+  const terms = [
+    ...new Set(
+      q
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((w) => w.length >= 3),
+    ),
+  ].slice(0, 8);
+  if (!terms.length) terms.push(q.toLowerCase());
+  const esc = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
   const { floor } = db
     .query("SELECT COALESCE(MAX(id), 0) - ? AS floor FROM messages WHERE session_id = ?")
     .get(SCAN_WINDOW, sessionId) as { floor: number };
@@ -416,17 +430,17 @@ export function searchHistory(
     .query(
       `SELECT m.msg AS msg, m.active AS active, m.run_id AS run_id, r.seq AS seq
        FROM messages m JOIN runs r ON r.id = m.run_id
-       WHERE m.session_id = ? AND m.id > ? AND LOWER(m.msg) LIKE LOWER(?) ESCAPE '\\'
+       WHERE m.session_id = ? AND m.id > ? AND (${terms.map(() => "LOWER(m.msg) LIKE ? ESCAPE '\\'").join(" OR ")})
        ORDER BY m.id DESC`,
     )
-    .all(sessionId, floor, `%${esc}%`) as Array<{
+    .all(sessionId, floor, ...terms.map((t) => `%${esc(t)}%`)) as Array<{
     msg: string;
     active: number;
     run_id: string;
     seq: number;
   }>;
   const ql = q.toLowerCase();
-  const seen = new Map<string, RecallHit>();
+  const seen = new Map<string, RecallHit & { score: number }>();
   /** (run_id, call_id) pairs a transcript hit already covers, so the archive pass can dedupe. */
   const matched = new Set<string>();
   for (const row of rows) {
@@ -437,8 +451,13 @@ export function searchHistory(
       continue;
     }
     const text = msgText(m);
-    const idx = text.toLowerCase().indexOf(ql);
-    if (idx < 0) continue; // matched JSON scaffolding, not readable content — skip
+    const lower = text.toLowerCase();
+    // Rank: a whole-phrase hit scores above any partial; otherwise the distinct terms present.
+    const phraseIdx = lower.indexOf(ql);
+    const hitTerms = terms.filter((t) => lower.includes(t));
+    if (!hitTerms.length) continue; // matched JSON scaffolding, not readable content — skip
+    const score = (phraseIdx >= 0 ? terms.length + 1 : 0) + hitTerms.length;
+    const idx = phraseIdx >= 0 ? phraseIdx : lower.indexOf(hitTerms[0] as string);
     if (m.role === "tool")
       matched.add(`${row.run_id}:${(m as { tool_call_id: string }).tool_call_id}`);
     // Only the call whose VISIBLE arguments carry the term is covered by this hit. Marking every
@@ -468,12 +487,15 @@ export function searchHistory(
       runSeq: row.seq ?? null,
       active: row.active === 1,
       snippet,
+      score,
       ...(spillPath ? { spillPath } : {}),
     });
   }
+  // Archived (compacted-out) hits first, as before, then by rank, then recency (insertion order).
   const transcript = [...seen.values()]
-    .sort((a, b) => Number(a.active) - Number(b.active))
-    .slice(0, n);
+    .sort((a, b) => Number(a.active) - Number(b.active) || b.score - a.score)
+    .slice(0, n)
+    .map(({ score: _score, ...hit }) => hit);
   // Fill any REMAINING slots from the archive, never the other way round: a run with many elided
   // payloads must not crowd unrelated live or compacted hits out of the limit (codex P1).
   if (transcript.length >= n) return transcript;

@@ -184,17 +184,31 @@ type CutResult = {
 };
 
 // ── 3. run ────────────────────────────────────────────────────────────────────
+const qcache: Record<string, string> = process.env.RECALL_QCACHE
+  ? await Bun.file(process.env.RECALL_QCACHE)
+      .json()
+      .catch(() => ({}))
+  : {};
 const results: CutResult[] = [];
 for (const cut of selected) {
   const regionText = cut.region.map(text).join("\n\n");
   const tailText = cut.tail.map(text).join("\n\n");
   const summaryText = text(cut.summary);
-  // Question generation from the REGION only.
-  const gen = await ask(
-    "You write factual recall questions from an agent transcript. Output ONLY a JSON array of objects {q, a, span}: q = a short question about a specific fact in the transcript (a name, number, date, title, company, path, decision); a = the exact short answer (under 12 words); span = a VERBATIM substring of the transcript (under 200 characters) that contains the answer. Cover different parts of the transcript. No questions about the agent's tools or instructions.",
-    `Write ${N * 2} questions from this transcript:\n\n${clip(regionText, 300_000)}`,
-    6000,
-  );
+  // Question generation from the REGION only. Cached by summary id so two arms, or two backends,
+  // are scored on IDENTICAL questions (RECALL_QCACHE=<json file>).
+  const cacheKey = `${cut.session}:${cut.summary.id}`;
+  const gen =
+    qcache[cacheKey] ??
+    (await ask(
+      "You write factual recall questions from an agent transcript. Output ONLY a JSON array of objects {q, a, span}: q = a short question about a specific fact in the transcript (a name, number, date, title, company, path, decision); a = the exact short answer (under 12 words); span = a VERBATIM substring of the transcript (under 200 characters) that contains the answer. Cover different parts of the transcript. No questions about the agent's tools or instructions.",
+      `Write ${N * 2} questions from this transcript:\n\n${clip(regionText, 300_000)}`,
+      6000,
+    ));
+  if (!qcache[cacheKey]) {
+    qcache[cacheKey] = gen;
+    if (process.env.RECALL_QCACHE)
+      await Bun.write(process.env.RECALL_QCACHE, JSON.stringify(qcache, null, 1));
+  }
   const raw = parseQuestions(gen).filter(
     (x) => x && typeof x.q === "string" && typeof x.a === "string" && typeof x.span === "string",
   );
