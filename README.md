@@ -48,7 +48,7 @@ so you can watch the loop, tools, memory, and cost live.
 | **Provider** | Zero-dep OpenAI-compatible streaming, model failover, usage + cost capture, error-as-value, Anthropic prompt-cache breakpoints. |
 | **Loop + hands** | Usage guards (steps / tokens / cost); builtins (`web_search`, `web_fetch`, workspace files, `code`→codex CLI, `spawn_subagent`); run profiles with per-profile tool sets. |
 | **MCP client** | Streamable HTTP + stdio, boot-time discovery, progressive tool disclosure via `search_tools`. |
-| **Context** | Usage-aware compaction (Goal / Progress / Next / Artifacts); bounded context on long runs. |
+| **Context** | Archive-safe compaction that audits its own summary (identifiers the summarizer dropped ride an appendix; the calls and spill paths it covered ride two ledgers) and an indexed `recall` over the thread, so a run keeps working after its context is cut. |
 | **Memory + learning** | Scoped local memory, optional shared knowledge over MCP, and a review→reflect loop that turns feedback into scoped memory. |
 | **Observability** | Durable main-loop events over SQLite, SSE, and an NDJSON exporter. |
 

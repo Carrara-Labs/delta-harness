@@ -704,8 +704,9 @@ export default function HowItWorks() {
                 <div className="hiw-store">
                   <h4>Compaction</h4>
                   <p className="hiw-p" style={{ margin: "8px 0 0", fontSize: 14 }}>
-                    Older turns fold into a structured note. The recent tail stays verbatim, and
-                    prior summaries merge forward.
+                    Older turns fold into a structured note. The recent tail stays verbatim, prior
+                    summaries merge forward, and the engine audits each note: identifiers it dropped
+                    ride an appendix, and the calls it covered ride a ledger so nothing is re-run.
                   </p>
                 </div>
                 <div className="hiw-store">
@@ -908,7 +909,8 @@ export default function HowItWorks() {
                 <b>remember</b> <span>writes to the living self-file</span>
               </div>
               <div className="li">
-                <b>recall</b> <span>searches this thread's history, spilled results included</span>
+                <b>recall</b>{" "}
+                <span>full-text search over this thread's history, spilled results included</span>
               </div>
               <div className="li">
                 <b>reflect</b> <span>turns reviewer feedback into a durable lesson</span>

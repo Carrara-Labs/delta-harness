@@ -864,7 +864,7 @@ The `trusted` tier exposes the built-in tools below. Tool failures are returned 
 | `move_file` | Move or rename a workspace file. | Destination overwrite must be explicit. |
 | `delete_file` | Move a file or directory to recoverable trash. | Entries older than seven days are swept at daemon startup, not periodically while it runs. |
 | `remember` | Replace `DELTA.md`. | Full-file replacement, size-capped, revisioned, visible on the next run. |
-| `recall` | Search this conversation's earlier turns, including ones compacted out of the live window. | Returns the matching snippet plus the on-disk path of any spilled result; scoped to the current session; lexical search over the recent window, not a full-text index. |
+| `recall` | Search this conversation's earlier turns, including ones compacted out of the live window. | Returns the matching snippet plus the on-disk path of any spilled result; scoped to the current session; since 0.2.17 a full-text index (any query word qualifies, rare words rank first, accents folded, prefix match) probed over the newest 5,000 rows of the thread; no arguments lists what compaction dropped. |
 | `todo` | Read or replace the run's working plan. | Re-injected every turn and survives compaction; bounded, so offload large notes to a workspace file. Send the full item list to write; omit to read. |
 | `search_tools` | Find and activate non-resident allowed tools for the current run. | Activates up to five name or description matches per call; lexical matching only. |
 | `code` | Delegate a task to a configured coding CLI. | No harness timeout or Delta filesystem sandbox. The child has every path and capability available to the daemon's OS user, subject to any sandbox implemented by the selected CLI. |
@@ -1437,7 +1437,7 @@ For work that would bloat the primary window, the `research` tool runs one to th
 
 ### Boundaries
 
-The token estimate is a conservative heuristic, not exact provider tokenization, so the post-provider overflow path remains a backstop that sheds aggressively and retries once. The summary audit tracks numbers, years, and paths; it does not track proper names, which the summarizer preserves but the engine does not verify. `recall` is a lexical search over the most recent window of the session, not a full-text index over an unbounded transcript. The re-injected plan is bounded and meant for a running list, not a large document — large findings belong in a workspace file. These are the seams to watch on genuinely long, high-volume runs.
+The token estimate is a conservative heuristic, not exact provider tokenization, so the post-provider overflow path remains a backstop that sheds aggressively and retries once. The summary audit harvests identifiers by class (URLs, emails, slugs, recurring proper names from the agent's own text, years, numbers) with a budget per class and 60 in total; anything outside those classes, or beyond the budget, the summarizer preserves but the engine does not verify. `recall` is an index probe over the newest 5,000 rows of the session, not a scan of an unbounded transcript, and it is lexical: a paraphrase that shares no word with the original does not match. The re-injected plan is bounded and meant for a running list, not a large document — large findings belong in a workspace file. These are the seams to watch on genuinely long, high-volume runs.
 
 ## Debug and inspect with Cockpit
 
@@ -1742,7 +1742,7 @@ curl -sS http://127.0.0.1:8080/healthz
 ```
 
 ```json
-{"ok":true,"version":"0.2.14","build":"optional-commit"}
+{"ok":true,"version":"0.2.17","build":"optional-commit"}
 ```
 
 `build` appears only when `DELTA_BUILD` is set. This endpoint does not test the model, MCP servers, telemetry, or other dependencies. It is liveness and version metadata, not readiness.
@@ -1990,6 +1990,8 @@ Before a production upgrade:
 7. monitor resumed runs and promotion failures
 
 There is no automatic pre-migration snapshot. A rollback after a schema-changing release may require restoring the pre-upgrade database together with a compatible workspace snapshot.
+
+**Upgrading to 0.2.17 (schema v15 to v16).** The recall index is a one-way migration, backfilled once at boot (about a second per 100 MB). Any v15 database (0.2.13 through 0.2.16) upgrades directly; a v16 database will not open under an older binary, so the snapshot in step 4 above is the rollback. Stop the old daemon before the new one opens the same volume: the write lease lives inside the database, and a still-running writer sees `database schema is locked` during the rebuild (a machine replacement on Fly already sequences this). No configuration change is required; `DELTA_CACHE_DIAGNOSIS=1` is the only new wire-level option and is opt-in. After the upgrade, verify `/healthz` reports the new version, `pragma user_version` reads 16, the agent's `DELTA.md` hash is unchanged, and telemetry ids keep increasing past the pre-upgrade high-water (see [Telemetry stops after a volume restore](#telemetry-stops-after-a-volume-restore)). The operator page with the Fly, systemd and Connect recipes and the acceptance checks is `docs/upgrade-0.2.17.md` in the repository.
 
 **Upgrading to 0.2.7 from an earlier version.** This release is drop-in: with the new environment variables unset, a deployment behaves exactly as 0.2.6. Two things are worth knowing:
 
@@ -2363,6 +2365,10 @@ Delta sends a custom newline-delimited JSON schema with a subset of GenAI-inspir
 ### The container restores or starts incorrectly
 
 If a backup is configured and the local DB is absent, restore must succeed unless `DELTA_BOOTSTRAP=1`. Use bootstrap only for the initial empty replica, then remove it. A missing explicitly configured Litestream file is fatal. An existing local DB always wins even if stale. Workspace and rotating MCP refresh-token recovery are separate from Litestream.
+
+### Telemetry stops after a volume restore
+
+Exported event ids are `<daemon uuid>:<events row id>` and a collector dedupes on that id. Restoring a database from an older snapshot rewinds the row counter below what the collector already holds, so every event after the restore is dropped as a duplicate with no error on either side, while the daemon log looks healthy. Before booting a restored database, advance the sequence past the collector's last id for that daemon: `UPDATE sqlite_sequence SET seq = <collector max + margin> WHERE name = 'events'`. Roll-forward upgrades keep the sequence and need nothing.
 
 ### An older binary refuses the database
 
