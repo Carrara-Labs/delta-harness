@@ -120,6 +120,7 @@ const releases: Release[] = [
         items: [
           "**Compaction events say more.** `generation`, `summary_finish_reason`, `summary_chars` (the persisted body) and `identifiers_appended`, so the difference between what the summarizer dropped and what the engine put back is one subtraction. A length-stopped summary is retried once and the better candidate kept.",
           "**What was tried and not shipped.** A retained tail proportional to the ceiling thrashed a heavy run (92 turns, 55 compactions where the flat tail took 18 and 11) and is reverted; a stronger summarizer model and an entity-table prompt both replayed to the same closed-book recall as the production Haiku prompt, so the utility lane is unchanged.",
+          "**Upgrade notes.** Any v15 database (0.2.13 through 0.2.16) migrates directly to v16 at boot; stop the old daemon before the new one opens the volume, and snapshot first because v16 will not open under an older binary. Known trap on any version: a volume restore rewinds the telemetry event sequence below what a deduping collector already holds, and every later event is silently dropped. Advance the `events` sequence past the collector's last id before booting a restored volume. Operator recipes: `docs/upgrade-0.2.17.md`.",
         ],
       },
     ],
