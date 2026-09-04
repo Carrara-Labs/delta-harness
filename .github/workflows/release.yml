@@ -82,6 +82,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            DELTA_BUILD=${{ github.sha }}
 
   npm:
     needs: [verify, binaries]

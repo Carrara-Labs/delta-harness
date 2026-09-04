@@ -23,7 +23,9 @@ once; the two traps at the end have each cost a day.
    replacement kills the run in flight, and a product that tracks runs by its own status will
    show that run as running forever until someone fails it by hand.
 2. **Staged secrets ship with the replace.** On Fly, `fly secrets list` before the swap; anything
-   staged and not yet deployed goes live with the new machine.
+   staged and not yet deployed goes live with the new machine. Apps managed through the Machines
+   API show every secret as "Staged" permanently (no release record), so compare the secret NAME
+   set against what the lane is supposed to have rather than stopping on the word.
 3. **Snapshot the whole state, not the workspace alone.** The database and the workspace are one
    unit; a workspace-only backup misses `delta.db` and cannot be restored.
    - Fly lane: `fly ssh console -a $APP -C "tar cf - -C /data --exclude=lost+found workspace delta.db delta.db-wal delta.db-shm" > archive/$APP-data-$(date +%Y%m%d-%H%M).tar`, then `tar tf` and confirm BOTH `delta.db` and `workspace/DELTA.md` are in it. `fly volumes snapshots create $VOL -a $APP` as a second copy.
@@ -49,11 +51,14 @@ locked` during the rebuild). Poll to `started` or `stopped`; `fly machine start`
 Verify:
 
 ```sh
-curl -s https://$APP.fly.dev/healthz            # {"ok":true,"version":"0.2.17","build":"<sha>"}
+curl -s https://$APP.fly.dev/healthz            # {"ok":true,"version":"0.2.17"}
 fly ssh console -a $APP -C "sha256sum /data/workspace/DELTA.md"   # unchanged
 fly ssh console -a $APP -C "sh -c 'dd if=/data/delta.db bs=1 skip=60 count=4 2>/dev/null | od -An -tu1'"   # 0 0 0 16
 ```
 
+The published 0.2.17 image carries no `build` field (no release image has; the workflow passes
+`DELTA_BUILD` from 0.2.18 on). Prove which build a lane runs by the image digest: record
+`fly machine status` image ref plus `docker manifest inspect ghcr.io/carrara-labs/delta-harness:0.2.17`.
 Then diff the post-swap machine config against the recorded one: the only differing key must be
 `image`. A machine replace can drop the first dispatch that arrives while the new machine wakes;
 re-dispatch it, do not restore. If the fleet keeps an `engine_version` column per lane (Aperture's `agent_lane` does),
