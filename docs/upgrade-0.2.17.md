@@ -90,6 +90,11 @@ the volume are untouched. Snapshot the volume first, as above.
   `turns_since_compaction=0` and an unsuppressed `cache_shortfall_tokens`. That shortfall is the
   reload cost of a cut, 20k to 30k tokens on Opus at a 200k ceiling. It was always paid; it is
   visible now. Do not read it as a regression.
+- If you hash the whole workspace before and after (do: it is the only proof nothing self-learned
+  was touched), expect `.delta/trash/` entries older than 7 days to vanish on the first boot. That
+  is the startup trash sweep every version runs, not the migration; every other file is
+  byte-identical (Carrara: 770 files to 766, the four were superseded `DELTA.md` drafts, all in
+  the snapshot).
 - Telemetry ids keep increasing past the pre-upgrade high-water. Zero events from a lane whose
   daemon log shows `[turn N]` lines is trap 1 below.
 - Expect the same cost and turns per run as before at the production ceiling, and net-zero
