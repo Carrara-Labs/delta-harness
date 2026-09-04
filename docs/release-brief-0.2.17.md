@@ -1,6 +1,6 @@
 # Release brief - Harness 0.2.17 "the long run"
 
-Status: **PUBLISHED 2026-09-04 (tag v0.2.17, build 074c431): npm `@carrara-labs/delta-harness@0.2.17` and `ghcr.io/carrara-labs/delta-harness:0.2.17`, site deployed, main fast-forwarded. Canary readout (12 real Carrara runs, 2 to 3 Sep) showed no regression on any axis and net-zero identifier loss; Nic gave the go. Fleet rollout in progress (bench d, Carrara, then client lanes one at a time; Steve on Delos done 12:46Z). Operator page: `docs/upgrade-0.2.17.md`.** Six review rounds with codex (every P1
+Status: **PUBLISHED 2026-09-04 (tag v0.2.17, build 074c431): npm `@carrara-labs/delta-harness@0.2.17` and `ghcr.io/carrara-labs/delta-harness:0.2.17`, site deployed, main fast-forwarded. Canary readout (12 real Carrara runs, 2 to 3 Sep) showed no regression on any axis and net-zero identifier loss; Nic gave the go. Fleet rolled 13:30Z: all 28 in-scope Quick Search lanes on the published image, schema 16, workspaces hash-identical, no lane failed; Steve on Delos done 12:46Z. Operator page: `docs/upgrade-0.2.17.md`.** Six review rounds with codex (every P1
 fixed), 1037 tests green, three twin-lane batteries on Aperture Quick Search, an offline
 recall eval on production compactions, and the release gate on real client prompts. The study
 behind it: `docs/study-long-horizon-synthesis.md` (sections 9.1 to 9.16 are the measurements,

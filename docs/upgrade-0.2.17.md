@@ -53,8 +53,17 @@ Verify:
 ```sh
 curl -s https://$APP.fly.dev/healthz            # {"ok":true,"version":"0.2.17"}
 fly ssh console -a $APP -C "sha256sum /data/workspace/DELTA.md"   # unchanged
-fly ssh console -a $APP -C "sh -c 'dd if=/data/delta.db bs=1 skip=60 count=4 2>/dev/null | od -An -tu1'"   # 0 0 0 16
 ```
+
+**Do not read `user_version` from the `delta.db` file header** (`dd ... skip=60`). Under WAL the
+migrated page 1 sits in `delta.db-wal` until the next checkpoint, and a small database (a fresh
+lane is about 2 MB) never reaches the automatic one, so the header keeps saying 15 while the
+daemon has migrated and runs fine on 16. Found on the fleet rollout. Read it through the engine:
+the `meta` table stores `schema_version`, served by the Cockpit introspection route
+`GET /v1/dev/tables/meta` (gated by `DELTA_INSPECT_TOKEN`), or open the database with any
+WAL-aware SQLite client (`sqlite3 -readonly ... "pragma user_version"`) on a copy that includes
+the `-wal` file. If you must read raw files, take the last valid page-1 frame of the WAL (matching
+salts), not the main file. `healthz` carries `schema_version` from 0.2.18.
 
 The published 0.2.17 image carries no `build` field (no release image has; the workflow passes
 `DELTA_BUILD` from 0.2.18 on). Prove which build a lane runs by the image digest: record
