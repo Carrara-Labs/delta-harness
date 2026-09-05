@@ -1700,23 +1700,48 @@ type ResponsesInputItem =
       phase?: string;
     }
   | { type: "function_call"; call_id: string; name: string; arguments: string }
-  | { type: "function_call_output"; call_id: string; output: string };
+  | {
+      type: "function_call_output";
+      call_id: string;
+      /** A string by default; under the explicit-cache gate every tool output is rendered as one
+       * `input_text` block (the caching guide's multi-turn agent shape) so a rolling mark can ride
+       * the block, and the rendered form never flips as marks move. */
+      output:
+        | string
+        | Array<{
+            type: "input_text";
+            text: string;
+            prompt_cache_breakpoint?: { mode: "explicit" };
+          }>;
+    };
 
 /** M2 (0.2.16): the Responses renderer for the cache-placement brain. Third instance of the
  * established pattern — `rollingMarks` stays the single walker, each wire supplies eligibility
  * over its OWN rendered shape (chat: ChatMsg[], Anthropic: block messages, here: input items).
- * Carriers are INPUT content blocks only (API reference): user message items qualify;
- * `function_call_output` (string output), assistant `output_text`, and the top-level
- * `instructions` string cannot hold a mark — so the stable mark rides the FIRST user message,
- * whose breakpoint caches instructions + tools + itself (prefix semantics include everything
- * rendered before the block). Budget: implicit mode's own latest-message breakpoint consumes
+ * Carriers are INPUT content blocks (API reference): a user message's trailing `input_text`,
+ * and a `function_call_output` whose output is rendered as `input_text` blocks (the caching
+ * guide's multi-turn agent example puts "a breakpoint after each tool result" exactly there).
+ * Assistant `output_text` and the top-level `instructions` string cannot hold a mark — so the
+ * stable mark rides the FIRST user message, whose breakpoint caches instructions + tools +
+ * itself (prefix semantics include everything rendered before the block). Tool outputs are
+ * the carriers that matter: an agentic run is one user message followed by tool calls, and
+ * 0.2.16 to 0.2.17 let user messages carry marks only, so on that shape the two rolling marks
+ * had nowhere to land and vanished silently (Aperture bench, Astra rc2: cached pinned at the
+ * first message, every later turn written at 1.25× and never read). Every tool output is
+ * rendered as a block array under this gate, marked or not, so the rendered form is
+ * byte-stable as marks roll. Budget: implicit mode's own latest-message breakpoint consumes
  * one of the four write slots (prompt-caching guide), so explicit marks cap at 3 — one stable
  * + two rolling. Image-bearing and trailing derived (ephemeral) items are skipped for the same
  * reason as on the other wires: rebuilt every turn, a prefix ending there never matches. */
 export function markResponsesCache(input: ResponsesInputItem[], ephemeralCount: number): void {
+  for (const it of input)
+    if (it && "type" in it && it.type === "function_call_output" && typeof it.output === "string")
+      it.output = [{ type: "input_text", text: it.output }];
   const eligible = (i: number): boolean => {
     const it = input[i];
-    if (!it || !("role" in it) || it.role !== "user") return false;
+    if (!it) return false;
+    if ("type" in it && it.type === "function_call_output") return Array.isArray(it.output);
+    if (!("role" in it) || it.role !== "user") return false;
     // Array.isArray, not trust: replayed carry items land in `input` verbatim before marking
     // runs, and corrupted persisted data claiming role:"user" without a content array must be
     // a skipped candidate, never a synchronous throw past the error-as-value seam.
@@ -1742,8 +1767,14 @@ export function markResponsesCache(input: ResponsesInputItem[], ephemeralCount: 
     marks.add(i);
   for (const i of marks) {
     const it = input[i];
-    if (!it || !("role" in it)) continue;
-    const last = it.content[it.content.length - 1];
+    if (!it) continue;
+    const blocks =
+      "role" in it
+        ? it.content
+        : it.type === "function_call_output" && Array.isArray(it.output)
+          ? it.output
+          : undefined;
+    const last = blocks?.[blocks.length - 1];
     if (last) last.prompt_cache_breakpoint = { mode: "explicit" };
   }
 }

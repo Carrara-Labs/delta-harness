@@ -419,10 +419,34 @@ describe("explicit cache breakpoints on the Responses wire (M2, 0.2.16)", () => 
     }
     return msgs;
   }
-  type Marked = { role?: string; content?: Array<Record<string, unknown>> };
+  /** An agentic run's real shape: ONE user message, then tool calls only, no follow-ups. This is
+   * what the fleet sends, and the interleaved `transcript` above hid a hole for two releases:
+   * with user messages as the only carriers, rolling marks had nowhere to land here. */
+  function toolOnly(turns: number): import("../src/provider").ChatMsg[] {
+    const msgs: import("../src/provider").ChatMsg[] = [
+      { role: "system", content: "spine" },
+      { role: "user", content: "the original ask" },
+    ];
+    for (let i = 0; i < turns; i++) {
+      msgs.push({
+        role: "assistant",
+        content: null,
+        tool_calls: [{ id: `c${i}`, type: "function", function: { name: "f", arguments: "{}" } }],
+      });
+      msgs.push({ role: "tool", tool_call_id: `c${i}`, content: `result ${i}` });
+    }
+    return msgs;
+  }
+  type Marked = {
+    type?: string;
+    role?: string;
+    content?: Array<Record<string, unknown>>;
+    output?: string | Array<Record<string, unknown>>;
+  };
+  const blocksOf = (i: Marked) => i.content ?? (Array.isArray(i.output) ? i.output : []);
   function marked(body: Record<string, unknown>): Marked[] {
     return (body.input as Marked[]).filter((i) =>
-      i.content?.some((b) => b.prompt_cache_breakpoint !== undefined),
+      blocksOf(i).some((b) => b.prompt_cache_breakpoint !== undefined),
     );
   }
 
@@ -437,14 +461,60 @@ describe("explicit cache breakpoints on the Responses wire (M2, 0.2.16)", () => 
     expect(hits.length).toBeGreaterThanOrEqual(2);
     expect(hits.length).toBeLessThanOrEqual(3);
     for (const h of hits) {
-      expect(h.role).toBe("user");
-      const last = h.content?.[h.content.length - 1];
+      expect(h.role === "user" || h.type === "function_call_output").toBe(true);
+      const blocks = blocksOf(h);
+      const last = blocks[blocks.length - 1];
       expect(last?.type).toBe("input_text");
       expect(last?.prompt_cache_breakpoint).toEqual({ mode: "explicit" });
     }
     expect(hits.some((h) => h.content?.[0]?.text === "the original ask")).toBe(true);
     // Implicit mode stays the default — the request-wide options field is NOT sent.
     expect("prompt_cache_options" in cap.body()).toBe(false);
+  });
+
+  test("tool-only history: the two rolling marks ride the last tool outputs, and every tool output is a block array (5.6 and Astra)", async () => {
+    // The fleet's shape. Before this fix the stable mark was the only one that landed, so the
+    // provider's implicit breakpoint (end of the latest user message = the ephemeral tail) was
+    // the only other write, and nothing after the first message was ever read back.
+    for (const model of ["gpt-5.6-sol", "gpt-6-astra"]) {
+      const cap = mockCapture(done);
+      const r = await chat(mk("https://api.openai.com/v1", model), {
+        messages: [...toolOnly(30), { role: "user", content: "# Context\nnow: tick" }],
+        cacheKey: "session-1",
+        ephemeralCount: 1,
+      });
+      expect(r.ok).toBe(true);
+      const input = cap.body().input as Marked[];
+      const outputs = input.filter((i) => i.type === "function_call_output");
+      expect(outputs.length).toBe(30);
+      for (const o of outputs) {
+        expect(Array.isArray(o.output)).toBe(true); // byte-stable form, marked or not
+        expect((o.output as Array<Record<string, unknown>>)[0]?.type).toBe("input_text");
+      }
+      const hits = marked(cap.body());
+      expect(hits.length).toBe(3);
+      expect(hits[0]?.content?.[0]?.text).toBe("the original ask"); // stable
+      const rolling = hits.slice(1);
+      expect(rolling.every((h) => h.type === "function_call_output")).toBe(true);
+      // The newest rolling mark sits on the LAST tool output before the ephemeral tail, so the
+      // next turn's prefix through this output is a cache read, not a 1.25× write.
+      expect(
+        rolling.some((h) => (h.output as Array<Record<string, unknown>>)[0]?.text === "result 29"),
+      ).toBe(true);
+      // The ephemeral tail itself never carries a mark.
+      expect(hits.some((h) => h.content?.[0]?.text?.toString().startsWith("# Context"))).toBe(
+        false,
+      );
+    }
+    // Off the gate (the Codex backend) tool outputs stay plain strings and nothing is marked.
+    const codex = mockCapture(done);
+    await chat(mk("https://chatgpt.com/backend-api/codex", "gpt-6-astra"), {
+      messages: toolOnly(5),
+      cacheKey: "session-1",
+    });
+    const outs = (codex.body().input as Marked[]).filter((i) => i.type === "function_call_output");
+    expect(outs.every((o) => typeof o.output === "string")).toBe(true);
+    expect(marked(codex.body()).length).toBe(0);
   });
 
   test("older models get no marks (they 400 on the field)", async () => {
