@@ -243,7 +243,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const visionRe =
     !safeMode && env.DELTA_VISION_MODELS
       ? new RegExp(env.DELTA_VISION_MODELS, "i")
-      : /claude|gpt-4o|gpt-4\.1|gpt-5|gemini|qwen[\w.-]*vl|pixtral|vision|glm[\w.-]*v|grok/i;
+      : /claude|gpt-4o|gpt-4\.1|gpt-5|gpt-6|gemini|qwen[\w.-]*vl|pixtral|vision|glm[\w.-]*v|grok/i;
   const vision =
     env.DELTA_VISION === "1" || (env.DELTA_VISION !== "0" && visionRe.test(models[0] ?? ""));
   // Robustness ceilings. Absolute model cap is generous (idle watchdog is the fast stall detector);
@@ -358,6 +358,17 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       ...((p.cacheTtl ?? cacheTtl) ? { cacheTtl: p.cacheTtl ?? cacheTtl } : {}),
     }),
   );
+  // GPT-6 rejects `none`/`minimal` (400 unsupported_value: low|medium|high|xhigh|max), and a 400
+  // is not failover-worthy, so ANY cascade member on it fails every call it serves (a fallback on
+  // it is a dead end mid-cascade). Warn, never rewrite: the effort passes through and the model
+  // stays the authority (0.2.18).
+  if (reasoningEffort && /^(none|minimal)$/.test(reasoningEffort)) {
+    const gpt6 = providers.flatMap((p) => p.models).filter((m) => /(^|\/)gpt-6/i.test(m));
+    if (gpt6.length)
+      console.error(
+        `delta: DELTA_REASONING_EFFORT='${reasoningEffort}' is rejected by ${gpt6.join(", ")} (GPT-6 takes low, medium, high, xhigh, max): every call on that model will 400. Use 'low'.`,
+      );
+  }
   // T5: a subscription (broker) provider with NO usable non-subscription fallback has no safety
   // net when the broker 409s / 401s / cools down after a 429. A real fallback = a non-broker
   // provider that actually has a credential (a static apiKey or its own Credential) — a keyless

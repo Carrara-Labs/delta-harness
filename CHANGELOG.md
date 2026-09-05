@@ -6,6 +6,25 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **GPT-6 Astra (`gpt-6-astra`).** Priced ($10 in / $50 out / $1 cached read per 1M; cache
+  writes 1.25×) and recognised as a vision model. The Responses wire is unchanged: probed on the
+  Codex backend 2026-09-05, a tool call round-trips on the 0.2.17 request surface. Explicit cache
+  marks stay 5.6-only (the model answers 400 on `prompt_cache_breakpoint`); Astra runs implicit
+  caching, metered from the same `cached_tokens` / `cache_write_tokens` fields. No `window` is
+  baked: the 120k compaction default applies, and a lane that wants the long context sets one
+  through `DELTA_MODEL_PRICES` knowing that above 272k input the whole request bills 2× in and
+  1.5× out.
+- **Boot warning for an effort GPT-6 rejects.** The model takes `low` through `max`; `none` and
+  `minimal` are a terminal 400 on every call, and a 400 never fails over, so any cascade member on
+  GPT-6 with such an effort is named at boot. The value still passes through: the model stays the
+  authority.
+
+### Changed
+- **`gpt-5.6-sol` price refreshed** to $4 / $20 / $0.40 (pricing page 2026-09-05; the table had
+  the 08-19 numbers $5 / $30 / $0.50). Metered cost on sol lanes drops accordingly; nothing on
+  the wire changes. `terra` and `luna` were already right.
+
 ## [0.2.17] - 2026-09-02
 
 Long-horizon work: compaction fidelity, recovery, and the instruments to see both. Built as one

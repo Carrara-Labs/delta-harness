@@ -1,0 +1,134 @@
+# Spec: GPT-6 Astra support (0.2.18)
+
+Status: DRAFT 2026-09-05, for codex review before implementation.
+
+## Why
+
+`gpt-6-astra` is served on both OpenAI surfaces the harness speaks (metered `api.openai.com`
+and the ChatGPT/Codex subscription backend). Probed 2026-09-05 through the Codex backend: the
+Responses wire the harness sends today (`store:false`, `prompt_cache_key`, `include`,
+`reasoning.effort`, flat function tools) round-trips a tool call unchanged. The engine needs no
+wire change. Three small gaps remain, all of them silent in production:
+
+1. `pricing.ts` has no entry for the model, so `resolvePrice` returns null and every call meters
+   $0: a lane's dollar cap never trips and cost telemetry reads zero.
+2. The vision regex in `config.ts` (`gpt-5`) does not match `gpt-6*`, so image markers are sent as
+   text placeholders to a model that reads images.
+3. `reasoning.effort` `none` and `minimal` are rejected by the model (400 `unsupported_value`,
+   "Supported values are: low, medium, high, xhigh, and max"). A 400 is not failover-worthy, so
+   the lane fails every call. A boot warning names the misconfiguration before the first run.
+
+Facts from the model page and probes that shape the numbers below: $10 in / $50 out / $1
+cached read per 1M; cache writes 1.25x input (already applied by `computeCost` via
+`cache_write_tokens`); requests above 272k input tokens bill 2x input and 1.5x output for the
+whole request; context 1,050,000; max output 128,000. On the Codex backend
+`prompt_cache_breakpoint` answers 400 "not supported on this model" and `prompt_cache_options`
+400 "Unsupported parameter"; `text.verbosity`, `reasoning.summary`, `configuration_update` and
+`include:["reasoning.encrypted_content"]` are accepted (medium effort returns a reasoning item
+with `encrypted_content` and the message `phase: final_answer`).
+
+## Changes
+
+### S1. Price entry (`src/pricing.ts`)
+
+```ts
+// GPT-6 Astra — model page 2026-09-05. `window` is deliberately the 272k price-tier boundary,
+// NOT the 1.05M context: above 272k input the WHOLE request bills 2x input / 1.5x output, and
+// the engine's job is to compact before that cliff (derived ceiling 232k). A lane that wants the
+// long context and accepts the price raises it via DELTA_MODEL_PRICES.
+"gpt-6-astra": { in: 10, out: 50, cacheRead: 1, window: 272_000 },
+```
+
+Effects: `deriveContextCeiling(["gpt-6-astra"])` = 232,000; with an Opus 5 fallback in the
+cascade the minimum still wins (209,000, unchanged for Steve). No alias entry: OpenAI documents
+no `gpt-6` alias, and the prefix matcher already covers a dated snapshot
+(`gpt-6-astra-2026-…`). The >272k tier itself stays unmodeled, as for 5.6.
+
+### S2. Vision regex (`src/config.ts`)
+
+`/claude|gpt-4o|gpt-4\.1|gpt-5|gpt-6|gemini|…/i`. One token added to the family heuristic.
+
+### S3. Boot warning (`src/config.ts`, next to the existing effort warning)
+
+```ts
+if (reasoningEffort && /^(none|minimal)$/.test(reasoningEffort) && /(^|\/)gpt-6/i.test(models[0] ?? ""))
+  console.error(`delta: DELTA_REASONING_EFFORT='${reasoningEffort}' is rejected by ${models[0]} (GPT-6 supports low, medium, high, xhigh, max) — every call will 400. Use 'low'.`);
+```
+
+Warn, never rewrite: the effort still passes through (the model is the authority, and the same
+config may serve a fallback that accepts it). Primary model only, matching the vision heuristic.
+
+### S4. Regression guard in tests (`test/provider.responses.test.ts`)
+
+`gpt-6-astra` on `api.openai.com` gets no explicit cache marks: `modelHasExplicitCache` stays a
+`gpt-5.6` prefix. Evidence gate, not version arithmetic: the Codex backend rejects the field on
+this model and `api.openai.com` is unverified for it. Implicit caching is what the model runs.
+
+### Tests (`bun test`)
+
+- pricing: `gpt-6-astra`, `openai/gpt-6-astra`, `gpt-6-astra-2026-09-01` resolve to the same
+  entry including `window`; `computeCost` bills cache writes at 1.25x of $10; `gpt-6` alone is
+  unpriced (null, no accidental alias).
+- config: `vision` true for `gpt-6-astra` and `openai/gpt-6-astra`; `DELTA_VISION=0` still wins;
+  `gpt-5.6-sol` unchanged.
+- config: warning emitted for `gpt-6-astra` + `none`, for `minimal`; not for `gpt-6-astra` + `low`;
+  not for `gpt-5.6-sol` + `none` (that model accepts it); effort still present on the config.
+- provider: S4 above; existing 5.6 mark tests untouched.
+
+### Docs
+
+CHANGELOG `[Unreleased]`: one entry. `site/public/guide.md` OpenAI section: one sentence naming
+GPT-6 Astra as supported (implicit caching, efforts low..max). Site changelog at release time.
+
+## Explicitly not changing
+
+- `KNOWN_EFFORTS` (already lists `max`; `none`/`minimal` remain valid for 5.6).
+- `acceptsReasoningReplay` and the other `openai.com` allowlists: enabling replay on
+  `chatgpt.com` is a separate slice gated on the Delos probe battery, not this one.
+- `modelHasExplicitCache`: stays 5.6-only (S4).
+- No warning for a Chat Completions wire on GPT-6 (tool calling requires Responses on this model):
+  no lane runs that shape, and the provider's 4xx is explicit at call time.
+- `configuration_update`, `async: true` tools, WebSocket steering, server-side compaction
+  (`context_management`), pro mode: opt-in features the engine does not need.
+- Bundle prompting (Astra asks more clarifying questions, pauses on conflicting skill text,
+  prefers lists): markdown owns meaning; handled per lane at migration, not in the engine.
+
+## Live test plan (after unit tests + codex diff review)
+
+Same daemon build, three lanes, the same 3-turn tool task each (a search-then-summarize prompt
+through `POST /v1/responses` with `previous_response_id`), then `/v1/status`, cost > 0 in the
+`model.call` events, and a second run with a second identical prompt to see `cached_tokens`:
+
+1. **Opus 5, Anthropic native**: control for "nothing else moved" (cost, vision, effort map).
+2. **gpt-6-astra on the Codex subscription** (local daemon, broker via an ssh tunnel to Delos,
+   `DELTA_REASONING_EFFORT=low`): tool round-trip, cost metered at the new prices, `vision:true`
+   on status, no marks on the wire, boot warning absent. Then the same lane with `none` to see
+   the warning and the 400.
+3. **gpt-6-astra on api.openai.com** (metered key): same as 2, plus `cache_write_tokens` billed.
+4. Regression twin: lane 2 with `gpt-5.6-sol` to confirm 5.6 still gets its marks and prices.
+
+## Codex review, round 1 (spec), and what changed
+
+Seven findings, two P1. Resolution, in the order codex gave them:
+
+1. **[P1] `window: 272_000` clamps an operator override** (`maxSafeCeiling`): adding Astra to a
+   cascade with `DELTA_COMPACT_AT_TOKENS=300000` would silently cut it to 232k. Accepted: no
+   `window` on the entry. The 120k default applies to an Astra-only lane; a lane that wants more
+   sets it through `DELTA_MODEL_PRICES`. Test pins both `deriveContextCeiling` (null) and
+   `maxSafeCeiling` beside Opus 5 (209k, unchanged).
+2. **[P1] >272k tier unmodeled.** Declined for this slice, documented. Without a window the
+   ceiling is 120k and the estimator over-counts by about 1.7×, so a request above 272k only
+   happens on an irreducible overflow, which the engine already logs. Same stance as 5.6.
+3. **[P2] Twin lane on the Codex backend cannot show 5.6 marks** (host gate). Correct; the live
+   plan now expects zero marks on `chatgpt.com` for both models and keeps the positive 5.6 mark
+   control on `api.openai.com` (unit-tested; live needs a metered key).
+4. **[P2] Mixed-cascade ceiling tests.** Moot without a window; the pricing test above covers
+   the one case that matters (Astra never lowers a neighbour's ceiling).
+5. **[P2] Sol price stale.** Verified on the live pricing page 2026-09-05: sol is $4 / $20 /
+   $0.40 (table had $5 / $30 / $0.50); terra and luna unchanged. Refreshed, with its tests.
+6. **[P2] Warn for Astra anywhere in the cascade, not only the primary.** Accepted: the check
+   runs over every provider's model list after the cascade is built; tests cover a
+   `DELTA_MODEL_FALLBACKS` member and a separate `DELTA_PROVIDERS` entry.
+7. **[P2] Prove image delivery.** The serializer test for `input_image` on the Responses wire
+   is model-agnostic and already exists; the live plan adds an image-marker turn on the Astra
+   lane (a PNG in the workspace read through the file tool, then "what colour is it").

@@ -196,3 +196,56 @@ describe("Responses tuning knobs + unmapped-control reporting (M4, 0.2.16)", () 
     expect(unmappedControls(loadConfig({}).provider)).toEqual([]);
   });
 });
+
+describe("GPT-6 Astra (0.2.18)", () => {
+  const boot = (env: Record<string, string>) => {
+    const errs: string[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => errs.push(a.join(" "));
+    try {
+      return { cfg: loadConfig(env), errs: errs.join("\n") };
+    } finally {
+      console.error = orig;
+    }
+  };
+  test("reads images on every id form; DELTA_VISION=0 still wins; 5.6 unchanged", () => {
+    expect(boot({ DELTA_MODEL_PRIMARY: "gpt-6-astra" }).cfg.vision).toBe(true);
+    expect(boot({ DELTA_MODEL_PRIMARY: "openai/gpt-6-astra" }).cfg.vision).toBe(true);
+    expect(boot({ DELTA_MODEL_PRIMARY: "gpt-6-astra", DELTA_VISION: "0" }).cfg.vision).toBe(false);
+    expect(boot({ DELTA_MODEL_PRIMARY: "gpt-5.6-sol" }).cfg.vision).toBe(true);
+  });
+  test("an effort GPT-6 rejects is named at boot for ANY cascade member, and still passes through", () => {
+    for (const effort of ["none", "minimal"]) {
+      const { cfg, errs } = boot({
+        DELTA_MODEL_PRIMARY: "gpt-6-astra",
+        DELTA_REASONING_EFFORT: effort,
+      });
+      expect(cfg.reasoningEffort).toBe(effort); // warn, never rewrite: the model is the authority
+      expect(errs).toContain("rejected by gpt-6-astra");
+    }
+    // A fallback on Astra is a terminal 400 mid-cascade (a 400 never fails over): named too,
+    // whether it rides the primary provider's list or a separate DELTA_PROVIDERS entry.
+    expect(
+      boot({
+        DELTA_MODEL_PRIMARY: "gpt-5.6-sol",
+        DELTA_MODEL_FALLBACKS: "gpt-6-astra",
+        DELTA_REASONING_EFFORT: "none",
+      }).errs,
+    ).toContain("rejected by gpt-6-astra");
+    expect(
+      boot({
+        DELTA_MODEL_PRIMARY: "anthropic/claude-opus-5",
+        DELTA_PROVIDERS:
+          '[{"label":"oa","baseUrl":"https://api.openai.com/v1","models":["openai/gpt-6-astra"],"apiKeyEnv":"K"}]',
+        DELTA_REASONING_EFFORT: "minimal",
+      }).errs,
+    ).toContain("rejected by openai/gpt-6-astra");
+    // Not for an effort Astra takes, and not for a model that still accepts `none`.
+    expect(
+      boot({ DELTA_MODEL_PRIMARY: "gpt-6-astra", DELTA_REASONING_EFFORT: "low" }).errs,
+    ).not.toContain("rejected by");
+    expect(
+      boot({ DELTA_MODEL_PRIMARY: "gpt-5.6-sol", DELTA_REASONING_EFFORT: "none" }).errs,
+    ).not.toContain("rejected by");
+  });
+});

@@ -534,7 +534,9 @@ DELTA_MODEL_PRIMARY=gpt-5.6-sol
 ```
 
 The GPT-5.6 family (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`) is fully supported and priced
-in the built-in table. Since 0.2.16, an `api.openai.com` Responses lane is a first-class
+in the built-in table, and so is GPT-6 Astra (`gpt-6-astra`, since 0.2.18): same wire, implicit
+prompt caching only (the model refuses explicit breakpoints), reasoning effort `low` through
+`max` (`none` and `minimal` are refused by the model and named at boot). Since 0.2.16, an `api.openai.com` Responses lane is a first-class
 integration, not a ported one:
 
 - **Reasoning carry.** The model's encrypted reasoning items are captured, persisted with the
@@ -543,7 +545,7 @@ integration, not a ported one:
   `phase` field (GPT-5.5+) round-trips with them, so the model never re-reads an intermediate
   update as a final answer. Both are stripped before any other wire and from compaction-retained
   rows, so nothing outside this lane ever sees the sealed payload.
-- **Explicit prompt-cache breakpoints** (GPT-5.6+). The same placement engine that drives
+- **Explicit prompt-cache breakpoints** (GPT-5.6; Astra refuses the field). The same placement engine that drives
   Anthropic caching marks one stable point (caching instructions + tools + the first user
   message) plus two rolling points, alongside the provider's implicit breakpoint. Cache writes
   bill 1.25× on 5.6 and are metered from the nested `cache_write_tokens` usage field.

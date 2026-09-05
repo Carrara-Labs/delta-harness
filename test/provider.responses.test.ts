@@ -113,8 +113,9 @@ describe("Responses usage parsing (M3, 0.2.16)", () => {
     if (!r.ok) return;
     expect(r.usage.cacheRead).toBe(2_000);
     expect(r.usage.cacheWrite).toBe(400);
-    // fresh 200*$5 + read 2000*$0.5 + write 400*$6.25 + out 10*$30 = 4800/1e6
-    expect(r.usage.costUsd).toBeCloseTo(0.0048, 8);
+    // sol at $4/$20/$0.40 (2026-09-05): fresh 200*$4 + read 2000*$0.4 + write 400*$5 + out 10*$20
+    // = 800 + 800 + 2000 + 200 = 3800/1e6
+    expect(r.usage.costUsd).toBeCloseTo(0.0038, 8);
   });
 });
 
@@ -464,6 +465,20 @@ describe("explicit cache breakpoints on the Responses wire (M2, 0.2.16)", () => 
     });
     expect(r.ok).toBe(true);
     expect(marked(cap.body()).length).toBe(0);
+  });
+
+  test("gpt-6-astra gets no marks even on api.openai.com (evidence gate, 0.2.18)", async () => {
+    // Probed 2026-09-05: the Codex backend answers 400 `prompt_cache_breakpoint is not supported
+    // on this model` for Astra, and api.openai.com is unverified for it. Implicit caching is what
+    // the model runs; the routing key still rides.
+    const cap = mockCapture(done);
+    const r = await chat(mk("https://api.openai.com/v1", "gpt-6-astra"), {
+      messages: transcript(30),
+      cacheKey: "session-1",
+    });
+    expect(r.ok).toBe(true);
+    expect(marked(cap.body()).length).toBe(0);
+    expect(cap.body().prompt_cache_key).toBe("session-1");
   });
 
   test("trailing derived (ephemeral) user messages are never rolling-marked", async () => {
