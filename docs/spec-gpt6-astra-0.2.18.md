@@ -157,3 +157,16 @@ through `read_file` on the same bundle. This is the guide's warning in the wild 
 instruction text where earlier models assumed). Image delivery stands on the subscription-backend
 result (same serializer); the metered lane stands for cost and cache. For any bundle moving to
 Astra: make instruction precedence explicit, and expect refusals as an outcome class.
+
+## Battery finding and fix (2026-09-05, same day)
+
+Two astra-low runs in, cost ran 3× Sol with the hit rate decaying 34% → 18% and the cached prefix
+fixed while requests grew. Cause: S4 above was wrong for `api.openai.com`. The evidence gate was
+taken from the Codex backend only; without explicit marks OpenAI's implicit mode writes ONE
+breakpoint per request at the end of the latest user message, which is the ephemeral tail the
+engine re-renders every turn (context clock, task instructions, retrieval, plan), so every turn
+writes the history at 1.25× and reads only the oldest stable boundary (the smoke's fixed 12,643).
+Sol never hit this because its rolling marks are placed before the ephemeral tail (M2, 0.2.16).
+Probe from inside bench-sol-a: `api.openai.com` accepts `prompt_cache_breakpoint` on Astra
+(200). Fix: `modelHasExplicitCache` takes `gpt-6`; the host gate still keeps the Codex backend
+off. Lesson: a model gate needs a probe per host, not per model.

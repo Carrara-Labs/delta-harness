@@ -467,18 +467,28 @@ describe("explicit cache breakpoints on the Responses wire (M2, 0.2.16)", () => 
     expect(marked(cap.body()).length).toBe(0);
   });
 
-  test("gpt-6-astra gets no marks even on api.openai.com (evidence gate, 0.2.18)", async () => {
-    // Probed 2026-09-05: the Codex backend answers 400 `prompt_cache_breakpoint is not supported
-    // on this model` for Astra, and api.openai.com is unverified for it. Implicit caching is what
-    // the model runs; the routing key still rides.
+  test("gpt-6-astra on api.openai.com gets the same marks as 5.6; none on chatgpt.com (0.2.18)", async () => {
+    // api.openai.com accepts the field for Astra (2026-09-05); the Codex backend answers 400
+    // `prompt_cache_breakpoint is not supported on this model`, which the host gate covers.
+    // Without marks the implicit breakpoint lands on the ephemeral tail and the history is
+    // never read back (astra-low battery: 3× Sol).
     const cap = mockCapture(done);
     const r = await chat(mk("https://api.openai.com/v1", "gpt-6-astra"), {
       messages: transcript(30),
       cacheKey: "session-1",
     });
     expect(r.ok).toBe(true);
-    expect(marked(cap.body()).length).toBe(0);
+    const hits = marked(cap.body());
+    expect(hits.length).toBeGreaterThanOrEqual(2);
+    expect(hits.length).toBeLessThanOrEqual(3);
+    expect(hits.some((h) => h.content?.[0]?.text === "the original ask")).toBe(true);
     expect(cap.body().prompt_cache_key).toBe("session-1");
+    const codex = mockCapture(done);
+    await chat(mk("https://chatgpt.com/backend-api/codex", "gpt-6-astra"), {
+      messages: transcript(30),
+      cacheKey: "session-1",
+    });
+    expect(marked(codex.body()).length).toBe(0);
   });
 
   test("trailing derived (ephemeral) user messages are never rolling-marked", async () => {

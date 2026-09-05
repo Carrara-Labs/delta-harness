@@ -870,9 +870,13 @@ export function acceptsCacheBreakpoints(baseUrl: string): boolean {
 
 /** Explicit breakpoints exist from GPT-5.6 up; older models 400 on the field (prompt-caching
  * guide). Evidence-only gate — extend when a newer family ships and is verified, never by
- * guessing version arithmetic. Leaf-based so provider prefixes ("openai/gpt-5.6-sol") match. */
+ * guessing version arithmetic. Leaf-based so provider prefixes ("openai/gpt-5.6-sol") match.
+ * GPT-6 Astra: api.openai.com accepts the field (2026-09-05); the ChatGPT/Codex backend refuses it
+ * for this model, which the host gate (acceptsCacheBreakpoints) already keeps off. Without marks
+ * OpenAI's single implicit breakpoint lands on the re-rendered ephemeral tail every turn, so the
+ * history is written at 1.25× and never read back (astra-low battery: 3× Sol, hit% decaying). */
 export function modelHasExplicitCache(model: string): boolean {
-  return (model.toLowerCase().split("/").pop() ?? "").startsWith("gpt-5.6");
+  return /^gpt-(5\.6|6)/.test(model.toLowerCase().split("/").pop() ?? "");
 }
 
 /** Highest index a ROLLING cache breakpoint may land on: everything after it is a derived

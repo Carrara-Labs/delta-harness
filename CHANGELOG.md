@@ -9,9 +9,13 @@ All notable changes to this project are documented here. The format is based on
 ### Added
 - **GPT-6 Astra (`gpt-6-astra`).** Priced ($10 in / $50 out / $1 cached read per 1M; cache
   writes 1.25×) and recognised as a vision model. The Responses wire is unchanged: probed on the
-  Codex backend 2026-09-05, a tool call round-trips on the 0.2.17 request surface. Explicit cache
-  marks stay 5.6-only (the model answers 400 on `prompt_cache_breakpoint`); Astra runs implicit
-  caching, metered from the same `cached_tokens` / `cache_write_tokens` fields. No `window` is
+  Codex backend 2026-09-05, a tool call round-trips on the 0.2.17 request surface. Astra gets the
+  same explicit cache marks as 5.6 on `api.openai.com` (the field is accepted there; the
+  ChatGPT/Codex backend refuses it for this model, and the host gate keeps it off). This is not
+  cosmetic: without marks OpenAI's single implicit breakpoint lands on the ephemeral tail the
+  engine re-renders every turn, so the history is written at 1.25× each call and never read
+  back. Measured on the Aperture bench before the fix: 3× Sol's cost on the same tasks, hit rate
+  decaying from 34% to 18% with history. No `window` is
   baked: the 120k compaction default applies, and a lane that wants the long context sets one
   through `DELTA_MODEL_PRICES` knowing that above 272k input the whole request bills 2× in and
   1.5× out.
