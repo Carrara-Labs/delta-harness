@@ -134,3 +134,16 @@ Seven findings, two P1. Resolution, in the order codex gave them:
 7. **[P2] Prove image delivery.** The serializer test for `input_image` on the Responses wire
    is model-agnostic and already exists; the live plan adds an image-marker turn on the Astra
    lane (a PNG in the workspace read through the file tool, then "what colour is it").
+
+## Live results (2026-09-05)
+
+| lane | where | result |
+| --- | --- | --- |
+| Opus 5, Anthropic native | local daemon | image "red", threaded recall, cost metered; nothing moved |
+| gpt-6-astra, Codex subscription, low | local daemon, broker via ssh tunnel to Delos | image "red" (input_image delivered), web search found 0.2.17, recall; $0.075 over 6 calls at the new prices; no boot warning |
+| gpt-5.6-sol twin, Codex subscription | local daemon | same task; cost at the refreshed $4/$20/$0.40 |
+| gpt-6-astra, effort none | local daemon | boot warning fires; every call 400 `unsupported_value`, error-as-value, no failover |
+| gpt-6-astra, api.openai.com, low | bench-sol-a, engineer, rc1 image from 4db400e | 5 turns, 22 s, correct answer; cost reconciles to the cent once cache writes are counted (turn 1: 16,738 tokens written at 12.5 + 384 out at 50 = $0.2284); cached_tokens climb turn over turn (implicit caching); healthz `build` populated |
+
+One gap surfaced by the metered lane and fixed on the branch: the cache-write count fed cost but
+was never exported, so `gen_ai.usage.cache_write_tokens` now rides `model.call`.

@@ -100,6 +100,7 @@ describe("exporter", () => {
       {
         prompt: "secret user data",
         "gen_ai.usage.output_tokens": 42,
+        "gen_ai.usage.cache_write_tokens": 400,
         "gen_ai.request.effort": "low",
         fallback: true,
         // Model-controlled requested-name list: a hallucinated/injected name can be free
@@ -126,6 +127,7 @@ describe("exporter", () => {
     // tokens, cost, effort, fallback, and error class (codex 0.2.6 P1)
     expect(modelCall?.attributes).toEqual({
       "gen_ai.usage.output_tokens": 42,
+      "gen_ai.usage.cache_write_tokens": 400, // engine-authored counter: no payload consent needed
       "gen_ai.request.effort": "low",
       fallback: true,
     });

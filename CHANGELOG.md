@@ -20,6 +20,12 @@ All notable changes to this project are documented here. The format is based on
   GPT-6 with such an effort is named at boot. The value still passes through: the model stays the
   authority.
 
+- **`gen_ai.usage.cache_write_tokens` on `model.call` events** (main and utility tiers, exporter
+  allowlisted). Cache writes have been billed at 1.25× since 0.2.16 but the count never left the
+  process, so a metered turn could not be reconciled from telemetry: on the Astra gate a
+  16,738-token first turn metered $0.2284 against $0.1866 of visible tokens, the gap being the
+  whole prompt written to cache. Absent when the wire reports no write.
+
 ### Changed
 - **`gpt-5.6-sol` price refreshed** to $4 / $20 / $0.40 (pricing page 2026-09-05; the table had
   the 08-19 numbers $5 / $30 / $0.50). Metered cost on sol lanes drops accordingly; nothing on

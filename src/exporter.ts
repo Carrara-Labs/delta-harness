@@ -56,6 +56,7 @@ const SAFE_ATTRS = new Set([
   "gen_ai.usage.input_tokens",
   "gen_ai.usage.output_tokens",
   "gen_ai.usage.cached_tokens",
+  "gen_ai.usage.cache_write_tokens",
   "gen_ai.usage.cost_usd",
   "cache_hit_pct",
   // The honest cache-health number (S10). `cache_hit_pct` is a ratio whose denominator moves with

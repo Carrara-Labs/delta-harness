@@ -112,7 +112,13 @@ export function emitUtilityCall(
   r: {
     model: string;
     /** Absent on the failure branch of `ModelResult`. */
-    usage?: { input: number; output: number; cacheRead: number; costUsd: number };
+    usage?: {
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheWrite?: number;
+      costUsd: number;
+    };
     latencyMs?: number;
     error?: string;
     status?: number;
@@ -145,6 +151,7 @@ export function emitUtilityCall(
     "gen_ai.usage.input_tokens": r.usage.input,
     "gen_ai.usage.output_tokens": r.usage.output,
     "gen_ai.usage.cached_tokens": r.usage.cacheRead,
+    ...(r.usage.cacheWrite ? { "gen_ai.usage.cache_write_tokens": r.usage.cacheWrite } : {}),
     "gen_ai.usage.cost_usd": r.usage.costUsd,
     cache_hit_pct: r.usage.input ? Math.round((r.usage.cacheRead / r.usage.input) * 100) : 0,
     tier: "utility",

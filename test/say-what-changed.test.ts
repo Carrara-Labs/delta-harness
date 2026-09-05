@@ -99,6 +99,30 @@ describe("S3 utility-tier calls are visible", () => {
     expect(seen[0]?.purpose).toBe("summary");
     expect(seen[0]?.["gen_ai.usage.input_tokens"]).toBe(1000);
     expect(seen[0]?.cache_hit_pct).toBe(40);
+    // A cache write that the wire reported rides as its own attribute (the count fed cost since
+    // 0.2.16 but never left the process); none reported → no key, not a zero.
+    expect(seen[0]).not.toHaveProperty("gen_ai.usage.cache_write_tokens");
+    const { seen: written } = (() => {
+      const n = newEvents();
+      emitUtilityCall(
+        n.events,
+        { turn: 3 },
+        "summary",
+        okResult({
+          usage: {
+            input: 1000,
+            output: 50,
+            cacheRead: 400,
+            cacheWrite: 600,
+            total: 1050,
+            costUsd: 0.001,
+          },
+        }),
+        4,
+      );
+      return n;
+    })();
+    expect(written[0]?.["gen_ai.usage.cache_write_tokens"]).toBe(600);
   });
 
   test("before_turn names the turn the call enabled, not the turn it reports", () => {

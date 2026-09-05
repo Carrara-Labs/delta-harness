@@ -1258,6 +1258,12 @@ export async function executeRun(
         "gen_ai.usage.input_tokens": result.usage.input,
         "gen_ai.usage.output_tokens": result.usage.output,
         "gen_ai.usage.cached_tokens": result.usage.cacheRead,
+        // Cache WRITES bill 1.25x on GPT-5.6+ and Anthropic; computeCost has charged them since
+        // 0.2.16 but the count never left the process, so a metered turn could not be reconciled
+        // from telemetry (the Astra gate, 2026-09-05). Absent when the wire reports none.
+        ...(result.usage.cacheWrite
+          ? { "gen_ai.usage.cache_write_tokens": result.usage.cacheWrite }
+          : {}),
         "gen_ai.usage.cost_usd": result.usage.costUsd,
         // NOT a health metric — its denominator grows with appended history. Kept because
         // consumers already chart it, but score on `cache_shortfall_tokens` instead.
