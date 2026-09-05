@@ -170,3 +170,20 @@ Sol never hit this because its rolling marks are placed before the ephemeral tai
 Probe from inside bench-sol-a: `api.openai.com` accepts `prompt_cache_breakpoint` on Astra
 (200). Fix: `modelHasExplicitCache` takes `gpt-6`; the host gate still keeps the Codex backend
 off. Lesson: a model gate needs a probe per host, not per model.
+
+## rc2 result and the real defect (2026-09-05, evening)
+
+rc2 (70dcbd8) on both bench lanes: the stable mark reads, the rolling marks never do. Smoke:
+cached_tokens pinned at 16,695 (system + dispatch message) from turn 2 on, written = input minus
+the pin every turn; S1 rerun $2.73 vs rc1 $2.75. Engineer's pre-wire capture (DELTA_CAPTURE_CALLS)
+showed the message prefix byte-identical turn to turn (only the 130-byte "# Context ... now"
+ephemeral block differs), so the misses were placement. Cause, in the renderer since 0.2.16:
+`markResponsesCache` accepted only user messages with a trailing `input_text` as carriers, and
+`function_call_output` rendered as a plain string; an agentic run is one user message then tool
+calls, so the rolling marks had no carrier and vanished silently. The unit fixture interleaved a
+user follow-up after every tool result, which is why the tests never saw it (the proxy, again).
+Fix (f80be72 + bb8af91): under the gate every tool output renders as an `input_text` block array
+(byte-stable as marks roll) and tool outputs carry the rolling marks; the caching guide's own
+multi-turn agent example is this shape ("a breakpoint added after each tool result"), and
+api.openai.com accepted it for Astra by probe (200). This fixes Sol on api.openai.com too.
+Gate for rc3: turn 3 cached above the pin, last-turn shortfall under 12k on both lanes.
