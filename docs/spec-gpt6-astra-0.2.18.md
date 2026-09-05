@@ -105,7 +105,9 @@ through `POST /v1/responses` with `previous_response_id`), then `/v1/status`, co
    on status, no marks on the wire, boot warning absent. Then the same lane with `none` to see
    the warning and the 400.
 3. **gpt-6-astra on api.openai.com** (metered key): same as 2, plus `cache_write_tokens` billed.
-4. Regression twin: lane 2 with `gpt-5.6-sol` to confirm 5.6 still gets its marks and prices.
+4. Regression twin: lane 2 with `gpt-5.6-sol` on the Codex backend (zero marks there for both
+   models, host gate) to confirm its refreshed prices; the positive 5.6 mark control lives on
+   `api.openai.com` (unit-tested; live needs the metered key).
 
 ## Codex review, round 1 (spec), and what changed
 

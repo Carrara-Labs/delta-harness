@@ -109,11 +109,18 @@ describe("gpt-6-astra (0.2.18)", () => {
       computeCost(astra, { input: 2_600, output: 0, cacheRead: 2_000, cacheWrite: 400 }),
     ).toBeCloseTo(0.009, 8);
   });
-  test("no baked window: the ceiling keeps its default and never clamps an existing cascade", () => {
+  test("no baked window: Astra is an UNKNOWN-window member, with the documented consequences", () => {
     // A `window` would also clamp an operator's DELTA_COMPACT_AT_TOKENS through maxSafeCeiling
     // (codex P1 on the spec), and the only number on offer (the 272K price cliff) is a cost
-    // choice, not a capacity. Unknown → default; Astra beside Opus 5 leaves Opus's ceiling alone.
+    // choice, not a capacity. So Astra follows the S6 rules for an unknown model: alone it
+    // derives nothing (the 120k default), beside Opus 5 the DEFAULT drops from Opus's 209k to
+    // the conservative 120k (an unknown member contributes the fallback), while an operator
+    // OVERRIDE is clamped only by the known member (209k), never by Astra.
     expect(deriveContextCeiling(["gpt-6-astra"], 120_000, BAKED_PRICES)).toBeNull();
+    expect(deriveContextCeiling(["claude-opus-5"], 120_000, BAKED_PRICES)).toBe(209_000);
+    expect(deriveContextCeiling(["claude-opus-5", "gpt-6-astra"], 120_000, BAKED_PRICES)).toBe(
+      120_000,
+    );
     expect(maxSafeCeiling(["gpt-6-astra", "claude-opus-5"], BAKED_PRICES)).toBe(209_000);
   });
 });
