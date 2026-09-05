@@ -11,11 +11,20 @@ All notable changes to this project are documented here. The format is based on
   writes 1.25×) and recognised as a vision model. The Responses wire is unchanged: probed on the
   Codex backend 2026-09-05, a tool call round-trips on the 0.2.17 request surface. Astra gets the
   same explicit cache marks as 5.6 on `api.openai.com` (the field is accepted there; the
-  ChatGPT/Codex backend refuses it for this model, and the host gate keeps it off). This is not
-  cosmetic: without marks OpenAI's single implicit breakpoint lands on the ephemeral tail the
-  engine re-renders every turn, so the history is written at 1.25× each call and never read
-  back. Measured on the Aperture bench before the fix: 3× Sol's cost on the same tasks, hit rate
-  decaying from 34% to 18% with history. No `window` is
+  ChatGPT/Codex backend refuses it for this model, and the host gate keeps it off).
+- **Rolling cache marks ride tool outputs on the Responses wire** (fixes 0.2.16's M2 for every
+  GPT-5.6+ lane, not only Astra). Since 0.2.16 only user messages could carry a mark, and an
+  agentic run is one user message followed by tool calls, so on the fleet's real shape the two
+  rolling marks had no carrier and vanished silently: the provider's own implicit breakpoint
+  then landed on the ephemeral tail the engine re-renders every turn, and everything after the
+  first message was written at 1.25× on every call and never read back. Measured on the Aperture
+  bench: Astra at 3× Sol's cost with the hit rate decaying from 34% to 18%, and after the model
+  gate alone was fixed, cached tokens pinned at exactly the first message (16,695) on every turn.
+  Under the explicit-cache gate every `function_call_output` is now rendered as an `input_text`
+  block array (the caching guide's own multi-turn agent shape, accepted on `api.openai.com` for
+  5.6 and Astra) and the two rolling marks ride the last tool outputs before the tail. Off the
+  gate (the Codex backend) tool outputs stay plain strings; nothing changes there. Expect Sol
+  lanes on `api.openai.com` to gain hit rate too. No `window` is
   baked: the 120k compaction default applies, and a lane that wants the long context sets one
   through `DELTA_MODEL_PRICES` knowing that above 272k input the whole request bills 2× in and
   1.5× out.

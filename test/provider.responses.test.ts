@@ -499,7 +499,9 @@ describe("explicit cache breakpoints on the Responses wire (M2, 0.2.16)", () => 
       // The newest rolling mark sits on the LAST tool output before the ephemeral tail, so the
       // next turn's prefix through this output is a cache read, not a 1.25× write.
       expect(
-        rolling.some((h) => (h.output as Array<Record<string, unknown>>)[0]?.text === "result 29"),
+        rolling.some((h) =>
+          String((h.output as Array<Record<string, unknown>>)[0]?.text).includes("result 29"),
+        ),
       ).toBe(true);
       // The ephemeral tail itself never carries a mark.
       expect(hits.some((h) => h.content?.[0]?.text?.toString().startsWith("# Context"))).toBe(
@@ -582,20 +584,22 @@ describe("explicit cache breakpoints on the Responses wire (M2, 0.2.16)", () => 
       messages: transcript(30),
       cacheKey: "session-1",
     });
-    const texts1 = marked(cap1.body()).map((h) => h.content?.[0]?.text);
+    const texts1 = marked(cap1.body()).map((h) => blocksOf(h)[0]?.text);
     const cap2 = mockCapture(done);
     await chat(mk("https://api.openai.com/v1", "gpt-5.6-sol"), {
       messages: transcript(33),
       cacheKey: "session-1",
     });
-    const texts2 = marked(cap2.body()).map((h) => h.content?.[0]?.text);
+    const texts2 = marked(cap2.body()).map((h) => blocksOf(h)[0]?.text);
     // The STABLE mark persists verbatim; rolling marks ROLL — forward only. Each forward roll
     // reads the longest matching cached prefix and writes just the increment (the server keeps
     // reading against the conversation's last 50 breakpoints), so forward motion is incremental
     // extension while a BACKWARD move would re-anchor onto a prefix that can never grow.
     expect(texts1[0]).toBe("the original ask");
     expect(texts2[0]).toBe("the original ask");
-    const turn = (t: unknown): number => Number(String(t).replace("follow-up ", ""));
+    // A rolling mark rides a user follow-up ("follow-up N") or a tool output ("result N"); both
+    // name their turn, and both must only ever roll forward.
+    const turn = (t: unknown): number => Number(/\d+/.exec(String(t))?.[0]);
     const oldestRolling1 = Math.min(...texts1.slice(1).map(turn));
     const oldestRolling2 = Math.min(...texts2.slice(1).map(turn));
     expect(oldestRolling2).toBeGreaterThanOrEqual(oldestRolling1);
