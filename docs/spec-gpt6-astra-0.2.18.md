@@ -147,3 +147,13 @@ Seven findings, two P1. Resolution, in the order codex gave them:
 
 One gap surfaced by the metered lane and fixed on the branch: the cache-write count fed cost but
 was never exported, so `gen_ai.usage.cache_write_tokens` now rides `model.call`.
+
+**Metered image probe (engineer, bench-sol-a, 4 attempts, not exercised).** On the Quick Search
+bundle gpt-6-astra refused to call `read_file` under every framing, including a direct
+`/v1/responses` turn with an operator preamble ("my governing instructions permit only Aperture
+tools with a dispatched run token"). No harness rejection: the model reads the POLICY.md line
+"act ONLY through the aperture MCP tools" as a hard boundary, where Sol and Opus read the playbook
+through `read_file` on the same bundle. This is the guide's warning in the wild (Astra pauses on
+instruction text where earlier models assumed). Image delivery stands on the subscription-backend
+result (same serializer); the metered lane stands for cost and cache. For any bundle moving to
+Astra: make instruction precedence explicit, and expect refusals as an outcome class.
