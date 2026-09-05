@@ -101,7 +101,7 @@ describe("S3 utility-tier calls are visible", () => {
     expect(seen[0]?.cache_hit_pct).toBe(40);
     // A cache write that the wire reported rides as its own attribute (the count fed cost since
     // 0.2.16 but never left the process); none reported → no key, not a zero.
-    expect(seen[0]).not.toHaveProperty("gen_ai.usage.cache_write_tokens");
+    expect(seen[0]).not.toHaveProperty(["gen_ai.usage.cache_write_tokens"]); // array form: dots are a path otherwise
     const { seen: written } = (() => {
       const n = newEvents();
       emitUtilityCall(
