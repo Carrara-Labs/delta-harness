@@ -25,6 +25,7 @@ import {
   projectRow,
   qid,
   resolveAsk,
+  resolveRows,
 } from "../src/judge";
 import { Queue } from "../src/queue";
 import { registerSecretValue, resetSecretRegistry } from "../src/scrub";
@@ -139,6 +140,36 @@ describe("judge.json validation", () => {
 });
 
 describe("state assembly", () => {
+  test("resolveRows: first path that holds rows wins; columnar tiers are zipped by their header", () => {
+    const [p] = parseJudgeFile(
+      withRows({ rows: ["output.data", "output.results.people"] }),
+    ).policies;
+    if (!p) throw new Error("policy");
+    expect(p.rows).toEqual(["output.data", "output.results.people"]);
+    const nlp = { output: { results: { people: [{ headline: "a" }], companies: [] } } };
+    expect(resolveRows(nlp, p)).toEqual([{ headline: "a" }]);
+    const compact = {
+      output: {
+        data_columns: ["id", "name", "title", "company", "__proto__"],
+        data: [
+          ["p1", "Ann", "PM", "Acme", "x"],
+          ["p2", "Bob", "Eng", "Beta"],
+        ],
+      },
+    };
+    expect(resolveRows(compact, p)).toEqual([
+      { id: "p1", name: "Ann", title: "PM", company: "Acme" },
+      { id: "p2", name: "Bob", title: "Eng", company: "Beta" },
+    ]);
+    expect(resolveRows({ output: { data: [["p1"]] } }, p)).toBeUndefined(); // arrays, no header
+    expect(resolveRows({ output: { data: [1, 2] } }, p)).toBeUndefined();
+    const custom = parseJudgeFile(withRows({ rows: "rows", columns: "header" })).policies[0];
+    if (!custom) throw new Error("policy");
+    expect(resolveRows({ header: ["a"], rows: [[1]] }, custom)).toEqual([{ a: 1 }]);
+    expect(() => parseJudgeFile(withRows({ rows: ["ok", "__proto__.x"] }))).toThrow("rows must be");
+    expect(() => parseJudgeFile(withRows({ columns: "a.constructor" }))).toThrow("columns must be");
+  });
+
   test("getPath walks own properties and indices only", () => {
     const o = { output: { data: [{ a: 1 }, { a: 2 }] } };
     expect(getPath(o, "output.data[1].a")).toBe(2);

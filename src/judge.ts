@@ -38,8 +38,14 @@ export type JudgePolicy = {
   on: "tool.result";
   /** Exact tool name. One policy per tool. */
   tool: string;
-  /** Dot path (with `[i]` indices) into the parsed JSON result to an array of objects. */
-  rows: string;
+  /** Dot paths (with `[i]` indices) into the parsed JSON result; the first that resolves to a
+   * non-empty array is the row list. Several because one tool can answer in several shapes
+   * (Aperture: `output.data` for people-search, `output.results.people` for nlp-search). */
+  rows: string[];
+  /** Optional: a path to a string array naming the columns of ARRAY rows (a columnar tier). When
+   * the rows are arrays and this resolves, each row is zipped into an object so `row_fields`
+   * can address it. `<rows path>_columns` is tried by default. */
+  columns?: string;
   /** Row keys (dot paths) copied into the judge state. Explicit: nothing else leaves the box. */
   row_fields: string[];
   ask: JudgeAsk;
@@ -78,6 +84,7 @@ const POLICY_KEYS: ReadonlySet<string> = new Set([
   "on",
   "tool",
   "rows",
+  "columns",
   "row_fields",
   "ask",
   "questions",
@@ -138,7 +145,10 @@ function parsePolicy(name: string, v: unknown): JudgePolicy {
     );
   if (typeof v.tool !== "string" || !/^[\w.:-]{1,128}$/.test(v.tool))
     throw at("tool must be an exact tool name");
-  if (!isPath(v.rows)) throw at("rows must be a dot path like output.data");
+  const rowsPaths = typeof v.rows === "string" ? [v.rows] : v.rows;
+  if (!Array.isArray(rowsPaths) || !rowsPaths.length || !rowsPaths.every(isPath))
+    throw at("rows must be a dot path like output.data, or a list of them");
+  if (v.columns !== undefined && !isPath(v.columns)) throw at("columns must be a dot path");
   if (!Array.isArray(v.row_fields) || !v.row_fields.length || !v.row_fields.every(isPath))
     throw at("row_fields must be a non-empty array of dot paths");
   const ask = parseAsk(v.ask, at);
@@ -192,7 +202,8 @@ function parsePolicy(name: string, v: unknown): JudgePolicy {
     name,
     on: "tool.result",
     tool: v.tool,
-    rows: v.rows,
+    rows: rowsPaths as string[],
+    ...(typeof v.columns === "string" ? { columns: v.columns } : {}),
     row_fields: v.row_fields as string[],
     ask,
     questions,
@@ -386,6 +397,34 @@ export function getPath(o: unknown, path: string): unknown {
     }
   }
   return cur;
+}
+
+/** The row list of a result: the first `rows` path that holds a non-empty array. Object rows
+ * pass through; ARRAY rows (a columnar tier) are zipped with the column names found at
+ * `columns` (or `<path>_columns`) into objects, so the allowlist can address them. Anything
+ * else is not rows. */
+export function resolveRows(
+  parsed: unknown,
+  policy: Pick<JudgePolicy, "rows" | "columns">,
+): Record<string, unknown>[] | undefined {
+  for (const path of policy.rows) {
+    const arr = getPath(parsed, path);
+    if (!Array.isArray(arr) || !arr.length) continue;
+    if (arr.every(isObj)) return arr as Record<string, unknown>[];
+    if (!arr.every(Array.isArray)) return undefined;
+    const cols = getPath(parsed, policy.columns ?? `${path}_columns`);
+    if (!Array.isArray(cols) || !cols.length || !cols.every((c) => typeof c === "string"))
+      return undefined;
+    const names = cols as string[];
+    return (arr as unknown[][]).map((r) => {
+      const o: Record<string, unknown> = {};
+      names.forEach((n, i) => {
+        if (i < r.length && isIdent(n)) o[n] = r[i];
+      });
+      return o;
+    });
+  }
+  return undefined;
 }
 
 const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n)}…`);
@@ -651,9 +690,8 @@ export class JudgeLane {
     } catch {
       return { ...d, skipped: "shape" };
     }
-    const arr = getPath(parsed, policy.rows);
-    if (!Array.isArray(arr) || !arr.length || !arr.every(isObj)) return { ...d, skipped: "shape" };
-    const rows = arr as Record<string, unknown>[];
+    const rows = resolveRows(parsed, policy);
+    if (!rows) return { ...d, skipped: "shape" };
     d.rows_in = rows.length;
     if (rows.length > policy.max_rows) {
       d.skipped = "max_rows";
