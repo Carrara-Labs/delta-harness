@@ -27,6 +27,7 @@ import { chatVia, markWireSuspect, warmupWire } from "./provider";
 import { Queue } from "./queue";
 import { pruneLocalState } from "./retention";
 import type { Deps } from "./run";
+import { registerSecretValue } from "./scrub";
 import { loadSelf } from "./self";
 import { createServer } from "./server";
 import { stripSkillRegistryTools } from "./skill-registry";
@@ -87,6 +88,7 @@ function buildDeps(cfg: Config, dbPath: string): Deps {
     : undefined;
   // The judge lane: one process-wide instance (its in-flight bound and cooldown are shared by
   // every run), built only when the key + egress authorization are present AND a policy exists.
+  if (cfg.judge) registerSecretValue("DELTA_JUDGE_KEY", cfg.judge.key); // an echoing endpoint never lands the key in a row or an event
   const judge =
     cfg.judge && cfg.judgePolicies.length
       ? new JudgeLane({

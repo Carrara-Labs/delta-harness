@@ -1711,6 +1711,8 @@ async function execCall(
     .get(run.id, call.id) as { status: string; result: string | null } | null;
 
   let result: string;
+  /** The redacted pre-cap result the judge lane scores, once the checkpoint is durable. */
+  let preCapForJudge: string | undefined;
   /** The arguments as PARSED for execution, so the commit-time elision never parses twice. */
   let executedArgs: Record<string, unknown> | undefined;
   if (journal?.status === "done") {
@@ -1796,42 +1798,9 @@ async function execCall(
     // the message row, and the telemetry snippet — covers every downstream sink in one line.
     // Cleanup, not containment: no tool returns a vault value, this catches reflections.
     result = redactSecretValues(result);
-    // The judge lane (shadow): score the rows of this result against the run's ask and record the
-    // decision. Sits AFTER redaction (what leaves the box is the redacted, projected rows) and
-    // BEFORE capAndSpill (the judge sees the whole result, not the elided middle). It never
-    // changes `result` in this slice and never throws into the turn. Billed through `usage`
-    // like a utility call so the cost ceiling sees it; tokens deliberately NOT counted (a judge
-    // call is a read of the result, not model context).
-    const judgePolicy = deps.judge?.policyFor(name);
-    if (deps.judge && judgePolicy && journal?.status !== "done") {
-      try {
-        const decision = await deps.judge.judge(
-          judgePolicy,
-          { result, runInput: runInputOf(run), callId: call.id },
-          (attrs) => events.emit("judge.call", spine, attrs),
-        );
-        const { scores, ...rest } = decision;
-        events.emit("judge.decision", spine, { ...rest, scores: JSON.stringify(scores) });
-        if (decision.cost_usd > 0)
-          ctx.chargeUsage?.({
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-            total: 0,
-            costUsd: decision.cost_usd,
-          });
-      } catch (e) {
-        events.emit("judge.decision", spine, {
-          policy: judgePolicy.name,
-          mode: "shadow",
-          tool: name,
-          call_id: call.id,
-          skipped: "error",
-          "error.message": String(e).slice(0, 200),
-        });
-      }
-    }
+    // The judge lane sees the redacted, PRE-cap result (the whole payload, not the elided middle);
+    // it runs after the durable checkpoint below so it can never delay or lose a tool outcome.
+    preCapForJudge = result;
     // A4: record this call's outcome for the batch aggregation (below, after Promise.all). Classify
     // on the RAW pre-cap result — capAndSpill embeds this call's id in its spill-path notice, so an
     // oversized error would look different every call and never compare equal.
@@ -1890,6 +1859,47 @@ async function execCall(
     insertMessage(db, run, { role: "tool", tool_call_id: call.id, content: result });
     persistActive(); // tool activations commit atomically with the result
   })();
+  // The judge lane (shadow): score the rows of this result against the run's ask and record the
+  // decision. AFTER the checkpoint (the tool outcome is durable and a restart replays it without
+  // re-judging), never on a replayed journal row, never throwing into the turn. Billed through
+  // `usage` like a utility call so the cost ceiling sees it; tokens deliberately NOT counted (a
+  // judge call reads the result, it is not model context). A restart mid-judging loses only the
+  // judge's own charge, which shadow accepts.
+  const judgePolicy = deps.judge?.policyFor(name);
+  if (deps.judge && judgePolicy && preCapForJudge !== undefined) {
+    try {
+      const decision = await deps.judge.judge(
+        judgePolicy,
+        {
+          result: preCapForJudge,
+          runInput: runInputOf(run),
+          callId: call.id,
+          ...(ctx.signal ? { signal: ctx.signal } : {}),
+        },
+        (attrs) => events.emit("judge.call", spine, attrs),
+      );
+      const { scores, ...rest } = decision;
+      events.emit("judge.decision", spine, { ...rest, scores: JSON.stringify(scores) });
+      if (decision.cost_usd > 0)
+        ctx.chargeUsage?.({
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          total: 0,
+          costUsd: decision.cost_usd,
+        });
+    } catch (e) {
+      events.emit("judge.decision", spine, {
+        policy: judgePolicy.name,
+        mode: "shadow",
+        tool: name,
+        call_id: call.id,
+        skipped: "error",
+        "error.message": String(e).slice(0, 200),
+      });
+    }
+  }
   // H6 shadow: count exact repeats (same tool, same executed arguments, same result). The failure
   // this watches for is a compaction summary that erased "already tried", after which the model
   // re-runs the same call and gets the same answer. Reported as an event so the prevalence and the

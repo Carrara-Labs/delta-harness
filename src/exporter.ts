@@ -111,8 +111,6 @@ const SAFE_ATTRS = new Set([
   "latency_ms",
   "http_status",
   "status",
-  "p10",
-  "p50",
   "model",
   // H6 shadow + compaction enrichment (2026-09-02): repeat counts, the summary generation index,
   // the summarizer's finish reason (a provider enum) and the persisted summary size.

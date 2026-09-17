@@ -9,13 +9,16 @@
 //
 // Invariants the rest of the engine leans on:
 //  · The judge never generates: it answers Noul questions (probability a statement is true) over
-//    a state the engine assembles from an explicit allowlist of row fields plus an ask the operator
-//    extracts from the run's input. Nothing it returns is ever inserted anywhere the model reads.
-//  · It never throws into a turn, never delays one past its deadline, and never loses a row: a
-//    failed, malformed or timed-out request abstains for its rows.
+//    a state the engine assembles from an explicit allowlist of row fields plus the user's ask,
+//    which the operator locates in the run input with a marker (never the whole dispatch card).
+//    Nothing it returns is ever inserted anywhere the model reads.
+//  · It never throws into a turn, runs only AFTER the tool outcome is durable, never outlives its
+//    deadline or the run's cancellation, and never loses a row: a failed, malformed, timed-out or
+//    unsent request abstains for its rows.
 //  · The agent cannot call it and cannot edit its policies (judge.json is a FIXED operator file).
-//  · What leaves the box is the projected rows and the extracted ask, scrubbed, and only when the
-//    operator authorized egress (DELTA_JUDGE_EGRESS=1) on top of supplying a key.
+//  · What leaves the box is the projected rows and the ask, scrubbed leaf by leaf, and only when
+//    the operator authorized egress (DELTA_JUDGE_EGRESS=1) on top of supplying a key. The key is
+//    registered as a secret value at boot, so an echoing endpoint cannot land it in an event.
 
 import { type ProviderErrorClass, providerErrorClass } from "./provider";
 import { scrubText } from "./scrub";
@@ -25,7 +28,10 @@ export type JudgeQuestion = {
   criteria?: { true?: string; false?: string };
 };
 
-export type JudgeAsk = { from: "run.input"; match?: string } | { literal: string };
+/** What `ask` is: the text of the run's input after a marker (up to an optional end marker), or a
+ * literal. A marker, not a regex: linear, and it forces the operator to name the part of the input
+ * that is the user's ask rather than ship the whole dispatch card. */
+export type JudgeAsk = { from: "run.input"; after: string; until?: string } | { literal: string };
 
 export type JudgePolicy = {
   name: string;
@@ -36,12 +42,11 @@ export type JudgePolicy = {
   rows: string;
   /** Row keys (dot paths) copied into the judge state. Explicit: nothing else leaves the box. */
   row_fields: string[];
-  /** What `ask` is: the run's input (optionally the first capture group of `match`) or a literal. */
   ask: JudgeAsk;
   questions: Record<string, JudgeQuestion>;
   /** Slice 1 accepts only `shadow`; the key exists so the file shape is stable for later modes. */
   mode: "shadow";
-  /** Per question, in (0,1). In shadow it only counts `rows_would_filter`. */
+  /** Per question, in (0,1). In shadow it only counts `rows_would_filter`. Never empty. */
   threshold?: Record<string, number>;
   /** Rows per request (1..20). Small batches limit cross-row contamination by a hostile row. */
   batch: number;
@@ -60,7 +65,7 @@ const ARRAY_ITEMS = 12;
 const BATCH_MAX = 20;
 const ROWS_MAX = 500;
 const FILE_MAX_BYTES = 100_000;
-const MATCH_MAX_CHARS = 200;
+const MARKER_MAX_CHARS = 200;
 /** Requests in flight across the whole process, whatever the number of parallel tool calls. */
 const CONCURRENCY = 4;
 /** Wall-clock the lane may add to one tool result; rows not judged by then abstain. */
@@ -68,6 +73,8 @@ export const RESULT_DEADLINE_MS = 8_000;
 /** Consecutive failed requests that pause the lane, and for how long. */
 const COOLDOWN_AFTER = 3;
 const COOLDOWN_MS = 60_000;
+const MODEL_ID = /^[\w.:-]{1,64}$/;
+const TOKENS_MAX = 10_000_000;
 const POLICY_KEYS: ReadonlySet<string> = new Set([
   "on",
   "tool",
@@ -117,6 +124,8 @@ const isPath = (s: unknown): s is string =>
   typeof s === "string" &&
   /^[A-Za-z_][\w-]*(\[\d+\])*(\.[A-Za-z_][\w-]*(\[\d+\])*)*$/.test(s) &&
   !/(^|\.)(__proto__|constructor|prototype)(\.|\[|$)/.test(s);
+const isIdent = (s: string) =>
+  /^[A-Za-z_]\w{0,63}$/.test(s) && !/^(__proto__|constructor|prototype)$/.test(s);
 
 function parsePolicy(name: string, v: unknown): JudgePolicy {
   const at = (msg: string) => new Error(`judge.json: policies.${name}: ${msg}`);
@@ -138,7 +147,7 @@ function parsePolicy(name: string, v: unknown): JudgePolicy {
     throw at("questions must be a non-empty object");
   const questions: Record<string, JudgeQuestion> = {};
   for (const [qn, q] of Object.entries(v.questions)) {
-    if (!/^[A-Za-z_]\w{0,63}$/.test(qn)) throw at(`question "${qn}" must be an identifier`);
+    if (!isIdent(qn)) throw at(`question "${qn}" must be an identifier`);
     if (!isObj(q)) throw at(`question "${qn}" must be an object`);
     if (q.type !== undefined && q.type !== "noul")
       throw at(`question "${qn}": only type noul in this slice`);
@@ -172,6 +181,7 @@ function parsePolicy(name: string, v: unknown): JudgePolicy {
         throw at(`threshold.${k} must be a number in (0,1)`);
       threshold[k] = t;
     }
+    if (!Object.keys(threshold).length) threshold = undefined; // {} means "none", never "all"
   }
   const batch = v.batch ?? JUDGE_DEFAULTS.batch;
   if (!Number.isInteger(batch) || (batch as number) < 1 || (batch as number) > BATCH_MAX)
@@ -196,25 +206,27 @@ function parsePolicy(name: string, v: unknown): JudgePolicy {
 
 function parseAsk(v: unknown, at: (m: string) => Error): JudgeAsk {
   if (!isObj(v))
-    throw at('ask must be {"from":"run.input","match":"<regex>"} or {"literal":"..."}');
+    throw at('ask must be {"from":"run.input","after":"<marker>"} or {"literal":"..."}');
   if (typeof v.literal === "string") {
     if (!v.literal.trim() || v.literal.length > ASK_CHARS)
       throw at(`ask.literal must be 1..${ASK_CHARS} chars`);
     return { literal: v.literal };
   }
   if (v.from !== "run.input") throw at('ask.from must be "run.input"');
-  if (v.match === undefined) return { from: "run.input" };
-  if (typeof v.match !== "string" || !v.match || v.match.length > MATCH_MAX_CHARS)
-    throw at(`ask.match must be a regex source of at most ${MATCH_MAX_CHARS} chars`);
-  let re: RegExp;
-  try {
-    re = new RegExp(v.match);
-  } catch {
-    throw at("ask.match is not a valid regex");
-  }
-  if (new RegExp(`${re.source}|`).exec("")!.length !== 2)
-    throw at("ask.match must have exactly one capture group");
-  return { from: "run.input", match: v.match };
+  if (typeof v.after !== "string" || !v.after.trim() || v.after.length > MARKER_MAX_CHARS)
+    throw at(
+      `ask.after is required: the marker the user's ask follows in the run input (1..${MARKER_MAX_CHARS} chars)`,
+    );
+  if (
+    v.until !== undefined &&
+    (typeof v.until !== "string" || !v.until || v.until.length > MARKER_MAX_CHARS)
+  )
+    throw at(`ask.until must be a marker of 1..${MARKER_MAX_CHARS} chars`);
+  return {
+    from: "run.input",
+    after: v.after,
+    ...(typeof v.until === "string" ? { until: v.until } : {}),
+  };
 }
 
 /** The policy for a tool, if any (exact names only in this slice). */
@@ -222,18 +234,21 @@ export function policyFor(policies: readonly JudgePolicy[], tool: string): Judge
   return policies.find((p) => p.tool === tool);
 }
 
-/** Resolve the ask for a run. `undefined` = nothing to send (a `match` that did not match, or an
- * empty input): the policy abstains rather than ship the whole input. */
+/** Resolve the ask for a run. `undefined` = nothing to send (marker absent, or an empty input): the
+ * policy abstains rather than ship the whole input. Linear string search, bounded slice. */
 export function resolveAsk(ask: JudgeAsk, runInput: string | undefined): string | undefined {
   if ("literal" in ask) return ask.literal;
   if (!runInput) return undefined;
-  let text = runInput;
-  if (ask.match) {
-    const m = new RegExp(ask.match).exec(runInput);
-    if (!m || !m[1]?.trim()) return undefined;
-    text = m[1];
+  const at = runInput.indexOf(ask.after);
+  if (at < 0) return undefined;
+  const from = at + ask.after.length;
+  let text = runInput.slice(from, from + ASK_CHARS * 2);
+  if (ask.until) {
+    const stop = text.indexOf(ask.until);
+    if (stop >= 0) text = text.slice(0, stop);
   }
-  return text.trim().slice(0, ASK_CHARS);
+  text = text.trim().slice(0, ASK_CHARS);
+  return text ? text : undefined;
 }
 
 // --- the wire ---
@@ -257,6 +272,7 @@ export type JudgeResult =
 export type JudgeClient = (
   state: unknown,
   questions: Record<string, unknown>,
+  signal?: AbortSignal,
 ) => Promise<JudgeResult>;
 
 export type JudgeClientConfig = {
@@ -269,14 +285,30 @@ export type JudgeClientConfig = {
 };
 
 /** One HTTP client, no SDK: the request is three fields. The key rides ONLY the Authorization
- * header of this request; it is never on the state, an event, or a file. */
+ * header of this request; it is never on the state, an event, or a file. Provider-authored text
+ * (an error body) is scrubbed, the model id must be a plain identifier, usage must be a finite
+ * bounded count: an echoing or hostile endpoint can neither leak nor poison anything. */
 export function makeJudgeClient(cfg: JudgeClientConfig): JudgeClient {
   const f = cfg.fetch ?? fetch;
-  return async (state, questions) => {
+  return async (state, questions, signal) => {
     const t0 = performance.now();
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), cfg.timeoutMs);
+    const onAbort = () => ac.abort();
+    if (signal?.aborted) ac.abort();
+    signal?.addEventListener("abort", onAbort, { once: true });
     const took = () => Math.round(performance.now() - t0);
+    const fail = (
+      error: string,
+      cls: ProviderErrorClass | "timeout",
+      status?: number,
+    ): JudgeResult => ({
+      ok: false,
+      error: scrubText(error).slice(0, 200),
+      class: cls,
+      ...(status ? { status } : {}),
+      latencyMs: took(),
+    });
     try {
       const res = await f(cfg.url, {
         method: "POST",
@@ -285,53 +317,34 @@ export function makeJudgeClient(cfg: JudgeClientConfig): JudgeClient {
         signal: ac.signal,
       });
       const text = await res.text();
-      if (!res.ok)
-        return {
-          ok: false,
-          error: text.slice(0, 200),
-          class: providerErrorClass(res.status, text),
-          status: res.status,
-          latencyMs: took(),
-        };
+      if (!res.ok) return fail(text, providerErrorClass(res.status, text), res.status);
       let body: { model?: unknown; answers?: unknown; usage?: { input_tokens?: unknown } };
       try {
         body = JSON.parse(text);
       } catch {
-        return {
-          ok: false,
-          error: "judge returned non-JSON",
-          class: "request",
-          status: res.status,
-          latencyMs: took(),
-        };
+        return fail("judge returned non-JSON", "request", res.status);
       }
       if (!isObj(body) || !isObj(body.answers))
-        return {
-          ok: false,
-          error: "judge returned no answers",
-          class: "request",
-          status: res.status,
-          latencyMs: took(),
-        };
+        return fail("judge returned no answers", "request", res.status);
+      const raw = body.usage?.input_tokens;
       const inputTokens =
-        typeof body.usage?.input_tokens === "number" ? body.usage.input_tokens : 0;
+        typeof raw === "number" && Number.isFinite(raw) && raw >= 0 && raw <= TOKENS_MAX ? raw : 0;
       return {
         ok: true,
         answers: body.answers,
         inputTokens,
-        model: typeof body.model === "string" ? body.model : cfg.model,
+        model: typeof body.model === "string" && MODEL_ID.test(body.model) ? body.model : cfg.model,
         latencyMs: took(),
       };
     } catch (e) {
       const aborted = ac.signal.aborted;
-      return {
-        ok: false,
-        error: aborted ? `timeout after ${cfg.timeoutMs}ms` : String(e).slice(0, 200),
-        class: aborted ? "timeout" : "transient",
-        latencyMs: took(),
-      };
+      return fail(
+        aborted ? `aborted after ${took()}ms` : String(e),
+        aborted ? "timeout" : "transient",
+      );
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
     }
   };
 }
@@ -357,23 +370,26 @@ export function getPath(o: unknown, path: string): unknown {
 }
 
 const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n)}…`);
+/** Every string that leaves the box goes through here: scrub FIRST (a secret split by a clip
+ * would survive a whole-state scrub), then bound. */
+const leaf = (s: string, n: number) => clip(scrubText(s), n);
 
-/** Bound one field's value: scalars as-is (strings clipped), arrays to a few clipped items,
- * objects to a clipped JSON string. Nothing nested rides unbounded. */
+/** Bound one field's value: scalars as-is (strings scrubbed + clipped), arrays to a few clipped
+ * items, objects to a clipped JSON string. Nothing nested rides unbounded or unscrubbed. */
 function boundValue(v: unknown): unknown {
   if (v === null || typeof v === "number" || typeof v === "boolean") return v;
-  if (typeof v === "string") return clip(v, LEAF_CHARS);
+  if (typeof v === "string") return leaf(v, LEAF_CHARS);
   if (Array.isArray(v))
     return v
       .slice(0, ARRAY_ITEMS)
       .map((x) =>
         typeof x === "string"
-          ? clip(x, ITEM_CHARS)
+          ? leaf(x, ITEM_CHARS)
           : typeof x === "number" || typeof x === "boolean" || x === null
             ? x
-            : clip(JSON.stringify(x), ITEM_CHARS),
+            : leaf(JSON.stringify(x), ITEM_CHARS),
       );
-  if (typeof v === "object") return clip(JSON.stringify(v), LEAF_CHARS);
+  if (typeof v === "object") return leaf(JSON.stringify(v), LEAF_CHARS);
   return undefined;
 }
 
@@ -402,20 +418,13 @@ export function projectRow(
 export const qid = (name: string, j: number) => `${name}__${j}`;
 
 /** Build one request's state + questions for a batch of rows. `row` in an instruction becomes
- * `rows[j]`. The serialized state is scrubbed (registered secrets + secret-shaped text) before it
- * leaves; a state that no longer parses after scrubbing is not sent. */
+ * `rows[j]`. Every leaf was scrubbed in projection; the ask is scrubbed here. */
 export function buildRequest(
   policy: JudgePolicy,
   ask: string,
   rows: Record<string, unknown>[],
-): { state: unknown; questions: Record<string, unknown> } | undefined {
-  const raw = JSON.stringify({ ask, rows: rows.map((r) => projectRow(r, policy.row_fields)) });
-  let state: unknown;
-  try {
-    state = JSON.parse(scrubText(raw));
-  } catch {
-    return undefined;
-  }
+): { state: unknown; questions: Record<string, unknown> } {
+  const state = { ask: scrubText(ask), rows: rows.map((r) => projectRow(r, policy.row_fields)) };
   const questions: Record<string, unknown> = {};
   for (let j = 0; j < rows.length; j++)
     for (const [qn, q] of Object.entries(policy.questions))
@@ -440,6 +449,7 @@ export function noulOf(answers: Record<string, unknown>, id: string): number | u
 export type JudgeLaneConfig = {
   policies: JudgePolicy[];
   client: JudgeClient;
+  /** Finite and non-negative; the config loader guarantees it, the lane clamps anyway. */
   pricePerMtok: number;
   model: string;
   now?: () => number;
@@ -453,9 +463,12 @@ export type Decision = {
   rows_in: number;
   rows_judged: number;
   rows_abstained: number;
+  /** Rows past `max_rows`, never sent. rows_in = judged + abstained + capped. */
+  rows_capped: number;
   /** Rows that a `filter` mode would have moved out (below EVERY threshold). */
   rows_would_filter: number;
-  /** Why rows were left alone: not JSON / path not an array of objects, no ask, cooldown, the cap. */
+  /** Why rows were left alone: not JSON / path not an array of objects, no ask, cooldown, the cap,
+   * the deadline (or the run's cancellation). */
   skipped?: "shape" | "no_ask" | "cooldown" | "max_rows" | "deadline";
   /** Per-row scores for the first thresholded (else first) question: `[row index, noul]`. */
   scores: [number, number][];
@@ -470,14 +483,21 @@ export type Decision = {
 
 export type CallAttrs = Record<string, unknown>;
 
+type Waiter = { resolve: () => void; cancel: () => void };
+
 /** Process-wide state: the in-flight bound and the failure cooldown, shared by every run. */
 export class JudgeLane {
   readonly policies: JudgePolicy[];
   private inFlight = 0;
-  private waiters: (() => void)[] = [];
+  private waiters: Waiter[] = [];
   private failures = 0;
   private cooldownUntil = 0;
-  constructor(private cfg: JudgeLaneConfig) {
+  private readonly cfg: JudgeLaneConfig;
+  constructor(cfg: JudgeLaneConfig) {
+    this.cfg =
+      Number.isFinite(cfg.pricePerMtok) && cfg.pricePerMtok >= 0
+        ? cfg
+        : { ...cfg, pricePerMtok: 0 };
     this.policies = cfg.policies;
   }
 
@@ -489,23 +509,51 @@ export class JudgeLane {
     return this.cfg.now ? this.cfg.now() : Date.now();
   }
 
-  private async acquire(): Promise<void> {
+  /** Take a slot, or give up when the deadline or the cancellation arrives first. A released slot
+   * is handed straight to the next waiter (never decremented and re-taken), so the bound cannot
+   * be barged. */
+  private acquire(deadline: number, signal: AbortSignal): Promise<boolean> {
     if (this.inFlight < CONCURRENCY) {
       this.inFlight++;
-      return;
+      return Promise.resolve(true);
     }
-    await new Promise<void>((r) => this.waiters.push(r));
-    this.inFlight++;
+    return new Promise<boolean>((resolve) => {
+      const waiter: Waiter = { resolve: () => resolve(true), cancel: () => resolve(false) };
+      const giveUp = () => {
+        const i = this.waiters.indexOf(waiter);
+        if (i < 0) return;
+        this.waiters.splice(i, 1);
+        waiter.cancel();
+      };
+      const timer = setTimeout(giveUp, Math.max(0, deadline - this.now()));
+      signal.addEventListener("abort", giveUp, { once: true });
+      const granted = waiter.resolve;
+      waiter.resolve = () => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", giveUp);
+        granted();
+      };
+      this.waiters.push(waiter);
+    });
   }
   private release(): void {
-    this.inFlight--;
-    this.waiters.shift()?.();
+    const next = this.waiters.shift();
+    if (next)
+      next.resolve(); // the slot passes hands; inFlight is unchanged
+    else this.inFlight--;
   }
 
   /** Judge one tool result in shadow. Never throws; never changes the result. */
   async judge(
     policy: JudgePolicy,
-    input: { result: string; runInput: string | undefined; callId: string; deadlineMs?: number },
+    input: {
+      result: string;
+      runInput: string | undefined;
+      callId: string;
+      deadlineMs?: number;
+      /** The run's cancellation; an aborted run stops judging at the next request. */
+      signal?: AbortSignal;
+    },
     onCall: (attrs: CallAttrs) => void,
   ): Promise<Decision> {
     const d: Decision = {
@@ -516,6 +564,7 @@ export class JudgeLane {
       rows_in: 0,
       rows_judged: 0,
       rows_abstained: 0,
+      rows_capped: 0,
       rows_would_filter: 0,
       scores: [],
       calls: 0,
@@ -537,7 +586,10 @@ export class JudgeLane {
     if (!Array.isArray(arr) || !arr.length || !arr.every(isObj)) return { ...d, skipped: "shape" };
     const rows = arr as Record<string, unknown>[];
     d.rows_in = rows.length;
-    if (rows.length > policy.max_rows) d.skipped = "max_rows";
+    if (rows.length > policy.max_rows) {
+      d.skipped = "max_rows";
+      d.rows_capped = rows.length - policy.max_rows;
+    }
     const judged = rows.slice(0, policy.max_rows);
     const key = policy.threshold
       ? Object.keys(policy.threshold)[0]
@@ -547,29 +599,51 @@ export class JudgeLane {
     for (let i = 0; i < judged.length; i += policy.batch) starts.push(i);
     let next = 0;
     const t0 = performance.now();
+    // One cancellation for the whole result: the deadline and the run's own signal both trip it,
+    // and it reaches every in-flight request AND every slot wait.
+    const ac = new AbortController();
+    const onAbort = () => ac.abort();
+    if (input.signal?.aborted) ac.abort();
+    input.signal?.addEventListener("abort", onAbort, { once: true });
+    const timer = setTimeout(onAbort, Math.max(0, deadline - this.now()));
+    const halted = (): Decision["skipped"] | undefined =>
+      ac.signal.aborted || this.now() >= deadline
+        ? "deadline"
+        : this.now() < this.cooldownUntil
+          ? "cooldown"
+          : undefined;
+    const abstain = (n: number, why: Decision["skipped"]) => {
+      d.rows_abstained += n;
+      d.skipped = d.skipped ?? why;
+    };
     const worker = async () => {
       while (next < starts.length) {
         const start = starts[next++] ?? 0;
         const slice = judged.slice(start, start + policy.batch);
-        if (this.now() >= deadline) {
-          d.rows_abstained += slice.length;
-          d.skipped = d.skipped ?? "deadline";
+        // Checked before waiting for a slot AND after getting one: a slot that arrives past the
+        // deadline, or once the lane cooled down, is not a licence to send.
+        const before = halted();
+        if (before) {
+          abstain(slice.length, before);
           continue;
         }
-        const req = buildRequest(policy, ask, slice);
-        if (!req) {
-          d.rows_abstained += slice.length;
+        if (!(await this.acquire(deadline, ac.signal))) {
+          abstain(slice.length, "deadline");
           continue;
         }
-        await this.acquire();
-        let r: JudgeResult;
+        let r: JudgeResult | undefined;
         try {
-          r = await this.cfg.client(req.state, req.questions);
+          const after = halted();
+          if (after) abstain(slice.length, after);
+          else {
+            const req = buildRequest(policy, ask, slice);
+            r = await this.cfg.client(req.state, req.questions, ac.signal);
+          }
         } finally {
           this.release();
         }
+        if (!r) continue;
         d.calls++;
-        d.latency_ms += r.latencyMs;
         if (!r.ok) {
           d.rows_abstained += slice.length;
           if (++this.failures >= COOLDOWN_AFTER) this.cooldownUntil = this.now() + COOLDOWN_MS;
@@ -581,7 +655,7 @@ export class JudgeLane {
             status: "error",
             "error.class": r.class,
             ...(r.status ? { http_status: r.status } : {}),
-            "error.message": r.error.slice(0, 200),
+            "error.message": r.error,
           });
           continue;
         }
@@ -623,7 +697,12 @@ export class JudgeLane {
         }
       }
     };
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, starts.length) }, worker));
+    try {
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, starts.length) }, worker));
+    } finally {
+      clearTimeout(timer);
+      input.signal?.removeEventListener("abort", onAbort);
+    }
     d.latency_ms = Math.round(performance.now() - t0);
     if (d.scores.length) {
       const s = d.scores.map((x) => x[1]).sort((a, b) => a - b);
