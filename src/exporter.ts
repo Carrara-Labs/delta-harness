@@ -41,7 +41,16 @@ type EventRow = {
 // tool.rejected carries the model's raw requested name (`requested_tool`) — free text under a
 // hallucination or an injection, so the event is payload-bearing; its `reason` enum rides the
 // safe subset. (A-2)
-const PAYLOAD_EVENTS = new Set(["model.call", "tool.call", "tool.result", "tool.rejected"]);
+// judge.* (the judge lane): `judge.decision` carries per-row scores keyed by row index, which is
+// evaluation data, not prose, but it is still payload-derived — consent-gated like tool.result.
+const PAYLOAD_EVENTS = new Set([
+  "model.call",
+  "tool.call",
+  "tool.result",
+  "tool.rejected",
+  "judge.call",
+  "judge.decision",
+]);
 
 /** Attributes on payload-bearing events that are safe to export WITHOUT payload consent:
  * closed enums, counters, and identifiers only — never prompt text, tool arguments, or tool
@@ -88,6 +97,23 @@ const SAFE_ATTRS = new Set([
   // its magnitude estimate (a count, never content).
   "cache_miss_reason",
   "cache_missed_input_tokens",
+  // The judge lane: counters, enums and money only; scores and the ask never ride this subset.
+  "policy",
+  "mode",
+  "rows",
+  "rows_in",
+  "rows_judged",
+  "rows_abstained",
+  "rows_would_filter",
+  "skipped",
+  "calls",
+  "input_tokens",
+  "latency_ms",
+  "http_status",
+  "status",
+  "p10",
+  "p50",
+  "model",
   // H6 shadow + compaction enrichment (2026-09-02): repeat counts, the summary generation index,
   // the summarizer's finish reason (a provider enum) and the persisted summary size.
   "repeats",

@@ -15,6 +15,7 @@ import { openDb } from "./db";
 import { Events } from "./events";
 import { Exporter } from "./exporter";
 import { sweepTrash } from "./files";
+import { JudgeLane, makeJudgeClient } from "./judge";
 import { acquireLease, releaseLease, renewLease } from "./lease";
 import { LocalSkillsAdapter } from "./local-skills";
 import { McpRegistry } from "./mcp";
@@ -84,11 +85,28 @@ function buildDeps(cfg: Config, dbPath: string): Deps {
         return res.ok || res.aborted ? res : chat(req);
       }
     : undefined;
+  // The judge lane: one process-wide instance (its in-flight bound and cooldown are shared by
+  // every run), built only when the key + egress authorization are present AND a policy exists.
+  const judge =
+    cfg.judge && cfg.judgePolicies.length
+      ? new JudgeLane({
+          policies: cfg.judgePolicies,
+          client: makeJudgeClient({
+            url: cfg.judge.url,
+            key: cfg.judge.key,
+            model: cfg.judge.model,
+            timeoutMs: cfg.judge.timeoutMs,
+          }),
+          pricePerMtok: cfg.judge.pricePerMtok,
+          model: cfg.judge.model,
+        })
+      : undefined;
   return {
     db,
     events: new Events(db, cfg.agentId ? { agentId: cfg.agentId } : {}),
     chat,
     ...(chatUtility ? { chatUtility } : {}),
+    ...(judge ? { judge } : {}),
     tools,
     workspace: cfg.workspace,
     scratchDir: cfg.scratchDir,

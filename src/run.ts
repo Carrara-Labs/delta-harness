@@ -17,6 +17,7 @@ import { listArtifacts, readArtifact, readTodo, searchHistory, writeTodo } from 
 import { type Events, emitUtilityCall, type Spine } from "./events";
 import { expandImageMarkers } from "./files";
 import { hydrate, type RecalledMemory, recallAgentMemory } from "./hydrate";
+import type { JudgeLane } from "./judge";
 import type { Policy } from "./policy";
 import { renderPolicy } from "./policy";
 import { getProfile, grantSelfWrite, SAFE_FLOOR } from "./profiles";
@@ -147,6 +148,9 @@ export type Deps = {
    * compaction summaries, reflection, eval_n judging (2–5× cheaper each). Falls
    * back to `chat` on failure; absent → everything rides the main cascade. */
   chatUtility?: (req: ChatRequest) => Promise<ModelResult>;
+  /** The judge lane (judge.ts): shadow judgments on tool results per the bundle's judge.json.
+   * Absent → no policy fires. Never changes a result in this slice. */
+  judge?: JudgeLane;
   tools: Tools;
   workspace: string;
   /** Engine scratch root; defaults to the workspace (see config.scratchDir). */
@@ -240,6 +244,16 @@ export type RunRequest = {
   idempotency_terminal?: boolean;
   metadata?: Record<string, unknown>;
 };
+
+/** The user text that started a run, for the judge lane's `ask` extraction. */
+function runInputOf(run: RunRow): string | undefined {
+  try {
+    const req = JSON.parse(run.request) as { input?: unknown };
+    return typeof req.input === "string" ? req.input : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export type RunRow = {
   id: string;
@@ -1782,6 +1796,42 @@ async function execCall(
     // the message row, and the telemetry snippet — covers every downstream sink in one line.
     // Cleanup, not containment: no tool returns a vault value, this catches reflections.
     result = redactSecretValues(result);
+    // The judge lane (shadow): score the rows of this result against the run's ask and record the
+    // decision. Sits AFTER redaction (what leaves the box is the redacted, projected rows) and
+    // BEFORE capAndSpill (the judge sees the whole result, not the elided middle). It never
+    // changes `result` in this slice and never throws into the turn. Billed through `usage`
+    // like a utility call so the cost ceiling sees it; tokens deliberately NOT counted (a judge
+    // call is a read of the result, not model context).
+    const judgePolicy = deps.judge?.policyFor(name);
+    if (deps.judge && judgePolicy && journal?.status !== "done") {
+      try {
+        const decision = await deps.judge.judge(
+          judgePolicy,
+          { result, runInput: runInputOf(run), callId: call.id },
+          (attrs) => events.emit("judge.call", spine, attrs),
+        );
+        const { scores, ...rest } = decision;
+        events.emit("judge.decision", spine, { ...rest, scores: JSON.stringify(scores) });
+        if (decision.cost_usd > 0)
+          ctx.chargeUsage?.({
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            total: 0,
+            costUsd: decision.cost_usd,
+          });
+      } catch (e) {
+        events.emit("judge.decision", spine, {
+          policy: judgePolicy.name,
+          mode: "shadow",
+          tool: name,
+          call_id: call.id,
+          skipped: "error",
+          "error.message": String(e).slice(0, 200),
+        });
+      }
+    }
     // A4: record this call's outcome for the batch aggregation (below, after Promise.all). Classify
     // on the RAW pre-cap result — capAndSpill embeds this call's id in its spill-path notice, so an
     // oversized error would look different every call and never compare equal.

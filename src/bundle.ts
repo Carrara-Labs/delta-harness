@@ -8,6 +8,7 @@
 // drift or accidentally include DELTA.md (A12).
 import { renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { parseJudgeFile } from "./judge";
 import { SELF_FILE } from "./self";
 
 export { SELF_FILE };
@@ -26,6 +27,7 @@ export const BUNDLE_MANIFEST: readonly BundleEntry[] = [
   { file: "POLICY.md", envB64: "DELTA_POLICY_MD_B64", fixed: true },
   { file: "vocab.json", envB64: "DELTA_VOCAB_JSON_B64", fixed: true },
   { file: "PROMPT_CONTEXT.md", envB64: "DELTA_CONTEXT_MD_B64", fixed: true },
+  { file: "judge.json", envB64: "DELTA_JUDGE_JSON_B64", fixed: true },
 ];
 
 /** The operator-owned fixed files — derived from the manifest so it can never drift from `apply` or
@@ -64,6 +66,8 @@ function validateFixed(file: string, bytes: Buffer, policyMaxTokens: number): vo
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
       throw new Error("vocab.json must be a JSON object");
   }
+  // judge.json shares boot's strict validator, so apply can never install a file boot rejects.
+  if (file === "judge.json") parseJudgeFile(bytes.toString("utf8"));
 }
 
 export type ApplyResult = { applied: string[]; skipped: string[] };

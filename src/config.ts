@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { resolve } from "node:path";
 import { BrokerCredential } from "./broker";
+import { type JudgePolicy, parseJudgeFile } from "./judge";
 import type { McpServerConfig } from "./mcp";
 import { deriveContextCeiling, maxSafeCeiling, parsePrices } from "./pricing";
 import { getProfile } from "./profiles";
@@ -133,6 +134,12 @@ export type Config = {
   /** Cheap model for auxiliary calls (compaction/reflection/judging). Empty string disables
    * the lane (everything rides the main cascade). */
   utilityModel: string;
+  /** The judge lane (judge.ts): a System One decision model the engine consults on tool results
+   * per the bundle's `judge.json`. Present only when BOTH `DELTA_JUDGE_KEY` and the egress
+   * authorization `DELTA_JUDGE_EGRESS=1` are set outside safe mode; the policies are parsed at
+   * boot (a bad judge.json fails boot, named) and are empty when the file is absent. */
+  judge?: { url: string; key: string; model: string; timeoutMs: number; pricePerMtok: number };
+  judgePolicies: JudgePolicy[];
   /** Control-plane base URL for self-scheduling (Sprint 4). Absent → the schedule tools
    * aren't registered (a non-CP-wired dev binary boots fine without them). */
   controlUrl?: string;
@@ -221,6 +228,32 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const vocab = safeMode
     ? NEUTRAL_VOCAB
     : parseVocab(env.DELTA_VOCAB ?? readIfExists(resolve(workspaceDir, "vocab.json")));
+  // The judge lane: judge.json is the operator's policy file (fixed, beside vocab.json); the key
+  // and an explicit egress authorization enable it. A key alone is not consent to send projected
+  // tool-result rows to a third party, so without DELTA_JUDGE_EGRESS=1 the lane stays off and
+  // boot says so once. Parsed here so a malformed file is a boot failure with the field named.
+  const judgePolicies = safeMode
+    ? []
+    : parseJudgeFile(readIfExists(resolve(workspaceDir, "judge.json"))).policies;
+  const judgeKey = safeMode ? undefined : env.DELTA_JUDGE_KEY?.trim();
+  const judgeEgress = env.DELTA_JUDGE_EGRESS === "1";
+  if (judgeKey && judgePolicies.length && !judgeEgress)
+    console.warn(
+      "[config] judge.json has policies and DELTA_JUDGE_KEY is set, but DELTA_JUDGE_EGRESS=1 is not: the judge lane stays OFF",
+    );
+  const judge =
+    judgeKey && judgeEgress
+      ? {
+          url: env.DELTA_JUDGE_URL?.trim() || "https://api.typesafe.ai/v1/systemone",
+          key: judgeKey,
+          model: env.DELTA_JUDGE_MODEL?.trim() || "jev-1.13.0",
+          timeoutMs: positiveInt(env.DELTA_JUDGE_TIMEOUT_MS, 3_000),
+          pricePerMtok:
+            Number(env.DELTA_JUDGE_PRICE_PER_MTOK) > 0
+              ? Number(env.DELTA_JUDGE_PRICE_PER_MTOK)
+              : 0.042,
+        }
+      : undefined;
   const models = [
     // T2: the control plane emits DELTA_MODEL_PRIMARY; DELTA_MODEL is the legacy harness name.
     aliased(env, "DELTA_MODEL_PRIMARY", "DELTA_MODEL") ?? "anthropic/claude-sonnet-5",
@@ -496,6 +529,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     // summarize/pick tasks — haiku does them at 1/2–1/5 the price. DELTA_UTILITY_MODEL=""
     // disables the lane. Falls back to the main cascade per-call on any failure.
     utilityModel: safeMode ? "" : (env.DELTA_UTILITY_MODEL ?? "anthropic/claude-haiku-4.5"),
+    ...(judge ? { judge } : {}),
+    judgePolicies,
     // Self-scheduling (Sprint 4): the control plane owns the clock (this VM autosuspends).
     ...(env.DELTA_CONTROL_URL ? { controlUrl: env.DELTA_CONTROL_URL } : {}),
     ...(env.DELTA_CONTROL_TOKEN ? { controlToken: env.DELTA_CONTROL_TOKEN } : {}),
