@@ -116,13 +116,23 @@ export function parsePrices(raw: string | undefined): Record<string, ModelPrice>
         // Same merge rule for the tier: an override that names in/out/cacheRead keeps the baked
         // tier unless it supplies a well-formed one of its own (or `null` to remove it).
         const lc = v.longContext;
+        const tierOk =
+          lc &&
+          bounded(lc.above, 1, 1e8) &&
+          bounded(lc.inMul, 1, 100) &&
+          bounded(lc.outMul, 1, 100);
+        // An explicitly malformed tier rejects the override WHOLE (codex round 3): keeping the
+        // rates while silently inheriting the baked tier would meter a price nobody wrote.
+        if (lc !== undefined && lc !== null && !tierOk) {
+          console.error(
+            `delta: DELTA_MODEL_PRICES['${k}'].longContext is malformed — that entry is ignored.`,
+          );
+          continue;
+        }
         const longContext =
           lc === null
             ? undefined
-            : lc &&
-                bounded(lc.above, 1, 1e8) &&
-                bounded(lc.inMul, 1, 100) &&
-                bounded(lc.outMul, 1, 100)
+            : tierOk
               ? { above: Math.floor(lc.above), inMul: lc.inMul, outMul: lc.outMul }
               : baked?.longContext;
         out[key] = {

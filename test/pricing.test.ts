@@ -183,6 +183,18 @@ describe("gpt-6-astra (0.2.18)", () => {
       ),
     );
     expect(poisoned?.longContext).toEqual({ above: 272_000, inMul: 2, outMul: 1.5 });
+    expect(poisoned?.in).toBe(10); // the whole entry is rejected, not just its tier
+    const halfBad = resolvePrice(
+      "gpt-6-astra",
+      parsePrices(
+        '{"gpt-6-astra":{"in":8,"out":40,"cacheRead":0.8,"longContext":{"above":1e999,"inMul":2,"outMul":1.5}}}',
+      ),
+    );
+    expect(halfBad?.in).toBe(10); // rates 8/40/0.8 never land beside an inherited tier
+    expect(computeCost(halfBad!, { input: 300_000, output: 1_000, cacheRead: 0 })).toBeCloseTo(
+      6.075,
+      6,
+    );
     const infRate = resolvePrice(
       "gpt-6-astra",
       parsePrices('{"gpt-6-astra":{"in":1e999,"out":50,"cacheRead":1}}'),
