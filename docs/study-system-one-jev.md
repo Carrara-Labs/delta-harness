@@ -100,6 +100,19 @@ production Quick Search telemetry (agent_events, prod lanes only, bench lanes ex
 5. **Not worth it.** Compaction summaries and reflection need generation. The utility
    lane is $7.82 in two weeks. Artifact writing (24% of turns) is generation.
 
+## Experiments run 2026-09-17 (real prod rows, Jev 1.13.0)
+
+| id | question | result |
+| --- | --- | --- |
+| E1/E1b | generic "does the row fit the ask" Noul on 1,193 search rows from 23 first-message runs, labels = rows the agent listed | at 0.3: keeps 84% of listed rows, removes 43% of the rest; spearman(jev, agent score) 0.49; the low-scored listed rows are mostly rows the agent itself tagged CUT |
+| E2 | Jev picks which field groups an ask needs | work_history chosen for 14 of 20 asks and it is 60% of the bytes; the fixed slim projection already wins, field selection is not a mechanism |
+| E3/E3b | dispatch classification (chat / report / list, revision, clarify) on 569 real runs | register agrees with what the agent produced 76 to 80%; disagreements are report vs list, where agents ignore the playbook rule too; revision precision 0.82 at 0.7 |
+| E4 | the 1,344-credit sweep (14 pages of 100) | per-page fit yield flat 37 to 64%; Jev agrees with 92% of the 491 rows the agent kept; nothing in the sequence says "stop", only a cap stops a completeness sweep |
+| E5 | Opus 5 designs 2 to 5 Noul questions per ask, Jev executes, 11 asks | more selective where the generic question is blind (BDR ask 100% / 54% vs 83% / 31%), but an `all` gate over a sparse field collapses recall (33%, 48% on two asks): missing evidence must be unknown, never a no |
+
+Latency measured from this Mac: 280 to 470 ms per request, flat from 300 to 29k input tokens
+and 1 to 100 questions; 10 parallel requests in 870 ms.
+
 ## Constraints to design around
 
 - Text only, 32k state: send rows, never payload dumps. Screens keep dates and counts in

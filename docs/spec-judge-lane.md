@@ -1,45 +1,54 @@
 # Spec: the judge lane (System One decisions inside the harness)
 
-Draft 1, 2026-09-17. Slice 1 of the TypeSafe Jev integration. Companion study:
-`docs/study-system-one-jev.md`. Codex consult 1 shaped the shape below (start at the
-seam, then a typed judge dependency beside the utility lane, an operator-owned policy
-file, shadow mode first, no agent-callable judge tool).
+Draft 2, 2026-09-17, as BUILT on `feat/judge-lane` (commits 04d9a22, 78049e8), codex rounds
+1 to 3 folded. Companion study: `docs/study-system-one-jev.md`. Slice 2 (the agent-designed
+`judge` tool and recipes) is `docs/spec-judge-tool.md`.
 
 ## Goal
 
-Let an operator declare, in one small file, a set of fast typed judgments the engine
-runs on tool results, without any prompt change, any agent involvement, or any new
-turn. First use: tag or filter rows of a search result against the user's ask so the
-frontier model reads fewer, better rows. Configured like the utility lane: a key and a
-model in env, a policy file in the bundle, off by default.
+Let an operator declare, in one small file, a set of fast typed judgments the engine runs on
+tool results, without any prompt change, any agent involvement, or any new turn. First use:
+score rows of a search result against the user's ask so a later mode can hand the frontier
+model fewer, better rows. Configured like the utility lane: a key and a model in env, a policy
+file in the bundle, off by default.
+
+## What shipped in slice 1
+
+Shadow only. The engine judges the rows of a matching tool result and records per-row scores
+on a telemetry event. The result the model sees is the same string, byte for byte: it is never
+re-serialized. That is what makes the lane safe to run on a live lane while thresholds are
+chosen from real data.
 
 ## Non-goals (this slice)
 
-- A bounded fetch loop (sweep worker). Slice 2, see the end.
-- Dispatch-time classification, model routing, recall rerank. Later slices.
+- Changing any tool result (`tag`, `filter`): the next slice, gated on shadow data and on the
+  conditions at the end of this page.
+- A bounded fetch loop (sweep worker). Slice 3.
+- Dispatch-time classification, model routing, recall rerank. Later.
 - Any change to what the agent can do. The agent cannot call the judge, cannot edit its
-  policies, and never sees a judge decision as an instruction.
+  policies, and never sees a judge decision.
 
 ## Config (env, operator-owned)
 
 | var | default | meaning |
 | --- | --- | --- |
-| `DELTA_JUDGE_KEY` | unset | enables the lane; unset = lane off, every policy inert |
+| `DELTA_JUDGE_KEY` | unset | the credential; alone it does NOT enable the lane |
+| `DELTA_JUDGE_EGRESS` | unset | `1` = the operator authorizes sending projected rows and the ask to the judge endpoint. A key is not consent; both are needed. Unsetting it is the kill switch. |
 | `DELTA_JUDGE_URL` | `https://api.typesafe.ai/v1/systemone` | endpoint |
 | `DELTA_JUDGE_MODEL` | `jev-1.13.0` | pinned version, never an alias by default |
 | `DELTA_JUDGE_TIMEOUT_MS` | `3000` | per request; a timeout abstains |
 | `DELTA_JUDGE_PRICE_PER_MTOK` | `0.042` | input-token price for cost accounting |
-| `DELTA_JUDGE_MODE` | unset | when set to `shadow`, forces every policy to shadow: the kill switch short of unsetting the key |
 
-Safe mode drops the lane like every non-floor capability. The key never reaches a
-child (research) process or a tool.
+Safe mode drops the lane like every non-floor capability. The key is registered as a secret
+value at boot, so an echoing endpoint cannot land it in a row, an event or a file, and it
+never reaches a child (research) process or a tool. A key plus policies without
+`DELTA_JUDGE_EGRESS=1` logs one boot warning and stays off.
 
 ## Policy file: `judge.json` (bundle, fixed, operator-owned)
 
-Ships like `vocab.json`: `DELTA_JUDGE_JSON_B64`, re-seedable by `delta bundle apply`,
-in `FIXED_OPERATOR_FILES` so the agent's write rail refuses it. Validated at boot the
-way `vocab.json` is (valid JSON object, known keys, bounded sizes); a bad file fails
-boot with a named reason, never a silently inert lane.
+Ships like `vocab.json`: `DELTA_JUDGE_JSON_B64`, re-seedable by `delta bundle apply`, in
+`FIXED_OPERATOR_FILES` so the agent's write rail refuses it. Boot and `apply` share one strict
+validator; a bad file fails boot with the field named, never a silently inert lane.
 
 ```json
 {
@@ -50,17 +59,15 @@ boot with a named reason, never a silently inert lane.
       "tool": "aperture__fiber_call",
       "rows": "output.data",
       "row_fields": ["headline", "location", "roles", "education", "screen"],
-      "context": "run.input",
+      "ask": { "from": "run.input", "after": "The user's question: \"\"\"", "until": "\"\"\"" },
       "questions": {
         "fits": {
-          "type": "noul",
           "instructions": "Does `row` fit what `ask` is looking for: role, seniority, location, kind of company, and every explicit requirement or exclusion? Judge only from the row.",
           "criteria": { "true": "plausibly fits", "false": "clearly does not fit or a stated requirement rules them out" }
         }
       },
-      "mode": "shadow",
       "threshold": { "fits": 0.3 },
-      "batch": 10,
+      "batch": 5,
       "max_rows": 200
     }
   }
@@ -69,109 +76,127 @@ boot with a named reason, never a silently inert lane.
 
 Fields:
 
-- `on`: only `tool.result` in v1. Other decision points (`before_turn`, `run.start`)
-  are reserved words, rejected at validation so a future meaning cannot be guessed.
-- `tool`: exact tool name, or a glob with one trailing `*`.
-- `rows`: dot path into the parsed JSON result to an array of objects. A result that
-  is not JSON, or where the path is not an array of objects, is skipped, counted in
-  telemetry as `skipped: shape`.
-- `row_fields`: keys (dot paths) copied from each row into the state. Absent = whole
-  row, capped at 4,000 chars. Keeps the state small and keeps contact fields out.
-- `context`: what `ask` is. v1 accepts `run.input` (the message that started the run,
-  capped at 4,000 chars) or a literal string. Nothing from history, the self file, or
-  the policy prose: the judge sees the ask and the rows, never the conversation.
-- `questions`: the TypeSafe question map, verbatim, with one convention: `` `row` `` in
-  an instruction is rewritten to `` `rows[i]` `` per row. Types `noul`, `choice`,
-  `score` as the API defines them.
-- `mode`: `shadow` (judge, record, change nothing), `tag` (append `_judge` to each
-  judged row before the model sees it), `filter` (rows whose every thresholded
-  question falls below its threshold are moved out of the result into a spill file;
-  a pointer replaces them). Default `shadow`. `filter` never deletes: the file is
-  `read_file`-able and the pointer names the count and the path.
-- `threshold`: per question. Noul compares the probability; choice and score compare
-  `confidence`. Absent = tag only, never filter.
-- `batch`: rows per request, 1 to 50, default 10. `max_rows`: rows judged per tool
-  result, default 200; rows past it are left untouched and counted.
+- `on`: only `tool.result`. `before_turn`, `run.start` and `loop` are reserved words,
+  rejected at validation so a future meaning cannot be guessed.
+- `tool`: an exact tool name. One policy per tool; two policies on one tool are refused.
+- `rows`: dot path (with `[i]` indices) into the parsed JSON result to an array of objects.
+  Own-property traversal only; prototype segments are rejected. A result that is not JSON,
+  or where the path is not a non-empty array of objects, is skipped (`skipped: shape`).
+- `row_fields`: required, non-empty, the dot paths copied from each row into the state.
+  Nothing else leaves the box. Each value is bounded (1,000 chars per string, 12 items per
+  array with 300 chars each, objects as clipped JSON), the whole row under 4,000 chars; a
+  field that does not fit is dropped whole and the row is flagged `_truncated`.
+- `ask`: what the judge is told the user wants. `{"from":"run.input","after":"<marker>",
+  "until":"<marker>"}` takes the text of the run input after a marker the operator names,
+  up to an optional end marker, capped at 2,000 chars; or `{"literal":"..."}`. `after` is
+  required: the whole run input is never sent (a dispatch card carries a run token). Markers,
+  not regexes: linear, no backtracking on hostile input. No marker match = the policy
+  abstains (`skipped: no_ask`).
+- `questions`: Noul only in this slice (a probability that a statement is true), identifiers
+  as keys, `instructions` up to 2,000 chars, optional `criteria` `{true, false}`. `` `row` ``
+  in an instruction is rewritten to `` `rows[i]` `` per row.
+- `mode`: `shadow` only in this slice.
+- `threshold`: per question, in (0,1). In shadow it only counts `rows_would_filter` (rows
+  below EVERY thresholded question). An empty object is treated as absent.
+- `batch`: rows per request, 1 to 20, default 5 (small batches limit what a hostile row can
+  do to its neighbours). `max_rows`: 1 to 500, default 200; rows past it are counted as
+  `rows_capped`, never sent.
 
-## Engine behaviour
+## Engine behaviour (as built)
 
-One insertion point: `execCall` in `run.ts`, after `redactSecretValues` and before
-`capAndSpill`, so the judged-out rows never inflate the inline result and the spill
-file lands clean. Steps, all inside `applyJudge(result, policy, deps)`:
+One call site in `execCall` (`run.ts`), AFTER the tool's journal row and message row are
+committed, so judging can never delay or lose a tool outcome and a restart replays the
+journal without re-judging. The judge sees the redacted PRE-cap result (the whole payload,
+not the elided middle). Inside `JudgeLane.judge`:
 
-1. Parse the result as JSON; resolve `rows`; skip on any shape mismatch.
-2. Build batches of `batch` rows; each request's state is
-   `{ ask, rows: [projected rows] }` with one question per row per policy question.
-   Requests run with concurrency 4 and the per-request timeout.
-3. Map answers back by index. A failed or timed-out batch abstains: its rows are
-   untouched in every mode, and the batch is counted as `abstained`.
-4. Apply the mode. `tag` writes `_judge: { fits: 0.87 }` on the row (numbers only,
-   never text from the judge). `filter` splits rows below every threshold into the
-   spill file `.delta/spill/<run>.<call>.judged.json` and leaves
-   `{"_judged_out": {"count": N, "path": "...", "note": "rows below threshold, read_file to recover"}}`
-   in their place at the end of the array.
-5. Add the judge cost to the run's usage so budgets see it, and emit telemetry.
-6. Re-serialize with the original formatting rules (JSON.stringify, no pretty print)
-   and hand the result on to `capAndSpill` unchanged in every other respect.
+1. Cooldown check, ask resolution, JSON parse, `rows` path; any mismatch skips with a named
+   reason and no request.
+2. Batches of `batch` rows. Each request carries `{ask, rows}` with every string scrubbed at
+   the leaf (registered secrets and secret-shaped text) BEFORE clipping, then bounded; one
+   Noul question per row per policy question.
+3. One cancellation per result: an 8 s deadline and the run's own abort signal both trip it,
+   and it reaches every in-flight request and every slot wait. Four requests in flight
+   process-wide, a released slot handed directly to the next waiter (no barging). The
+   cooldown (three consecutive failures, one minute) is rechecked before every send.
+4. Answers are matched by generated id and must be a finite noul in [0,1]; anything else
+   abstains that row. A provider error body is scrubbed before it reaches telemetry; the
+   answering model id must be a plain identifier; usage must be a finite bounded count.
+5. The decision is emitted and the cost is charged to the run once through `chargeUsage`
+   (dollars only, never tokens: a judge call reads the result, it is not model context).
 
-Guarantees: the judge never throws into the turn; the tool result is byte-identical
-in shadow mode; a row is never modified beyond the added `_judge` key; nothing the
-judge returns is ever inserted as prose; the judge sees at most `max_rows` rows of
-`row_fields` and the capped ask; the state never carries secrets (row_fields are an
-allowlist) and the key is only ever in the header of the judge request.
+Guarantees: the tool result string is never touched; the lane never throws into a turn; rows
+are never lost (judged + abstained + capped = rows_in); nothing the judge returns is inserted
+anywhere the model reads.
 
 ## Telemetry
 
-New events, exported with the same consent rules as `model.call`:
+Both events are payload-bearing in the exporter: without payload consent only counters, enums,
+cost and the model id leave the box; `scores`, `p10`, `p50` and error text need
+`DELTA_CAPTURE_PAYLOADS=1`.
 
-- `judge.call` per request: `policy`, `mode`, `rows`, `questions`, `latency_ms`,
-  `input_tokens`, `cost_usd`, `model` (the answering version from the response),
-  `status`, `error.class` (`timeout`, `auth`, `quota`, `transient`, `request`).
-- `judge.decision` per tool result: `policy`, `mode`, `tool`, `rows_in`, `rows_judged`,
-  `rows_tagged`, `rows_filtered`, `rows_abstained`, `skipped` (`shape`, `max_rows`),
-  `p50` and `p10` of the first thresholded question. This is what a shadow run is
-  scored on before anyone flips a policy to `tag` or `filter`.
+- `judge.call` per request: `policy`, `mode`, `rows`, `latency_ms`, `status`, and on
+  success `input_tokens`, `cost_usd`, `model`; on failure `error.class` (`timeout`, `auth`,
+  `quota`, `transient`, `request`), `http_status`, `error.message` (scrubbed).
+- `judge.decision` per tool result: `policy`, `mode`, `tool`, `call_id`, `rows_in`,
+  `rows_judged`, `rows_abstained`, `rows_capped`, `rows_would_filter`, `skipped` (`shape`,
+  `no_ask`, `cooldown`, `max_rows`, `deadline`), `scores` (JSON list of `[row index, noul]`
+  for the first thresholded question), `p10`, `p50`, `calls`, `cost_usd`, `input_tokens`,
+  `latency_ms`, `model`. The per-row scores joined to the rows the agent later kept (by
+  `call_id` and index) are what a threshold is chosen from.
 
 ## What the agent sees
 
-- shadow: nothing.
-- tag: `_judge` numbers on rows. POLICY.md may tell the agent what they mean, in the
-  operator's words. The engine adds no prose.
-- filter: fewer rows and one pointer object. The agent can recover with `read_file`.
+Nothing. Shadow changes no byte of any result.
 
-## Tests (bun test, no network)
+## Tests (`bun test`, no network; 22 cases in `test/judge.test.ts`)
 
-A fake fetch injected through deps. Cases: lane off without a key; safe mode off;
-boot rejects a malformed `judge.json` with the field named; non-JSON result skipped;
-path not an array skipped; batch and max_rows boundaries; `` `row` `` rewrite per
-index; tag writes numbers only; filter moves exactly the below-threshold rows, writes
-the spill file, leaves the pointer, and keeps the array order otherwise; timeout and
-5xx abstain per batch with rows untouched; shadow leaves the result byte-identical;
-usage cost added once; both events emitted with the listed attributes; the key never
-appears in any event, message row, or spill file.
+Validator: every malformed field named, reserved `on`, prototype keys, empty threshold, one
+policy per tool. State: own-property paths, allowlist + bounds, marker extraction (and its
+linear cost on a 400 KB input), leaf scrubbing of a newline-bearing secret, answer validation.
+Client: key only in the header, echoing endpoint, fake model id, `1e309` usage, timeout,
+cancellation, 429, non-JSON. Lane: batching and would-filter counts, partial failure, cooldown
+mid-result and its expiry, `max_rows` accounting, a deadline with a 200 ms request
+outstanding, six parallel results never exceeding four in flight, cancellation by signal.
+Config: key without egress stays off, safe mode, boot failure named. Bundle apply: seeds,
+refuses, leaves the old file. Exporter: the no-consent attribute set, exactly. Run loop:
+byte-identical message row AND journal row, the ask without the token line or the routing
+card, only the allowlisted fields sent, event order `tool.result` then `judge.call` then
+`judge.decision`, cost charged once, a real journal replay never re-judged, an unmatched tool
+never judged.
 
 ## Rollout
 
-1. Land the lane with shadow as the only mode used in the fleet. Point one bench lane
-   at it with the `fiber_rows` policy above.
-2. Score the shadow decisions against the rows the agent kept (the offline
-   experiment E1 already gives the shape: kept-row recall and unkept-row filter rate
-   by threshold). Choose the threshold per policy from that curve, never from the
-   cookbook.
-3. Flip the bench lane to `tag`, run the 24-task battery twin-lane against control
-   with the blind judge. Then `filter` on the same rig. No client lane before both.
-4. The engineer owns the Aperture policy text and the seam's row shapes; the harness
-   owns the mechanism. `judge.json` lives in `app/agent/quick-search/` like
-   `vocab.json` and rides the same reseed path.
+1. One bench lane, `DELTA_JUDGE_EGRESS=1`, the `fiber_rows` policy above, shadow. The
+   engineer profiles the run ids with the lab's peek script so the two studies share
+   telemetry.
+2. Score the shadow decisions against the rows the agent kept (E1b gives the curve shape:
+   generic question keeps 84% of listed rows at 0.3 and removes 43% of the rest). Choose the
+   threshold per policy from that curve, never from a cookbook.
+3. `tag`, then `filter`, on the same rig under the conditions below, twin-lane against
+   control with the blind judge. No client lane before both.
+4. The engineer owns the Aperture policy text and the seam's row shapes; the harness owns the
+   mechanism. `judge.json` lives in `app/agent/quick-search/` like `vocab.json` and rides the
+   same reseed path.
 
-## Slice 2 (not now): the bounded sweep
+## Conditions for `tag` and `filter` (from codex, before either ships)
+
+A rewritten result must be lossless: a JSON round-trip changes key order, number spelling,
+unicode escapes and big integers, so `tag`/`filter` need a splice on the original string or an
+explicit abstention on inputs the round-trip would alter. A `_judged_out` pointer must live
+outside the row array (inside it, it becomes an apparent candidate). Filtering on a Choice or
+Score needs the selection separated from the confidence. Missing evidence is unknown, never a
+negative. The spill pointer is published only after a successful atomic write, and the
+compaction ledger must recognize the new file name. Rows judged out must be recoverable with
+`read_file` and listed by original index.
+
+## Slice 3 (not now): the bounded sweep
 
 A policy `on: "loop"` that lets code, not the frontier model, page through a tool:
 `{ tool, next: { from: "output.next_from", arg: "from" }, until: { question, threshold, min_yield }, max_pages, credit_cap }`.
-The frontier model calls the tool once with the plan; the engine repeats the call,
-judges each page, stops on the contract (target reached, yield under `min_yield` for
-two pages, `max_pages`, or the cap), and returns one result holding the accepted rows
-plus the counts and a `continuation` cursor. Stopping on low yield asks the model to
-replan; it never declares the user's task complete. Credits are enforced by the seam
-before each billable call (that is the product's cap, not the judge's). Designed after
-slice 1 has shadow data and after the seam exposes cursors uniformly.
+The frontier model calls the tool once with the plan; the engine repeats the call, judges each
+page, stops on the contract (target reached, `max_pages`, the cap, or source exhaustion) and
+returns one result holding the accepted rows plus the counts and a `continuation` cursor. Low
+yield asks the model to replan; it never declares the user's task complete (E4: on a
+completeness ask the per-page yield is flat, so only a cap stops a sweep). Credits are enforced
+by the seam before each billable call. Designed after slice 2 has shadow data and after the
+seam exposes cursors uniformly.
