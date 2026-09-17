@@ -204,6 +204,19 @@ describe("state assembly", () => {
     expect(s).not.toContain("tok_abc123secret");
     expect(s).not.toContain("sk-ant-api03");
     expect(s).not.toContain("line2secret");
+    // a secret-shaped leaf right after a newline inside a NESTED object: JSON escaping puts a
+    // word character before it, so only a decoded-leaf scrub catches it
+    const nested = buildRequest(policy, "x", [
+      { roles: [{ note: "\nsk-ant-api03-ABCDEFGHIJKLMNOPQRSTUV0123456789abcdefghijklmnop" }] },
+    ]);
+    expect(JSON.stringify(nested)).not.toContain("sk-ant-api03");
+    // a registered secret straddling the 2,000-char ask clip is scrubbed BEFORE the clip
+    registerSecretValue("EDGE", "custom_abcdefghijklm");
+    const ask = resolveAsk(
+      { from: "run.input", after: "Q:" },
+      `Q:${"a".repeat(1_990)}custom_abcdefghijklm tail`,
+    );
+    expect(ask).not.toContain("custom_abc");
     expect((req.questions[qid("fits", 1)] as { instructions: string }).instructions).toContain(
       "`rows[1]`",
     );
@@ -279,9 +292,16 @@ describe("the client", () => {
     const h = await hostile({}, {});
     expect(h.ok).toBe(true);
     if (h.ok) {
-      expect(h.model).toBe("jev-1.13.0"); // not a plain identifier → the configured id
+      expect(h.model).toBe("jev-1.13.0"); // provider text is never the record, only a match flag
+      expect(h.modelMatched).toBe(false);
       expect(h.inputTokens).toBe(0); // Infinity is not a count
     }
+    const echoId = makeJudgeClient({
+      ...cfg,
+      fetch: (async () => new Response('{"model":"KEY-XYZ","answers":{}}')) as never,
+    });
+    const ei = await echoId({}, {});
+    if (ei.ok) expect(JSON.stringify(ei)).not.toContain("KEY-XYZ");
     resetSecretRegistry();
   });
 
@@ -343,7 +363,14 @@ function fakeClient(
       const answers: Record<string, unknown> = {};
       for (let j = 0; j < s.rows.length; j++)
         answers[qid("fits", j)] = { type: "noul", noul: score(s.rows[j] ?? {}) };
-      return { ok: true, answers, inputTokens: 100, model: "jev-1.13.0", latencyMs: 1 };
+      return {
+        ok: true,
+        answers,
+        inputTokens: 100,
+        model: "jev-1.13.0",
+        modelMatched: true,
+        latencyMs: 1,
+      };
     } finally {
       inFlight--;
     }
@@ -525,6 +552,30 @@ describe("JudgeLane.judge (shadow)", () => {
     const d = await pending;
     expect(d.rows_judged).toBe(0);
     expect(d.skipped).toBe("deadline");
+    // our own cancellation is not an endpoint failure: the next unrelated result still runs
+    const after = await lane.judge(
+      policy,
+      { result: result(rowsN(1)), runInput: "QUESTION: x", callId: "y" },
+      () => {},
+    );
+    expect(after.skipped).toBeUndefined();
+    expect(after.rows_judged).toBe(1);
+  });
+
+  test("a pathological row (stringify past the stack) abstains its batch; every worker settles; nothing throws", async () => {
+    const deep = `${"[".repeat(60_000)}${"]".repeat(60_000)}`;
+    const res = `{"output":{"data":[{"headline":"ok1"},{"headline":"x","roles":${deep}},{"headline":"ok2"},{"headline":"ok3"}]}}`;
+    const { client, calls } = fakeClient(() => 0.5);
+    const policy = policy1();
+    const lane = new JudgeLane({ policies: [policy], client, pricePerMtok: 0.042, model: "m" });
+    const d = await lane.judge(
+      policy,
+      { result: res, runInput: "QUESTION: x", callId: "c" },
+      () => {},
+    );
+    expect(d.rows_judged + d.rows_abstained + d.rows_capped).toBe(d.rows_in);
+    expect(calls.length).toBeLessThanOrEqual(2);
+    expect(d.rows_judged).toBeGreaterThanOrEqual(2);
   });
 });
 
@@ -624,8 +675,10 @@ describe("exporter consent", () => {
       rows_in: 1,
       rows_judged: 1,
       rows_abstained: 0,
+      rows_capped: 0,
       rows_would_filter: 0,
       calls: 1,
+      cost_usd: 0.00001,
       input_tokens: 120,
       latency_ms: 300,
       model: "jev-1.13.0",

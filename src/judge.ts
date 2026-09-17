@@ -73,7 +73,6 @@ export const RESULT_DEADLINE_MS = 8_000;
 /** Consecutive failed requests that pause the lane, and for how long. */
 const COOLDOWN_AFTER = 3;
 const COOLDOWN_MS = 60_000;
-const MODEL_ID = /^[\w.:-]{1,64}$/;
 const TOKENS_MAX = 10_000_000;
 const POLICY_KEYS: ReadonlySet<string> = new Set([
   "on",
@@ -241,8 +240,8 @@ export function resolveAsk(ask: JudgeAsk, runInput: string | undefined): string 
   if (!runInput) return undefined;
   const at = runInput.indexOf(ask.after);
   if (at < 0) return undefined;
-  const from = at + ask.after.length;
-  let text = runInput.slice(from, from + ASK_CHARS * 2);
+  // Scrub BEFORE any clip: a secret cut by the clip would leave an unrecognizable prefix.
+  let text = scrubText(runInput.slice(at + ask.after.length));
   if (ask.until) {
     const stop = text.indexOf(ask.until);
     if (stop >= 0) text = text.slice(0, stop);
@@ -259,6 +258,8 @@ export type JudgeResult =
       answers: Record<string, unknown>;
       inputTokens: number;
       model: string;
+      /** The response named the configured model. False = an alias moved or an echo. */
+      modelMatched: boolean;
       latencyMs: number;
     }
   | {
@@ -333,7 +334,11 @@ export function makeJudgeClient(cfg: JudgeClientConfig): JudgeClient {
         ok: true,
         answers: body.answers,
         inputTokens,
-        model: typeof body.model === "string" && MODEL_ID.test(body.model) ? body.model : cfg.model,
+        // Provider-authored text is never exported as metadata, even identifier-shaped: an
+        // echoing endpoint could put the key there. The configured id is the record; whether
+        // the answering id matched it is a boolean.
+        model: cfg.model,
+        modelMatched: body.model === cfg.model,
         latencyMs: took(),
       };
     } catch (e) {
@@ -373,6 +378,22 @@ const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n)}…
 /** Every string that leaves the box goes through here: scrub FIRST (a secret split by a clip
  * would survive a whole-state scrub), then bound. */
 const leaf = (s: string, n: number) => clip(scrubText(s), n);
+const WALK_DEPTH = 6;
+const WALK_NODES = 400;
+/** Scrub every string leaf of a decoded value, bounded in depth and size, and serialize. JSON
+ * escaping puts a word character before a secret that follows a newline, so a scrub over the
+ * serialized text misses it; the leaves are scrubbed decoded, then the text is scrubbed again. */
+function scrubDeep(v: unknown, budget: { nodes: number }, depth = 0): unknown {
+  if (--budget.nodes < 0 || depth > WALK_DEPTH) return "[omitted]";
+  if (typeof v === "string") return scrubText(v);
+  if (v === null || typeof v !== "object") return v;
+  if (Array.isArray(v)) return v.slice(0, ARRAY_ITEMS).map((x) => scrubDeep(x, budget, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [k, x] of Object.entries(v)) out[scrubText(k)] = scrubDeep(x, budget, depth + 1);
+  return out;
+}
+const nested = (v: unknown, n: number) =>
+  leaf(JSON.stringify(scrubDeep(v, { nodes: WALK_NODES })) ?? "", n);
 
 /** Bound one field's value: scalars as-is (strings scrubbed + clipped), arrays to a few clipped
  * items, objects to a clipped JSON string. Nothing nested rides unbounded or unscrubbed. */
@@ -387,9 +408,9 @@ function boundValue(v: unknown): unknown {
           ? leaf(x, ITEM_CHARS)
           : typeof x === "number" || typeof x === "boolean" || x === null
             ? x
-            : leaf(JSON.stringify(x), ITEM_CHARS),
+            : nested(x, ITEM_CHARS),
       );
-  if (typeof v === "object") return leaf(JSON.stringify(v), LEAF_CHARS);
+  if (typeof v === "object") return nested(v, LEAF_CHARS);
   return undefined;
 }
 
@@ -519,18 +540,24 @@ export class JudgeLane {
     }
     return new Promise<boolean>((resolve) => {
       const waiter: Waiter = { resolve: () => resolve(true), cancel: () => resolve(false) };
-      const giveUp = () => {
-        const i = this.waiters.indexOf(waiter);
-        if (i < 0) return;
-        this.waiters.splice(i, 1);
-        waiter.cancel();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const cleanup = () => {
+        if (timer) clearTimeout(timer);
+        signal.removeEventListener("abort", giveUp);
       };
-      const timer = setTimeout(giveUp, Math.max(0, deadline - this.now()));
+      function giveUp() {
+        cleanup();
+        const i = self.waiters.indexOf(waiter);
+        if (i < 0) return;
+        self.waiters.splice(i, 1);
+        waiter.cancel();
+      }
+      const self = this;
+      timer = setTimeout(giveUp, Math.max(0, deadline - this.now()));
       signal.addEventListener("abort", giveUp, { once: true });
       const granted = waiter.resolve;
       waiter.resolve = () => {
-        clearTimeout(timer);
-        signal.removeEventListener("abort", giveUp);
+        cleanup();
         granted();
       };
       this.waiters.push(waiter);
@@ -636,9 +663,13 @@ export class JudgeLane {
           const after = halted();
           if (after) abstain(slice.length, after);
           else {
+            // Projection or the client can throw on a pathological row (a stringify past the
+            // stack, a broken fetch implementation); that batch abstains, the loop goes on.
             const req = buildRequest(policy, ask, slice);
             r = await this.cfg.client(req.state, req.questions, ac.signal);
           }
+        } catch {
+          abstain(slice.length, "shape");
         } finally {
           this.release();
         }
@@ -646,7 +677,11 @@ export class JudgeLane {
         d.calls++;
         if (!r.ok) {
           d.rows_abstained += slice.length;
-          if (++this.failures >= COOLDOWN_AFTER) this.cooldownUntil = this.now() + COOLDOWN_MS;
+          // Our own cancellation (deadline or the run's signal) is not an endpoint failure and
+          // must not cool the lane down for every other run.
+          const ours = r.class === "timeout" && ac.signal.aborted;
+          if (ours) d.skipped = d.skipped ?? "deadline";
+          else if (++this.failures >= COOLDOWN_AFTER) this.cooldownUntil = this.now() + COOLDOWN_MS;
           onCall({
             policy: policy.name,
             mode: "shadow",
@@ -673,6 +708,7 @@ export class JudgeLane {
           input_tokens: r.inputTokens,
           cost_usd: cost,
           model: r.model,
+          model_matched: r.modelMatched,
         });
         for (let j = 0; j < slice.length; j++) {
           const scores: Record<string, number> = {};
@@ -698,11 +734,16 @@ export class JudgeLane {
       }
     };
     try {
-      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, starts.length) }, worker));
+      // allSettled: a worker can no longer throw, but nothing may ever return before every
+      // sibling has settled (a request that outlives the run would bill after finalization).
+      await Promise.allSettled(
+        Array.from({ length: Math.min(CONCURRENCY, starts.length) }, worker),
+      );
     } finally {
       clearTimeout(timer);
       input.signal?.removeEventListener("abort", onAbort);
     }
+    if (ac.signal.aborted && d.rows_abstained > 0) d.skipped = d.skipped ?? "deadline";
     d.latency_ms = Math.round(performance.now() - t0);
     if (d.scores.length) {
       const s = d.scores.map((x) => x[1]).sort((a, b) => a - b);
