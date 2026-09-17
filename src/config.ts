@@ -366,7 +366,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     const gpt6 = providers.flatMap((p) => p.models).filter((m) => /(^|\/)gpt-6/i.test(m));
     if (gpt6.length)
       console.error(
-        `delta: DELTA_REASONING_EFFORT='${reasoningEffort}' is rejected by ${gpt6.join(", ")} (GPT-6 takes low, medium, high, xhigh, max): every call on that model will 400. Use 'low'.`,
+        `delta: DELTA_REASONING_EFFORT='${reasoningEffort}' is rejected by ${gpt6.join(", ")} (GPT-6 takes low, medium, high, xhigh, max): every call that inherits this daemon default will 400 on that model (a run's own reasoning_effort override still applies). Use 'low'.`,
       );
   }
   // T5: a subscription (broker) provider with NO usable non-subscription fallback has no safety

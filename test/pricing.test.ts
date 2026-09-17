@@ -96,7 +96,12 @@ describe("gpt-5.6 family (M3, 0.2.16)", () => {
 
 describe("gpt-6-astra (0.2.18)", () => {
   // Model page + pricing page 2026-09-05: $10 in / $50 out / $1 cached read; writes 1.25×.
-  const astra = { in: 10, out: 50, cacheRead: 1 };
+  const astra = {
+    in: 10,
+    out: 50,
+    cacheRead: 1,
+    longContext: { above: 272_000, inMul: 2, outMul: 1.5 },
+  };
   test("priced on every id form; no `gpt-6` alias OpenAI does not document", () => {
     expect(resolvePrice("gpt-6-astra", BAKED_PRICES)).toEqual(astra);
     expect(resolvePrice("openai/gpt-6-astra", BAKED_PRICES)).toEqual(astra);
@@ -109,6 +114,57 @@ describe("gpt-6-astra (0.2.18)", () => {
       computeCost(astra, { input: 2_600, output: 0, cacheRead: 2_000, cacheWrite: 400 }),
     ).toBeCloseTo(0.009, 8);
   });
+  test("Astra's long-context tier: the whole request bills 2× in / 1.5× out above 272k gross input, not below", () => {
+    const astra = resolvePrice("gpt-6-astra", parsePrices(undefined));
+    if (!astra) throw new Error("astra unpriced");
+    // exactly at the boundary: the base rate
+    expect(computeCost(astra, { input: 272_000, output: 1_000, cacheRead: 0 })).toBeCloseTo(
+      (272_000 * 10 + 1_000 * 50) / 1e6,
+      9,
+    );
+    // one token over: every token of the request, cached reads and writes included, at the tier
+    const over = computeCost(astra, {
+      input: 272_001,
+      output: 1_000,
+      cacheRead: 100_000,
+      cacheWrite: 50_000,
+    });
+    const fresh = 272_001 - 100_000 - 50_000;
+    expect(over).toBeCloseTo(
+      ((fresh * 10 + 100_000 * 1 + 50_000 * 10 * 1.25) * 2 + 1_000 * 50 * 1.5) / 1e6,
+      9,
+    );
+    // codex's repro: 300k uncached in + 1k out is $6.075, not $3.05
+    expect(computeCost(astra, { input: 300_000, output: 1_000, cacheRead: 0 })).toBeCloseTo(
+      6.075,
+      6,
+    );
+    // Sol keeps its previous (untiered) behaviour in this release
+    const sol = resolvePrice("gpt-5.6-sol", parsePrices(undefined));
+    if (!sol) throw new Error("sol unpriced");
+    expect(computeCost(sol, { input: 300_000, output: 0, cacheRead: 0 })).toBeCloseTo(1.2, 9);
+    // an override that names the three rates keeps the baked tier; `null` removes it
+    const kept = resolvePrice(
+      "gpt-6-astra",
+      parsePrices('{"gpt-6-astra":{"in":8,"out":40,"cacheRead":0.8}}'),
+    );
+    expect(kept?.longContext).toEqual({ above: 272_000, inMul: 2, outMul: 1.5 });
+    const removed = resolvePrice(
+      "gpt-6-astra",
+      parsePrices('{"gpt-6-astra":{"in":8,"out":40,"cacheRead":0.8,"longContext":null}}'),
+    );
+    expect(removed?.longContext).toBeUndefined();
+    const custom = resolvePrice(
+      "gpt-6-astra",
+      parsePrices(
+        '{"gpt-6-astra":{"in":8,"out":40,"cacheRead":0.8,"longContext":{"above":100000,"inMul":3,"outMul":2}}}',
+      ),
+    );
+    expect(custom?.longContext).toEqual({ above: 100_000, inMul: 3, outMul: 2 });
+    // window and tier are independent: the tier never clamps the ceiling
+    expect(astra.window).toBeUndefined();
+  });
+
   test("no baked window: Astra is an UNKNOWN-window member, with the documented consequences", () => {
     // A `window` would also clamp an operator's DELTA_COMPACT_AT_TOKENS through maxSafeCeiling
     // (codex P1 on the spec), and the only number on offer (the 272K price cliff) is a cost

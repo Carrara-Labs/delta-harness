@@ -8,10 +8,13 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 - **GPT-6 Astra (`gpt-6-astra`).** Priced ($10 in / $50 out / $1 cached read per 1M; cache
-  writes 1.25×) and recognised as a vision model. The Responses wire is unchanged: probed on the
-  Codex backend 2026-09-05, a tool call round-trips on the 0.2.17 request surface. Astra gets the
-  same explicit cache marks as 5.6 on `api.openai.com` (the field is accepted there; the
-  ChatGPT/Codex backend refuses it for this model, and the host gate keeps it off).
+  writes 1.25×) and recognised as a vision model. On the ChatGPT/Codex backend the Responses
+  wire is unchanged: probed 2026-09-05, a tool call round-trips on the 0.2.17 request surface.
+  On `api.openai.com` Astra gets the same explicit cache marks as 5.6 (the field is accepted
+  there; the Codex backend refuses it for this model, and the host gate keeps it off), and the
+  tool-output rendering below applies. Above 272k input tokens the whole request is metered at
+  the long-context tier (2× input, cached reads and writes; 1.5× output), matching the pricing
+  page; the tier boundary is a cost choice, not a window, so nothing clamps the ceiling.
 - **Rolling cache marks ride tool outputs on the Responses wire** (fixes 0.2.16's M2 for every
   GPT-5.6+ lane, not only Astra). Since 0.2.16 only user messages could carry a mark, and an
   agentic run is one user message followed by tool calls, so on the fleet's real shape the two
@@ -20,14 +23,18 @@ All notable changes to this project are documented here. The format is based on
   first message was written at 1.25× on every call and never read back. Measured on the Aperture
   bench: Astra at 3× Sol's cost with the hit rate decaying from 34% to 18%, and after the model
   gate alone was fixed, cached tokens pinned at exactly the first message (16,695) on every turn.
-  Under the explicit-cache gate every `function_call_output` is now rendered as an `input_text`
-  block array (the caching guide's own multi-turn agent shape, accepted on `api.openai.com` for
-  5.6 and Astra) and the two rolling marks ride the last tool outputs before the tail. Off the
-  gate (the Codex backend) tool outputs stay plain strings; nothing changes there. Expect Sol
-  lanes on `api.openai.com` to gain hit rate too. No `window` is
-  baked: the 120k compaction default applies, and a lane that wants the long context sets one
-  through `DELTA_MODEL_PRICES` knowing that above 272k input the whole request bills 2× in and
-  1.5× out.
+  Under the explicit-cache gate (Responses wire on `openai.com`, model `gpt-5.6*` or `gpt-6*`)
+  every `function_call_output` is now rendered as an `input_text` block array and the two
+  rolling marks ride the last tool outputs before the tail. This is the caching guide's own
+  multi-turn agent shape; it was accepted live for Astra (probe 200, then the full battery) and
+  is documented for 5.6, so every Sol, Terra and Luna lane on `api.openai.com` changes rendering
+  with this release and should gain hit rate (Sol probed live before the tag, see the release
+  brief). Stored history is untouched: tool rows stay strings in the database and the array is
+  built at serialization, so a 0.2.17 run resumed on 0.2.18 continues with one cache miss on
+  its next call and nothing else. Off the gate (the Codex backend, OpenRouter, Anthropic) tool
+  outputs stay plain strings; request bytes are byte-identical to 0.2.17 there. No `window` is
+  baked: the 120k compaction default applies; a lane that raises `DELTA_COMPACT_AT_TOKENS` past
+  272k is metered at the long-context tier from that request on.
 - **Boot warning for an effort GPT-6 rejects.** The model takes `low` through `max`; `none` and
   `minimal` are a terminal 400 on every call, and a 400 never fails over, so any cascade member on
   GPT-6 with such an effort is named at boot. The value still passes through: the model stays the

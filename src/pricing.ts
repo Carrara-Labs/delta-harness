@@ -24,6 +24,11 @@ export type ModelPrice = {
    * compaction default rather than inheriting a guess. Only seed a value the field has PROVEN,
    * because under-seeding costs a little extra compaction and over-seeding costs overflow. */
   window?: number;
+  /** Long-context tier (0.2.18): when a request's GROSS input exceeds `above` tokens, the WHOLE
+   * request bills at `inMul` × the input, cached-read and cache-write rates and `outMul` × the
+   * output rate (OpenAI's GPT-5.6+/GPT-6 rule: 2× / 1.5× above 272k). A cost choice, not a
+   * window: it never clamps the compaction ceiling. */
+  longContext?: { above: number; inMul: number; outMul: number };
 };
 
 // The OpenRouter-option fleet + the harness default, priced from
@@ -32,6 +37,10 @@ export type ModelPrice = {
 // prefixes are stripped at match time), so "anthropic/claude-sonnet-5" and "claude-sonnet-5"
 // both hit. Cache WRITES aren't billed here — the harness doesn't capture creation tokens;
 // a small first-turn undercount, negligible against the cache-HIT-dominated steady state.
+/** OpenAI's long-context tier for GPT-5.6+ and GPT-6 (pricing page 2026-09-05). Applied to
+ * Astra; the 5.6 family keeps its previous behaviour in this release (see the CHANGELOG). */
+const LONG_CONTEXT_272K = { above: 272_000, inMul: 2, outMul: 1.5 } as const;
+
 export const BAKED_PRICES: Record<string, ModelPrice> = {
   "claude-sonnet-5": { in: 2, out: 10, cacheRead: 0.2 }, // harness default (config.ts)
   // window: a FIELD-DERIVED floor, not a published number. Aperture ran 249,127 input tokens on a
@@ -60,11 +69,11 @@ export const BAKED_PRICES: Record<string, ModelPrice> = {
   "gpt-5.6-terra": { in: 2, out: 12, cacheRead: 0.2 },
   "gpt-5.6-luna": { in: 0.2, out: 1.2, cacheRead: 0.02 },
   // GPT-6 Astra (0.2.18) — same page, same date. No `window` on purpose: a window also CLAMPS an
-  // operator's DELTA_COMPACT_AT_TOKENS (maxSafeCeiling), and the only honest number here, the
-  // 272K price cliff, is a cost choice rather than a capacity. The 120k default applies; a lane
-  // that wants more sets DELTA_MODEL_PRICES={"gpt-6-astra":{..., "window": N}} and accepts the
-  // 2× / 1.5× tier above 272K.
-  "gpt-6-astra": { in: 10, out: 50, cacheRead: 1 },
+  // operator's DELTA_COMPACT_AT_TOKENS (maxSafeCeiling); the 272K price cliff is a cost choice,
+  // modeled as `longContext` (codex pre-publish P1: a 300k-token call metered half its cost
+  // without it, and DELTA_COMPACT_AT_TOKENS=600000 is an accepted config). The 120k default
+  // applies; a lane that raises it past 272K is metered at the tier from that request on.
+  "gpt-6-astra": { in: 10, out: 50, cacheRead: 1, longContext: LONG_CONTEXT_272K },
   // Anthropic NATIVE model ids use dashes ("claude-haiku-4-5"); alias them so the native
   // wire path never meters $0 (codex #2).
   "claude-haiku-4-5": { in: 1, out: 5, cacheRead: 0.1 },
@@ -77,7 +86,10 @@ export const BAKED_PRICES: Record<string, ModelPrice> = {
 export function parsePrices(raw: string | undefined): Record<string, ModelPrice> {
   if (!raw) return { ...BAKED_PRICES };
   try {
-    const over = JSON.parse(raw) as Record<string, Partial<ModelPrice>>;
+    const over = JSON.parse(raw) as Record<
+      string,
+      Partial<Omit<ModelPrice, "longContext">> & { longContext?: ModelPrice["longContext"] | null }
+    >;
     const out: Record<string, ModelPrice> = { ...BAKED_PRICES };
     for (const [k, v] of Object.entries(over)) {
       if (
@@ -95,11 +107,27 @@ export function parsePrices(raw: string | undefined): Record<string, ModelPrice>
           typeof v.window === "number" && Number.isFinite(v.window) && v.window > 0
             ? Math.floor(v.window)
             : out[key]?.window;
+        // Same merge rule for the tier: an override that names in/out/cacheRead keeps the baked
+        // tier unless it supplies a well-formed one of its own (or `null` to remove it).
+        const lc = v.longContext;
+        const longContext =
+          lc === null
+            ? undefined
+            : lc &&
+                typeof lc.above === "number" &&
+                lc.above > 0 &&
+                typeof lc.inMul === "number" &&
+                lc.inMul >= 1 &&
+                typeof lc.outMul === "number" &&
+                lc.outMul >= 1
+              ? { above: Math.floor(lc.above), inMul: lc.inMul, outMul: lc.outMul }
+              : out[key]?.longContext;
         out[key] = {
           in: v.in,
           out: v.out,
           cacheRead: v.cacheRead,
           ...(window ? { window } : {}),
+          ...(longContext ? { longContext } : {}),
         };
       }
     }
@@ -135,8 +163,15 @@ export function computeCost(
 ): number {
   const write = u.cacheWrite ?? 0;
   const fresh = Math.max(0, u.input - u.cacheRead - write);
+  // The long-context tier multiplies the WHOLE request once gross input crosses `above`
+  // (OpenAI bills every token of such a request at the tier, cached reads and writes included).
+  const tier = p.longContext && u.input > p.longContext.above ? p.longContext : undefined;
+  const inMul = tier?.inMul ?? 1;
+  const outMul = tier?.outMul ?? 1;
   return (
-    (fresh * p.in + u.cacheRead * p.cacheRead + write * p.in * 1.25 + u.output * p.out) / 1_000_000
+    ((fresh * p.in + u.cacheRead * p.cacheRead + write * p.in * 1.25) * inMul +
+      u.output * p.out * outMul) /
+    1_000_000
   );
 }
 
