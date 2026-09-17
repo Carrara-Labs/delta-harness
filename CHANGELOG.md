@@ -30,11 +30,14 @@ All notable changes to this project are documented here. The format is based on
   is documented for 5.6, so every Sol, Terra and Luna lane on `api.openai.com` changes rendering
   with this release and should gain hit rate (Sol probed live before the tag, see the release
   brief). Stored history is untouched: tool rows stay strings in the database and the array is
-  built at serialization, so a 0.2.17 run resumed on 0.2.18 continues with one cache miss on
-  its next call and nothing else. Off the gate (the Codex backend, OpenRouter, Anthropic) tool
+  built at serialization, so a thread that started on 0.2.17 continues on 0.2.18 with one cache
+  miss on its next call (the rendering changed under it); drilled on the bench before the tag,
+  see the release brief. Off the gate (the Codex backend, OpenRouter, Anthropic) tool
   outputs stay plain strings; request bytes are byte-identical to 0.2.17 there. No `window` is
   baked: the 120k compaction default applies; a lane that raises `DELTA_COMPACT_AT_TOKENS` past
-  272k is metered at the long-context tier from that request on.
+  272k is metered at the long-context tier from that request on. The tier is modeled for Astra
+  only; the 5.6 family stays untiered in this release (override `longContext` under
+  `DELTA_MODEL_PRICES` if a Sol lane lives above 272k).
 - **Boot warning for an effort GPT-6 rejects.** The model takes `low` through `max`; `none` and
   `minimal` are a terminal 400 on every call, and a 400 never fails over, so any cascade member on
   GPT-6 with such an effort is named at boot. The value still passes through: the model stays the

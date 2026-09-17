@@ -163,6 +163,34 @@ describe("gpt-6-astra (0.2.18)", () => {
     expect(custom?.longContext).toEqual({ above: 100_000, inMul: 3, outMul: 2 });
     // window and tier are independent: the tier never clamps the ceiling
     expect(astra.window).toBeUndefined();
+    // a rates-only override under a QUALIFIED key inherits the baked tier (codex round 2 P1)
+    for (const k of ["openai/gpt-6-astra", "gpt-6-astra-2026-09-01"]) {
+      const q = resolvePrice(
+        k,
+        parsePrices(JSON.stringify({ [k]: { in: 8, out: 40, cacheRead: 0.8 } })),
+      );
+      expect(q?.longContext).toEqual({ above: 272_000, inMul: 2, outMul: 1.5 });
+      expect(computeCost(q!, { input: 300_000, output: 1_000, cacheRead: 0 })).toBeCloseTo(
+        (300_000 * 8 * 2 + 1_000 * 40 * 1.5) / 1e6,
+        9,
+      );
+    }
+    // poisoned numbers never reach a cost: Infinity/NaN/huge fall back to the baked values
+    const poisoned = resolvePrice(
+      "gpt-6-astra",
+      parsePrices(
+        '{"gpt-6-astra":{"in":10,"out":50,"cacheRead":1,"longContext":{"above":1e999,"inMul":1e303,"outMul":2}}}',
+      ),
+    );
+    expect(poisoned?.longContext).toEqual({ above: 272_000, inMul: 2, outMul: 1.5 });
+    const infRate = resolvePrice(
+      "gpt-6-astra",
+      parsePrices('{"gpt-6-astra":{"in":1e999,"out":50,"cacheRead":1}}'),
+    );
+    expect(infRate?.in).toBe(10); // the override is rejected whole, the baked entry stands
+    expect(
+      Number.isFinite(computeCost(poisoned!, { input: 300_000, output: 0, cacheRead: 0 })),
+    ).toBe(true);
   });
 
   test("no baked window: Astra is an UNKNOWN-window member, with the documented consequences", () => {

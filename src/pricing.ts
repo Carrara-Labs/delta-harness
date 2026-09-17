@@ -81,6 +81,13 @@ export const BAKED_PRICES: Record<string, ModelPrice> = {
   "claude-opus-4-8": { in: 5, out: 25, cacheRead: 0.5 },
 };
 
+/** A finite number inside [lo, hi]: valid JSON `1e999` parses to Infinity, and an Infinity or a
+ * NaN in a price poisons every cost it touches (a NaN never trips a dollar cap). */
+const bounded = (n: unknown, lo: number, hi: number): n is number =>
+  typeof n === "number" && Number.isFinite(n) && n >= lo && n <= hi;
+/** A $/M rate: finite, non-negative, under $100k/M (a typo, not a price). */
+const rate = (n: unknown): n is number => bounded(n, 0, 100_000);
+
 /** Merge a DELTA_MODEL_PRICES JSON override over the baked defaults. Malformed → defaults,
  * logged, never fatal (config style). Only well-formed {in,out,cacheRead} entries apply. */
 export function parsePrices(raw: string | undefined): Record<string, ModelPrice> {
@@ -92,13 +99,12 @@ export function parsePrices(raw: string | undefined): Record<string, ModelPrice>
     >;
     const out: Record<string, ModelPrice> = { ...BAKED_PRICES };
     for (const [k, v] of Object.entries(over)) {
-      if (
-        v &&
-        typeof v.in === "number" &&
-        typeof v.out === "number" &&
-        typeof v.cacheRead === "number"
-      ) {
+      if (v && rate(v.in) && rate(v.out) && rate(v.cacheRead)) {
         const key = k.toLowerCase();
+        // Inherit `window` and the tier from the BAKED entry the key RESOLVES to, not only from
+        // an exact key: an override keyed `openai/gpt-6-astra` or a versioned slug must not drop
+        // Astra's tier and meter a 300k call at half price again (codex P1).
+        const baked = out[key] ?? resolvePrice(key, BAKED_PRICES) ?? undefined;
         // MERGE over the baked entry rather than replacing it (S6): a plain price override must not
         // silently DELETE the model's `window` and drop it back to the 120k default. Anyone already
         // running DELTA_MODEL_PRICES would have lost the new field on upgrade without noticing —
@@ -106,7 +112,7 @@ export function parsePrices(raw: string | undefined): Record<string, ModelPrice>
         const window =
           typeof v.window === "number" && Number.isFinite(v.window) && v.window > 0
             ? Math.floor(v.window)
-            : out[key]?.window;
+            : baked?.window;
         // Same merge rule for the tier: an override that names in/out/cacheRead keeps the baked
         // tier unless it supplies a well-formed one of its own (or `null` to remove it).
         const lc = v.longContext;
@@ -114,14 +120,11 @@ export function parsePrices(raw: string | undefined): Record<string, ModelPrice>
           lc === null
             ? undefined
             : lc &&
-                typeof lc.above === "number" &&
-                lc.above > 0 &&
-                typeof lc.inMul === "number" &&
-                lc.inMul >= 1 &&
-                typeof lc.outMul === "number" &&
-                lc.outMul >= 1
+                bounded(lc.above, 1, 1e8) &&
+                bounded(lc.inMul, 1, 100) &&
+                bounded(lc.outMul, 1, 100)
               ? { above: Math.floor(lc.above), inMul: lc.inMul, outMul: lc.outMul }
-              : out[key]?.longContext;
+              : baked?.longContext;
         out[key] = {
           in: v.in,
           out: v.out,

@@ -24,13 +24,29 @@ still 0.2.17 in both places.
 
 ## Live probes before a tag
 
-1. Astra on `api.openai.com` (bench-sol-a, rc3 image): a fresh smoke twelve days after the
-   battery, cache gate line, engine anomalies. Requested from the engineer.
-2. Sol on `api.openai.com` with the new rendering: one user prompt, five or more tool turns, one
-   parallel tool batch; no 400s, rolling cache growth, cost reconciling with cache writes.
-   Requested from the engineer.
-3. Controls on the final candidate: Codex Astra and Sol, Anthropic-native Opus 5 tool round-trips
-   (local daemons, the 09-05 runner), off-gate rendering byte-identical.
+1. Astra on `api.openai.com` (bench-sol-a, rc3 image, medium, 2026-09-17 evening): 9 turns,
+   $0.58, input 202,429 / cached 176,237 / written 26,165. CACHE-GATE PASS: t1 wrote 16,747;
+   t2 cached 16,709 (90%); t9 cached 25,624 (99%); shortfall 41 every turn from t2. No 400s, 1
+   transient tool error of 15. **PASS.**
+2. Sol on `api.openai.com` with the new rendering (bench-sol-b, rc3 image, gpt-5.6-sol low,
+   probe P9, 2026-09-17 evening): 13 turns, 25 tool results, six parallel tool batches, 2 min
+   41 s. CACHE-GATE PASS: t1 wrote 16,791; t2 cached 16,752 (81%); t13 cached 60,007 (100%);
+   shortfall 42 on every turn from t2, the batch turns writing their outputs as the new suffix
+   and the prefix tracking every time. No 400s, no provider events, 0 of 25 tool errors. Cost
+   $0.65 reconciling with 71,136 cache-write tokens. **PASS.** (The app row reads failed
+   because Sol itself passed `status: failed` to the finish call while saving a normal
+   20-row list; a model-behaviour note, not a wire one.)
+3. Controls on the final candidate (d0fb9bd, run 2026-09-17 evening, local `delta run`, a
+   write_file then read_file task): Anthropic-native Opus 5 answered correctly in 3 turns, cache
+   84% and 88% on turns 2 and 3, $0.016; Codex Astra low through the Delos broker, 3 turns,
+   correct, $0.025 metered-equivalent; Codex Sol low, 3 turns, correct, $0.010. No 4xx, no
+   retry, no fallback on any lane; the only warning is the expected "no metered fallback" line
+   on the broker lanes. Off-gate rendering byte-identical per codex's ten-case comparison.
+   **PASS.**
+4. Cross-version thread drill (codex round 2): a room whose history was written on 0.2.17,
+   continued on the candidate against `api.openai.com` on Sol: one cache miss on the first call,
+   then rolling cache growth, no 400, pending and completed tool calls preserved. Requested from
+   the engineer on bench-sol-b (swap to 0.2.17 for one step, back to rc3 for the follow-up).
 
 ## What it is
 
@@ -110,5 +126,5 @@ the playbook. Expect refusals and clarifying questions as an outcome class.
   The runbook step (advance `sqlite_sequence`) stands.
 - A Sol arm rerun on rc3 would give a like-for-like against Astra on the new mark placement.
   Optional, Nic's call.
-- The `>272k input` 2x/1.5x billing tier is unmodeled (as for 5.6); no `window` is baked, the
-  120k compaction default applies.
+- The `>272k input` 2x/1.5x billing tier is modeled for Astra; the 5.6 family is untiered in
+  this release. No `window` is baked, the 120k compaction default applies.
