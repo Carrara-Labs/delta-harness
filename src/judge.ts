@@ -240,13 +240,15 @@ export function resolveAsk(ask: JudgeAsk, runInput: string | undefined): string 
   if (!runInput) return undefined;
   const at = runInput.indexOf(ask.after);
   if (at < 0) return undefined;
-  // Scrub BEFORE any clip: a secret cut by the clip would leave an unrecognizable prefix.
-  let text = scrubText(runInput.slice(at + ask.after.length));
+  // The end marker is located on the ORIGINAL text (a scrub could consume the delimiter and
+  // let what follows it through), then the bounded segment is scrubbed BEFORE the clip (a
+  // secret cut by the clip would leave an unrecognizable prefix).
+  let text = runInput.slice(at + ask.after.length);
   if (ask.until) {
     const stop = text.indexOf(ask.until);
     if (stop >= 0) text = text.slice(0, stop);
   }
-  text = text.trim().slice(0, ASK_CHARS);
+  text = scrubText(text).trim().slice(0, ASK_CHARS);
   return text ? text : undefined;
 }
 
@@ -387,9 +389,28 @@ function scrubDeep(v: unknown, budget: { nodes: number }, depth = 0): unknown {
   if (--budget.nodes < 0 || depth > WALK_DEPTH) return "[omitted]";
   if (typeof v === "string") return scrubText(v);
   if (v === null || typeof v !== "object") return v;
-  if (Array.isArray(v)) return v.slice(0, ARRAY_ITEMS).map((x) => scrubDeep(x, budget, depth + 1));
+  if (Array.isArray(v)) {
+    const out: unknown[] = [];
+    for (const x of v.slice(0, ARRAY_ITEMS)) {
+      if (budget.nodes <= 0) {
+        out.push("[omitted]");
+        break;
+      }
+      out.push(scrubDeep(x, budget, depth + 1));
+    }
+    return out;
+  }
   const out: Record<string, unknown> = {};
-  for (const [k, x] of Object.entries(v)) out[scrubText(k)] = scrubDeep(x, budget, depth + 1);
+  for (const k in v) {
+    if (!Object.hasOwn(v, k)) continue;
+    // Stop ENUMERATING when the budget is spent: a 3,000-key object must not be walked,
+    // scrubbed and serialized whole (the walk is synchronous and blocks every lane).
+    if (budget.nodes <= 0) {
+      out["[omitted]"] = true;
+      break;
+    }
+    out[scrubText(k)] = scrubDeep((v as Record<string, unknown>)[k], budget, depth + 1);
+  }
   return out;
 }
 const nested = (v: unknown, n: number) =>
@@ -583,6 +604,15 @@ export class JudgeLane {
     },
     onCall: (attrs: CallAttrs) => void,
   ): Promise<Decision> {
+    // A telemetry callback that throws must not lose a row's accounting: it is isolated here,
+    // and the caller's failure is its own problem.
+    const emit = (attrs: CallAttrs) => {
+      try {
+        onCall(attrs);
+      } catch {
+        /* observational only */
+      }
+    };
     const d: Decision = {
       policy: policy.name,
       mode: "shadow",
@@ -682,7 +712,7 @@ export class JudgeLane {
           const ours = r.class === "timeout" && ac.signal.aborted;
           if (ours) d.skipped = d.skipped ?? "deadline";
           else if (++this.failures >= COOLDOWN_AFTER) this.cooldownUntil = this.now() + COOLDOWN_MS;
-          onCall({
+          emit({
             policy: policy.name,
             mode: "shadow",
             rows: slice.length,
@@ -699,7 +729,7 @@ export class JudgeLane {
         d.cost_usd += cost;
         d.input_tokens += r.inputTokens;
         d.model = r.model;
-        onCall({
+        emit({
           policy: policy.name,
           mode: "shadow",
           rows: slice.length,
@@ -736,9 +766,15 @@ export class JudgeLane {
     try {
       // allSettled: a worker can no longer throw, but nothing may ever return before every
       // sibling has settled (a request that outlives the run would bill after finalization).
-      await Promise.allSettled(
+      const settled = await Promise.allSettled(
         Array.from({ length: Math.min(CONCURRENCY, starts.length) }, worker),
       );
+      // A worker cannot throw by construction; if one ever does, the rows it never reached
+      // are still accounted for rather than vanishing from the counts.
+      if (settled.some((w) => w.status === "rejected")) {
+        const seen = d.rows_judged + d.rows_abstained;
+        if (seen < judged.length) abstain(judged.length - seen, "shape");
+      }
     } finally {
       clearTimeout(timer);
       input.signal?.removeEventListener("abort", onAbort);

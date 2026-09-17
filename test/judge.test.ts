@@ -217,6 +217,20 @@ describe("state assembly", () => {
       `Q:${"a".repeat(1_990)}custom_abcdefghijklm tail`,
     );
     expect(ask).not.toContain("custom_abc");
+    // the end marker is found on the original text: a scrub that eats the delimiter must not
+    // let the routing card through
+    const eaten = resolveAsk(
+      { from: "run.input", after: "QUESTION:", until: "\n\n" },
+      "QUESTION: Find profiles mentioning Bearer\n\nABCDEFGHIJKLMNOPQRSTUV\nRouting: PRIVATE_CARD",
+    );
+    expect(eaten).not.toContain("PRIVATE_CARD");
+    // a 3,000-key nested object is bounded, not walked whole
+    const wide = Object.fromEntries(
+      Array.from({ length: 3_000 }, (_, i) => [`k${i}`, "v".repeat(50)]),
+    );
+    const t1 = performance.now();
+    for (let i = 0; i < 50; i++) buildRequest(policy, "x", [{ roles: [wide, wide, wide] }]);
+    expect(performance.now() - t1).toBeLessThan(500);
     expect((req.questions[qid("fits", 1)] as { instructions: string }).instructions).toContain(
       "`rows[1]`",
     );
@@ -575,6 +589,16 @@ describe("JudgeLane.judge (shadow)", () => {
     );
     expect(d.rows_judged + d.rows_abstained + d.rows_capped).toBe(d.rows_in);
     expect(calls.length).toBeLessThanOrEqual(2);
+    // a throwing telemetry callback loses no row
+    const thrower = await lane.judge(
+      policy,
+      { result: result(rowsN(2)), runInput: "QUESTION: x", callId: "t" },
+      () => {
+        throw new Error("collector down");
+      },
+    );
+    expect(thrower.rows_judged + thrower.rows_abstained + thrower.rows_capped).toBe(2);
+    expect(thrower.rows_judged).toBe(2);
     expect(d.rows_judged).toBeGreaterThanOrEqual(2);
   });
 });
