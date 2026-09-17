@@ -1745,7 +1745,7 @@ curl -sS http://127.0.0.1:8080/healthz
 ```
 
 ```json
-{"ok":true,"version":"0.2.17","build":"optional-commit"}
+{"ok":true,"version":"0.2.18","build":"optional-commit"}
 ```
 
 `build` appears only when `DELTA_BUILD` is set. This endpoint does not test the model, MCP servers, telemetry, or other dependencies. It is liveness and version metadata, not readiness.
@@ -1993,6 +1993,8 @@ Before a production upgrade:
 7. monitor resumed runs and promotion failures
 
 There is no automatic pre-migration snapshot. A rollback after a schema-changing release may require restoring the pre-upgrade database together with a compatible workspace snapshot.
+
+**Upgrading to 0.2.18.** No migration and no configuration change; reversible to 0.2.17 by swapping the image back. Two things change on upgrade day for a GPT-5.6 or GPT-6 lane on `api.openai.com` only: tool outputs are rendered as `input_text` block arrays so the rolling cache marks have a carrier (a thread that started on 0.2.17 pays one cache miss on its next call, then reads), and `model.call` gains `gen_ai.usage.cache_write_tokens`. Sol lanes on any backend see the refreshed price ($4 / $20 / $0.40 per 1M). Astra lanes are metered at the long-context tier above 272k input tokens. Every other lane sends request bytes identical to 0.2.17. Operator page: `docs/upgrade-0.2.18.md`.
 
 **Upgrading to 0.2.17 (schema v15 to v16).** The recall index is a one-way migration, backfilled once at boot (about a second per 100 MB). Any v15 database (0.2.13 through 0.2.16) upgrades directly; a v16 database will not open under an older binary, so the snapshot in step 4 above is the rollback. Stop the old daemon before the new one opens the same volume: the write lease lives inside the database, and a still-running writer sees `database schema is locked` during the rebuild (a machine replacement on Fly already sequences this). No configuration change is required; `DELTA_CACHE_DIAGNOSIS=1` is the only new wire-level option and is opt-in. After the upgrade, verify `/healthz` reports the new version, `pragma user_version` reads 16, the agent's `DELTA.md` hash is unchanged, and telemetry ids keep increasing past the pre-upgrade high-water (see [Telemetry stops after a volume restore](#telemetry-stops-after-a-volume-restore)). The operator page with the Fly, systemd and Connect recipes and the acceptance checks is `docs/upgrade-0.2.17.md` in the repository.
 

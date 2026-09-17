@@ -1914,7 +1914,10 @@ MODEL_API_KEY=your-openai-key
 DELTA_MODEL_PRIMARY=gpt-5.6-sol
 </code></pre></div>
 <p>The GPT-5.6 family (<code>gpt-5.6-sol</code>, <code>gpt-5.6-terra</code>, <code>gpt-5.6-luna</code>) is fully supported and priced
-in the built-in table. Since 0.2.16, an <code>api.openai.com</code> Responses lane is a first-class
+in the built-in table, and so is GPT-6 Astra (<code>gpt-6-astra</code>, since 0.2.18): same wire, explicit cache marks on
+<code>api.openai.com</code> (the Codex backend refuses the field for this model, so a subscription lane runs
+implicit caching), reasoning effort <code>low</code> through <code>max</code> (<code>none</code> and <code>minimal</code> are refused by the
+model and named at boot). Since 0.2.16, an <code>api.openai.com</code> Responses lane is a first-class
 integration, not a ported one:</p>
 <ul>
 <li><strong>Reasoning carry.</strong> The model's encrypted reasoning items are captured, persisted with the
@@ -1923,7 +1926,7 @@ calls, and required for stateless (<code>store:false</code>) use of reasoning mo
 <code>phase</code> field (GPT-5.5+) round-trips with them, so the model never re-reads an intermediate
 update as a final answer. Both are stripped before any other wire and from compaction-retained
 rows, so nothing outside this lane ever sees the sealed payload.</li>
-<li><strong>Explicit prompt-cache breakpoints</strong> (GPT-5.6+). The same placement engine that drives
+<li><strong>Explicit prompt-cache breakpoints</strong> (GPT-5.6 and GPT-6 on <code>api.openai.com</code>). The same placement engine that drives
 Anthropic caching marks one stable point (caching instructions + tools + the first user
 message) plus two rolling points, alongside the provider's implicit breakpoint. Cache writes
 bill 1.25× on 5.6 and are metered from the nested <code>cache_write_tokens</code> usage field.</li>
@@ -2816,7 +2819,7 @@ export DELTA_INSPECT_TOKEN=replace-with-a-different-long-random-token
 <p>Check liveness and build identity:</p>
 <div class="code-block"><div class="code-toolbar"><span>sh</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-sh">curl -sS http://127.0.0.1:8080/healthz
 </code></pre></div>
-<div class="code-block"><div class="code-toolbar"><span>json</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-json">{&quot;ok&quot;:true,&quot;version&quot;:&quot;0.2.17&quot;,&quot;build&quot;:&quot;optional-commit&quot;}
+<div class="code-block"><div class="code-toolbar"><span>json</span><button class="code-copy" type="button" data-copy-code>Copy</button></div><pre><code class="language-json">{&quot;ok&quot;:true,&quot;version&quot;:&quot;0.2.18&quot;,&quot;build&quot;:&quot;optional-commit&quot;}
 </code></pre></div>
 <p><code>build</code> appears only when <code>DELTA_BUILD</code> is set. This endpoint does not test the model, MCP servers, telemetry, or other dependencies. It is liveness and version metadata, not readiness.</p>
 <h4 id="guide-run-a-production-acceptance-smoke">Run a production acceptance smoke<a class="heading-link" href="#guide-run-a-production-acceptance-smoke" aria-label="Link to this section">#</a></h4>
@@ -3009,6 +3012,7 @@ primary_region = &quot;iad&quot;
 <li>monitor resumed runs and promotion failures</li>
 </ol>
 <p>There is no automatic pre-migration snapshot. A rollback after a schema-changing release may require restoring the pre-upgrade database together with a compatible workspace snapshot.</p>
+<p><strong>Upgrading to 0.2.18.</strong> No migration and no configuration change; reversible to 0.2.17 by swapping the image back. Two things change on upgrade day for a GPT-5.6 or GPT-6 lane on <code>api.openai.com</code> only: tool outputs are rendered as <code>input_text</code> block arrays so the rolling cache marks have a carrier (a thread that started on 0.2.17 pays one cache miss on its next call, then reads), and <code>model.call</code> gains <code>gen_ai.usage.cache_write_tokens</code>. Sol lanes on any backend see the refreshed price ($4 / $20 / $0.40 per 1M). Astra lanes are metered at the long-context tier above 272k input tokens. Every other lane sends request bytes identical to 0.2.17. Operator page: <code>docs/upgrade-0.2.18.md</code>.</p>
 <p><strong>Upgrading to 0.2.17 (schema v15 to v16).</strong> The recall index is a one-way migration, backfilled once at boot (about a second per 100 MB). Any v15 database (0.2.13 through 0.2.16) upgrades directly; a v16 database will not open under an older binary, so the snapshot in step 4 above is the rollback. Stop the old daemon before the new one opens the same volume: the write lease lives inside the database, and a still-running writer sees <code>database schema is locked</code> during the rebuild (a machine replacement on Fly already sequences this). No configuration change is required; <code>DELTA_CACHE_DIAGNOSIS=1</code> is the only new wire-level option and is opt-in. After the upgrade, verify <code>/healthz</code> reports the new version, <code>pragma user_version</code> reads 16, the agent's <code>DELTA.md</code> hash is unchanged, and telemetry ids keep increasing past the pre-upgrade high-water (see <a href="#guide-telemetry-stops-after-a-volume-restore">Telemetry stops after a volume restore</a>). The operator page with the Fly, systemd and Connect recipes and the acceptance checks is <code>docs/upgrade-0.2.17.md</code> in the repository.</p>
 <p><strong>Upgrading to 0.2.7 from an earlier version.</strong> This release is drop-in: with the new environment variables unset, a deployment behaves exactly as 0.2.6. Two things are worth knowing:</p>
 <ul>

@@ -96,11 +96,36 @@ const kindLabel: Record<Kind, string> = {
 // exactly. Update this alongside the root CHANGELOG.md when a release ships.
 const releases: Release[] = [
   {
+    version: "0.2.18",
+    date: "September 17, 2026",
+    iso: "2026-09-17",
+    tagline: "Astra, and the cache marks that had nowhere to ride.",
+    latest: true,
+    note: "GPT-6 Astra as a first-class model on both OpenAI surfaces, and the defect found on the way: since 0.2.16 the rolling cache marks on the Responses wire could only ride user messages, and an agentic run is one user message followed by tool calls, so on the fleet's real shape they vanished and every GPT-5.6+ lane on api.openai.com re-wrote its history on every turn. Three release candidates on the Aperture Quick Search bench found it (Astra at three times Sol's cost with the hit rate decaying from 34% to 18%, then cached tokens pinned at exactly the first message) and the third fixed it: cached tokens track the previous turn's input to within the 41-token clock line, hit rate 94% at the median. On 25 tasks Astra low finishes at Sol's cost and 25% faster, beats Sol 13 to 8 on a blind judge, and loses to Opus 5 on quality 1 to 20; Astra asks where Opus and Sol assume. No schema migration; reversible to 0.2.17.",
+    groups: [
+      {
+        kind: "added",
+        items: [
+          "**GPT-6 Astra (`gpt-6-astra`).** Priced ($10 in, $50 out, $1 cached read per million; cache writes at 1.25x) and recognised as a vision model. On the ChatGPT/Codex backend the wire is unchanged from 0.2.17; on `api.openai.com` it gets the explicit cache marks and the rendering below. Above 272k input tokens the whole request is metered at the long-context tier (2x input, cached reads and writes; 1.5x output), a cost choice that never clamps the ceiling.",
+          "**Rolling cache marks ride tool outputs on the Responses wire.** Under the explicit-cache gate (`api.openai.com`, GPT-5.6 or GPT-6) every `function_call_output` is rendered as an `input_text` block array and the two rolling marks ride the last tool outputs before the ephemeral tail. Probed live on Astra and Sol with parallel tool batches before the tag; a thread that started on 0.2.17 pays one cache miss on its next call, drilled on the bench. Off the gate, request bytes are identical to 0.2.17.",
+          "**Boot warning for an effort GPT-6 rejects.** `none` and `minimal` are a terminal 400 on the model and a 400 never fails over, so a cascade member on GPT-6 carrying either is named at boot. The value still passes through; the model stays the authority.",
+          "**`gen_ai.usage.cache_write_tokens` on `model.call`.** Main and utility tiers, exporter allowlisted, so a metered turn reconciles to the cent from telemetry.",
+        ],
+      },
+      {
+        kind: "changed",
+        items: [
+          "**`gpt-5.6-sol` price refreshed** to $4 / $20 / $0.40 per million (pricing page, 2026-09-05). Metered cost on Sol lanes drops accordingly; nothing on the wire changes.",
+          "**Upgrade notes.** No migration, no configuration change; swap the image back to roll back. A Sol, Terra or Luna lane on `api.openai.com` changes rendering with this release and should gain hit rate. Before moving any lane to Astra, audit `POLICY.md` and `DELTA.md` for tool-scope or ask-first lines: Astra reads them as hard boundaries where earlier models read past them. Operator page: `docs/upgrade-0.2.18.md`.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.2.17",
     date: "September 2, 2026",
     iso: "2026-09-02",
     tagline: "The long run.",
-    latest: true,
     note: "One theme: a run that has to keep working after its context is cut. Built as one measured slice per hypothesis on a twin-lane battery of real Quick Search work (Opus 5, real MCP tools, 23 pinned prompts, four batteries) plus an offline recall eval that re-runs the engine's own compaction on archived production transcripts. The finding that shaped it: a compaction summary is capacity-bound — a first-generation summary answers about one grounded question in four about the turns it replaced, whatever writes it — so the release invests in recovery and in telling the agent what it already did, not in longer prose. At a 60k ceiling 0.2.16 spent 62 turns and $9.29 on a 5-person shortlist, re-running the same searches after every cut; 0.2.17 finishes it in 11 turns for $0.85, and 92 of 92 candidate runs finished across the four batteries. Schema migration v16 (the recall index), one-way like v15: snapshot before upgrading.",
     groups: [
       {

@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.18] - 2026-09-17
+
+GPT-6 Astra as a first-class model on both OpenAI surfaces, and the cache defect found on the way:
+since 0.2.16 the rolling cache marks on the Responses wire had no carrier on the fleet's real
+shape, so every GPT-5.6+ lane on `api.openai.com` re-wrote its history on every turn. Measured on
+the Aperture Quick Search bench (25 tasks, twin lanes): Astra low finishes at Sol's cost and 25%
+faster with a 94% cache hit rate (Sol on the old placement: 49%), and beats Sol 13 to 8 on a blind
+judge while Opus 5 keeps the quality lead. No schema migration; reversible to 0.2.17. Release
+brief with every probe: `docs/release-brief-0.2.18.md`; operator page: `docs/upgrade-0.2.18.md`.
+
 ### Added
 - **GPT-6 Astra (`gpt-6-astra`).** Priced ($10 in / $50 out / $1 cached read per 1M; cache
   writes 1.25×) and recognised as a vision model. On the ChatGPT/Codex backend the Responses
