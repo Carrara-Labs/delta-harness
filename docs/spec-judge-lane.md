@@ -57,8 +57,8 @@ validator; a bad file fails boot with the field named, never a silently inert la
     "fiber_rows": {
       "on": "tool.result",
       "tool": "aperture__fiber_call",
-      "rows": "output.data",
-      "row_fields": ["headline", "location", "roles", "education", "screen"],
+      "rows": ["output.data", "output.results.people"],
+      "row_fields": ["headline", "location", "title", "company", "start", "months", "current_job", "experiences", "education", "school", "degree_kind", "degree_year", "screen"],
       "ask": { "from": "run.input", "after": "The user's question: \"\"\"", "until": "\"\"\"" },
       "questions": {
         "fits": {
@@ -79,9 +79,12 @@ Fields:
 - `on`: only `tool.result`. `before_turn`, `run.start` and `loop` are reserved words,
   rejected at validation so a future meaning cannot be guessed.
 - `tool`: an exact tool name. One policy per tool; two policies on one tool are refused.
-- `rows`: dot path (with `[i]` indices) into the parsed JSON result to an array of objects.
-  Own-property traversal only; prototype segments are rejected. A result that is not JSON,
-  or where the path is not a non-empty array of objects, is skipped (`skipped: shape`).
+- `rows`: one dot path or a list of them (with `[i]` indices) into the parsed JSON result;
+  the first that holds a non-empty array is the row list (Aperture: `["output.data",
+  "output.results.people"]`). Object rows pass through. ARRAY rows (a columnar tier) are
+  zipped into objects with the header found at `columns`, default `<path>_columns`, so the
+  allowlist can address them. Own-property traversal only; prototype segments are rejected.
+  Anything else is skipped (`skipped: shape`).
 - `row_fields`: required, non-empty, the dot paths copied from each row into the state.
   Nothing else leaves the box. Each value is bounded (1,000 chars per string, 12 items per
   array with 300 chars each, objects as clipped JSON), the whole row under 4,000 chars; a
