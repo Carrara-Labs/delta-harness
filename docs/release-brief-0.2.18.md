@@ -1,11 +1,12 @@
 # Release brief - Harness 0.2.18 "Astra"
 
-Status: **RELEASE CANDIDATE, 2026-09-17, one gate left.** Branch `feat/gpt6-astra`, tip 3650cf6
-(the battery ran rc3 bb8af91; the tip adds pricing arithmetic, validation and wording only, no
-wire change). 1046 tests green, typecheck and lint clean. Codex pre-publish review: three
-rounds (HOLD, HOLD, HOLD on one P2 + the drill), every code finding fixed; the only open item
-is the cross-version thread drill below, running on bench-sol-b. Release on Nic's explicit go
-once it lands. Spec and the whole story: `docs/spec-gpt6-astra-0.2.18.md`.
+Status: **READY TO TAG, 2026-09-17 late evening, on Nic's explicit go.** Branch
+`feat/gpt6-astra`, tip 3650cf6 (the battery ran rc3 bb8af91; the tip adds pricing arithmetic,
+validation and wording only, no wire change). 1046 tests green, typecheck and lint clean. Codex
+pre-publish review: three rounds, every code finding fixed. Every live gate codex listed has
+passed: the Astra and Sol smokes on `api.openai.com`, the local controls on the other providers,
+and the cross-version thread drill below. Spec and the whole story:
+`docs/spec-gpt6-astra-0.2.18.md`.
 
 ## Codex pre-publish round 1 (2026-09-17) and what changed
 
@@ -43,10 +44,14 @@ still 0.2.17 in both places.
    retry, no fallback on any lane; the only warning is the expected "no metered fallback" line
    on the broker lanes. Off-gate rendering byte-identical per codex's ten-case comparison.
    **PASS.**
-4. Cross-version thread drill (codex round 2): a room whose history was written on 0.2.17,
-   continued on the candidate against `api.openai.com` on Sol: one cache miss on the first call,
-   then rolling cache growth, no 400, pending and completed tool calls preserved. Requested from
-   the engineer on bench-sol-b (swap to 0.2.17 for one step, back to rc3 for the follow-up).
+4. Cross-version thread drill (codex round 2), bench-sol-b, Sol low on `api.openai.com`, same
+   lane and volume throughout: swapped to the published 0.2.17 image, one probe step in a fresh
+   room (succeeded, $1.44, artifact v1 and a 4-step ledger written by 0.2.17); swapped back to
+   rc3; a follow-up in the same room (succeeded, 12 turns, 29 tool results, $0.90). CACHE-GATE
+   PASS: t1 cached 16,733 of 50,403 (the spine and tools still read; the 0.2.17-rendered thread
+   re-writes under the new serialization, the expected one-time miss); t2 94%; t12 100%;
+   shortfall 42 from t2 on. No 400s, no provider or engine events, 0 of 29 tool errors. The
+   follow-up read the room, added v2 on the same artifact and carried the ledger. **PASS.**
 
 ## What it is
 
