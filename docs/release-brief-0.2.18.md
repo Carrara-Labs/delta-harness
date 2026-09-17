@@ -1,11 +1,11 @@
 # Release brief - Harness 0.2.18 "Astra"
 
-Status: **RELEASE CANDIDATE, 2026-09-17, HOLD until two live probes land.** Branch
-`feat/gpt6-astra`. The battery ran rc3 (bb8af91); the tip adds the codex pre-publish fixes
-below (pricing arithmetic and wording only, no wire change). 1046 tests green, typecheck and
-lint clean. Codex pre-publish review round 1: HOLD with 2 P1 + 2 P2, all four fixed on the
-branch; round 2 pending. Release on Nic's explicit go. Spec and the whole story:
-`docs/spec-gpt6-astra-0.2.18.md`.
+Status: **RELEASE CANDIDATE, 2026-09-17, one gate left.** Branch `feat/gpt6-astra`, tip 3650cf6
+(the battery ran rc3 bb8af91; the tip adds pricing arithmetic, validation and wording only, no
+wire change). 1046 tests green, typecheck and lint clean. Codex pre-publish review: three
+rounds (HOLD, HOLD, HOLD on one P2 + the drill), every code finding fixed; the only open item
+is the cross-version thread drill below, running on bench-sol-b. Release on Nic's explicit go
+once it lands. Spec and the whole story: `docs/spec-gpt6-astra-0.2.18.md`.
 
 ## Codex pre-publish round 1 (2026-09-17) and what changed
 
