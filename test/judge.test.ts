@@ -223,7 +223,20 @@ describe("state assembly", () => {
       { from: "run.input", after: "QUESTION:", until: "\n\n" },
       "QUESTION: Find profiles mentioning Bearer\n\nABCDEFGHIJKLMNOPQRSTUV\nRouting: PRIVATE_CARD",
     );
-    expect(eaten).not.toContain("PRIVATE_CARD");
+    expect(eaten).toBeUndefined(); // the redaction crossed the marker: abstain, never the card
+    // a registered secret that itself contains the end marker: abstain, never a split secret
+    registerSecretValue("SPAN", "custom_abcdefghijklm\n\nsecret_tail");
+    const span = resolveAsk(
+      { from: "run.input", after: "QUESTION:", until: "\n\n" },
+      "QUESTION: find PMs custom_abcdefghijklm\n\nsecret_tail\n\nRouting: PRIVATE_CARD",
+    );
+    expect(span).toBeUndefined();
+    // and a secret fully before the marker still resolves normally
+    const before = resolveAsk(
+      { from: "run.input", after: "QUESTION:", until: "\n\n" },
+      "QUESTION: find PMs tok_abc123secret please\n\nRouting: PRIVATE_CARD",
+    );
+    expect(before).toBe("find PMs [vault:RUN_TOKEN] please");
     // a 3,000-key nested object is bounded, not walked whole
     const wide = Object.fromEntries(
       Array.from({ length: 3_000 }, (_, i) => [`k${i}`, "v".repeat(50)]),

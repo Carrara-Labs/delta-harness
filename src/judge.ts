@@ -243,12 +243,24 @@ export function resolveAsk(ask: JudgeAsk, runInput: string | undefined): string 
   // The end marker is located on the ORIGINAL text (a scrub could consume the delimiter and
   // let what follows it through), then the bounded segment is scrubbed BEFORE the clip (a
   // secret cut by the clip would leave an unrecognizable prefix).
-  let text = runInput.slice(at + ask.after.length);
+  const rest = runInput.slice(at + ask.after.length);
+  let text: string;
   if (ask.until) {
-    const stop = text.indexOf(ask.until);
-    if (stop >= 0) text = text.slice(0, stop);
-  }
-  text = scrubText(text).trim().slice(0, ASK_CHARS);
+    const stop = rest.indexOf(ask.until);
+    if (stop < 0) text = scrubText(rest);
+    else {
+      // A registered secret may itself contain the end marker. Scrub a window past the
+      // marker and cut at the first marker of the SCRUBBED text; if that differs from the
+      // scrubbed segment cut on the original, a redaction crossed the boundary: abstain
+      // rather than send a split secret or anything past the marker.
+      const window = scrubText(rest.slice(0, stop + ask.until.length + ASK_CHARS));
+      const cut = window.indexOf(ask.until);
+      if (cut < 0) return undefined;
+      text = window.slice(0, cut);
+      if (text !== scrubText(rest.slice(0, stop))) return undefined;
+    }
+  } else text = scrubText(rest);
+  text = text.trim().slice(0, ASK_CHARS);
   return text ? text : undefined;
 }
 
