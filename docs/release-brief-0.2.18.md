@@ -1,10 +1,36 @@
 # Release brief - Harness 0.2.18 "Astra"
 
-Status: **RELEASE CANDIDATE, 2026-09-17.** Branch `feat/gpt6-astra`, tip e6696db (binary identical
-to rc3 bb8af91, the build the battery ran). 1045 tests green, typecheck and lint clean. Codex
-diff-review gate: round 1 in progress (this page is updated with its verdict). Release on Nic's
-explicit go, per `docs/upgrade-0.2.17.md`'s sibling for this version below. Spec and the whole
-story: `docs/spec-gpt6-astra-0.2.18.md`.
+Status: **RELEASE CANDIDATE, 2026-09-17, HOLD until two live probes land.** Branch
+`feat/gpt6-astra`. The battery ran rc3 (bb8af91); the tip adds the codex pre-publish fixes
+below (pricing arithmetic and wording only, no wire change). 1046 tests green, typecheck and
+lint clean. Codex pre-publish review round 1: HOLD with 2 P1 + 2 P2, all four fixed on the
+branch; round 2 pending. Release on Nic's explicit go. Spec and the whole story:
+`docs/spec-gpt6-astra-0.2.18.md`.
+
+## Codex pre-publish round 1 (2026-09-17) and what changed
+
+| finding | fix |
+| --- | --- |
+| P1: Astra calls above 272k gross input metered half their cost (a 300k-token call: $3.05 for $6.075); `DELTA_COMPACT_AT_TOKENS=600000` is an accepted config | `longContext` tier on the price entry: above 272k the whole request bills 2× input, cached reads and writes, 1.5× output; tests at 272,000 / 272,001 with reads and writes; merge-safe under `DELTA_MODEL_PRICES`. Sol keeps its previous untiered arithmetic this release. |
+| P1: the tool-output block-array rendering reaches every GPT-5.6+ lane on `api.openai.com` (Sol, Terra, Luna) with no live probe on Sol | live probe requested on the bench (Sol, five tool turns, a parallel batch, cache gate) before any tag; see the probes below |
+| P2: the effort boot warning claimed every call fails, but a run's own `reasoning_effort` override applies | wording: calls inheriting the daemon default fail |
+| P2: changelog said the wire is unchanged without the Codex-backend qualifier, and did not name the Sol rendering change or the unmodeled tier | rewritten |
+
+Codex's containment checks, for the record: request bodies and headers byte-identical to
+`main` in ten off-gate cases (Anthropic native Opus 5, OpenRouter, Codex Astra and Sol, a custom
+Responses proxy, older OpenAI models); stored tool rows stay strings, the array is built at
+serialization, so no persistence migration; `SAFE_ATTRS` addition consent-correct; version
+still 0.2.17 in both places.
+
+## Live probes before a tag
+
+1. Astra on `api.openai.com` (bench-sol-a, rc3 image): a fresh smoke twelve days after the
+   battery, cache gate line, engine anomalies. Requested from the engineer.
+2. Sol on `api.openai.com` with the new rendering: one user prompt, five or more tool turns, one
+   parallel tool batch; no 400s, rolling cache growth, cost reconciling with cache writes.
+   Requested from the engineer.
+3. Controls on the final candidate: Codex Astra and Sol, Anthropic-native Opus 5 tool round-trips
+   (local daemons, the 09-05 runner), off-gate rendering byte-identical.
 
 ## What it is
 
