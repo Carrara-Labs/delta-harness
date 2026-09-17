@@ -1,7 +1,6 @@
 # Release brief - Harness 0.2.18 "Astra"
 
-Status: **READY TO TAG, 2026-09-17 late evening, on Nic's explicit go.** Branch
-`feat/gpt6-astra`, tip 3650cf6 (the battery ran rc3 bb8af91; the tip adds pricing arithmetic,
+Status: **PUBLISHED 2026-09-17 11:32Z (tag v0.2.18, build b28c09f): npm `@carrara-labs/delta-harness@0.2.18`, `ghcr.io/carrara-labs/delta-harness:0.2.18`, site deployed. Post-publish check on the released image PASSED on bench-sol-b (Sol low, P7 step 0, fresh room: 18 turns, $1.02, cache gate t2 95% and t18 100%, shortfall 42 from t2, `cache_write_tokens` on every call, 0 errors). Steve on Delos on 0.2.18. Fleet rollout waits for Nic's go (bench-fix-a, carrara, then clients one at a time).** Branch was `feat/gpt6-astra`, code tip 3650cf6 (the battery ran rc3 bb8af91; the tip adds pricing arithmetic,
 validation and wording only, no wire change). 1046 tests green, typecheck and lint clean. Codex
 pre-publish review: three rounds, every code finding fixed. Every live gate codex listed has
 passed: the Astra and Sol smokes on `api.openai.com`, the local controls on the other providers,
